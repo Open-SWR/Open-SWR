@@ -5,6 +5,10 @@
     <InternalsVisibleTo Include="OpenSWR.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Using Include="OpenSWR.Data.Dat" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

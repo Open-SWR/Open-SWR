@@ -1,4 +1,4 @@
-namespace OpenSWR.Sim;
+namespace OpenSWR.Data.Dat;
 
 /// <summary>Mission kinds: the family of the mission type.</summary>
 public enum MissionKind : uint

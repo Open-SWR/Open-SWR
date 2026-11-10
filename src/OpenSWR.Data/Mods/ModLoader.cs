@@ -18,7 +18,7 @@ public sealed record ModManifest(string Id, string Name, string Version, string[
 
 /// <summary>
 /// Layers mods over the install's definitions: SD records (add / override / remove, field-level merge), TB tables (replace),
-/// GNPRTB / SDPRTB parameters (override). Records get string ids: install records "base:" + SdRef (8 hex digits), mod records
+/// GNPRTB / SDPRTB parameters (override). Records get string ids: install records "base:&lt;family&gt;:&lt;index&gt;" (<see cref="FamilyNames.BaseId"/>), mod records
 /// "&lt;mod&gt;:&lt;name&gt;"; cross-references go by id. New records take the next free Index of their SD file (systems: the lowest
 /// free Index in 100-299). The result is checked by <see cref="ModValidator"/>. With no mod enabled this is
 /// <see cref="GameDefinitions.Load"/> unchanged.
@@ -96,7 +96,7 @@ public static class ModLoader
     }
 
     /// <summary>
-    /// Every install record a mod can name, one line each: "base:XXXXXXXX&lt;tab&gt;type&lt;tab&gt;name" (name from TEXTSTRA.DLL),
+    /// Every install record a mod can name, one line each: "base:&lt;family&gt;:&lt;index&gt;&lt;tab&gt;type&lt;tab&gt;name" (name from TEXTSTRA.DLL),
     /// in SD file order.
     /// </summary>
     public static List<string> BaseIds(string gameDir)
@@ -184,7 +184,7 @@ sealed class ModSet
         foreach (var (file, _, records) in d.SdFiles)
             if (Types.FirstOrDefault(t => t.Files.Contains(file)) is { } type)
                 foreach (var r in records)
-                    lines.Add($"base:{r.Common.Ref:X8}\t{type.Name}\t{(r.Common.StringModule == 2 ? text.GetValueOrDefault(r.Common.StringId, "") : "")}");
+                    lines.Add($"{FamilyNames.BaseId(r.Common.Ref)}\t{type.Name}\t{(r.Common.StringModule == 2 ? text.GetValueOrDefault(r.Common.StringId, "") : "")}");
         return lines;
     }
 
@@ -275,10 +275,8 @@ sealed class ModSet
             tb.SeedFamilies.ToDictionary(x => x.Key, x => x.Value.ToList()), [.. tb.General], [.. tb.Side]);
         _errors = errors;
         foreach (string file in Fields.Keys)
-            foreach (var r in _sd[file].Records) _ids[BaseId(r.Ref)] = (file, r.Index);
+            foreach (var r in _sd[file].Records) _ids[FamilyNames.BaseId(r.Ref)] = (file, r.Index);
     }
-
-    static string BaseId(uint sdRef) => $"base:{sdRef:X8}";
 
     uint RefOf((string File, uint Index) key) => _sd[key.File].Find(key.Index) is { } r ? r.Ref : 0;
 
@@ -336,7 +334,7 @@ sealed class ModSet
             return;
         }
         if (op == "replace") { _errors.Add($"{where}: op: replace is for tables; use add, override or remove."); return; }
-        string full = FullId(mod, rawId);
+        if (FullId(mod, rawId, where) is not { } full) return;
         if (!_ids.TryGetValue(full, out var key)) { _errors.Add($"{where}: id: no record '{full}' (removed, misspelt, or from a mod loaded later)."); return; }
         if (!type.Files.Contains(key.File)) { _errors.Add($"{where}: type: '{full}' is not a {type.Name} record."); return; }
         where = $"{mod.Id} {file}: {full}";
@@ -344,7 +342,7 @@ sealed class ModSet
         {
             if (!type.Remove) { _errors.Add($"{where}: {type.Name} records cannot be removed."); return; }
             uint sdRef = RefOf(key);
-            if (ModValidator.Protected.Contains(sdRef)) { _errors.Add($"{where}: cannot be removed: the game code refers to {sdRef:X8} directly."); return; }
+            if (ModValidator.Protected.Contains(sdRef)) { _errors.Add($"{where}: cannot be removed: the game code refers to {FamilyNames.BaseId(sdRef)} directly."); return; }
             _sd[key.File].Records.Remove(_sd[key.File].Find(key.Index)!);
             _ids.Remove(full);
             _names.Remove(key); _pictures.Remove(key); _descriptions.Remove(key); _models.Remove(key); _origin.Remove(key); _addedSystems.Remove(key);
@@ -370,14 +368,14 @@ sealed class ModSet
         return $"{mod.Id}:{local}";
     }
 
-    /// <summary>"base:14000001" / "base:0x14000001" (normalised), "othermod:name", or a plain name of the current mod.</summary>
-    static string FullId(ModManifest mod, string raw)
+    /// <summary>"base:capitalShip:65" (normalised), "othermod:name", or a plain name of the current mod. A bad base id is an error and gives null.</summary>
+    string? FullId(ModManifest mod, string raw, string where)
     {
         if (raw.StartsWith("base:"))
         {
-            string hex = raw[5..];
-            if (hex.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) hex = hex[2..];
-            return uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out uint v) ? BaseId(v) : raw;
+            if (FamilyNames.TryParseBaseId(raw, out uint v)) return FamilyNames.BaseId(v);
+            _errors.Add($"{where}: '{raw}' is not a record id; write base:<family>:<index>, e.g. base:capitalShip:65 (family by name, index in decimal).");
+            return null;
         }
         return raw.Contains(':') ? raw : $"{mod.Id}:{raw}";
     }
@@ -388,7 +386,8 @@ sealed class ModSet
         string? sourceFile = null;
         if (e.TryGetProperty("from", out var from))
         {
-            string fromId = from.ValueKind == JsonValueKind.String ? FullId(mod, from.GetString()!) : "";
+            string? fromId = from.ValueKind == JsonValueKind.String ? FullId(mod, from.GetString()!, where) : "";
+            if (fromId is null) return;
             if (!_ids.TryGetValue(fromId, out var fk)) { _errors.Add($"{where}: from: no record '{fromId}' (it must be loaded before this record)."); return; }
             if (!type.Files.Contains(fk.File)) { _errors.Add($"{where}: from: '{fromId}' is not a {type.Name} record."); return; }
             (source, sourceFile) = (_sd[fk.File].Find(fk.Index), fk.File);
@@ -397,10 +396,10 @@ sealed class ModSet
         uint family = source?.Family ?? type.DefaultFamily;
         if (e.TryGetProperty("family", out var fam))
         {
-            if (type.Name == "system") { _errors.Add($"{where}: family: a system's family follows its sector's group (1 → core 0x90, 2 / 3 → rim 0x92)."); return; }
-            if (!TryNumber(fam, 255, out family) || !type.AddFamilies.Contains(family))
+            if (type.Name == "system") { _errors.Add($"{where}: family: a system's family follows its sector's group (1 → core coreSystem, 2 / 3 → rimSystem)."); return; }
+            if (!TryFamily(fam, out family) || !type.AddFamilies.Contains(family))
             {
-                _errors.Add($"{where}: family: {type.Name} family must be one of {string.Join(", ", type.AddFamilies.Select(f => $"0x{f:X2}"))}.");
+                _errors.Add($"{where}: family: {type.Name} family must be one of {string.Join(", ", type.AddFamilies.Select(FamilyNames.Name))}.");
                 return;
             }
         }
@@ -408,10 +407,10 @@ sealed class ModSet
             : GameDefinitions.LoadedSd.FirstOrDefault(f => _sd[f].Header.FamilyMin <= family && family < _sd[f].Header.FamilyMax && type.Files.Contains(f));
         if (target is null || (type.Name != "system" && !type.AddFamilies.Contains(family)))
         {
-            _errors.Add($"{where}: family: required for a new {type.Name} (one of {string.Join(", ", type.AddFamilies.Select(f => $"0x{f:X2}"))}), or use from.");
+            _errors.Add($"{where}: family: required for a new {type.Name} (one of {string.Join(", ", type.AddFamilies.Select(FamilyNames.Name))}), or use from.");
             return;
         }
-        if (sourceFile is not null && sourceFile != target) { _errors.Add($"{where}: from: '{sourceFile}' records have another layout than family 0x{family:X2}."); return; }
+        if (sourceFile is not null && sourceFile != target) { _errors.Add($"{where}: from: '{sourceFile}' records have another layout than family {FamilyNames.Name(family)}."); return; }
 
         var table = _sd[target];
         uint index = target == "SYSTEMSD"
@@ -491,10 +490,10 @@ sealed class ModSet
                 if (f.Ref)
                 {
                     if (value.ValueKind != JsonValueKind.String) { _errors.Add($"{where}: {name}: a record id string."); continue; }
-                    _refs.Add((key.File, key.Index, f.Name, FullId(mod, value.GetString()!), $"{where}: {name}"));
+                    if (FullId(mod, value.GetString()!, where) is { } refId) _refs.Add((key.File, key.Index, f.Name, refId, $"{where}: {name}"));
                     continue;
                 }
-                if (!TryNumber(value, f.U16 ? 65535 : int.MaxValue, out uint n)) { _errors.Add($"{where}: {name}: an integer 0–{(f.U16 ? 65535 : int.MaxValue)} (or \"0x…\")."); continue; }
+                if (!TryNumber(value, f.U16 ? 65535 : int.MaxValue, out uint n)) { _errors.Add($"{where}: {name}: a decimal JSON integer 0–{(f.U16 ? 65535 : int.MaxValue)}."); continue; }
                 if (f.U16) words.SetU16(f.Name, (ushort)n);
                 else words.Set(f.Name, n);
             }
@@ -514,13 +513,12 @@ sealed class ModSet
     static IEnumerable<(string, JsonElement)> Flatten(string name, JsonElement v) =>
         v.ValueKind == JsonValueKind.Object ? v.EnumerateObject().SelectMany(p => Flatten($"{name}.{p.Name}", p.Value)) : [(name, v)];
 
+    /// <summary>A decimal JSON integer (or a boolean, as 0 / 1), 0 to max.</summary>
     static bool TryNumber(JsonElement v, long max, out uint n)
     {
         n = 0;
         long x;
         if (v.ValueKind == JsonValueKind.Number) { if (!v.TryGetInt64(out x)) return false; }
-        else if (v.ValueKind == JsonValueKind.String && v.GetString() is { } s && s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-        { if (!long.TryParse(s[2..], System.Globalization.NumberStyles.HexNumber, null, out x)) return false; }
         else if (v.ValueKind is JsonValueKind.True or JsonValueKind.False) x = v.GetBoolean() ? 1 : 0;
         else return false;
         if (x < 0 || x > max) return false;
@@ -528,17 +526,23 @@ sealed class ModSet
         return true;
     }
 
+    /// <summary>A family of a record: its name (e.g. "capitalShip") or a decimal number 0 to 255.</summary>
+    static bool TryFamily(JsonElement v, out uint family) =>
+        v.ValueKind == JsonValueKind.String ? FamilyNames.TryFamilyName(v.GetString()!, out family) : TryNumber(v, 255, out family);
+
+
     void ApplyTable(ModManifest mod, string file, JsonElement e, string op, string type, string? id, string where)
     {
-        if (id is null) { _errors.Add($"{where}: id: required (table name, e.g. \"SYFCCRTB\", or parameter id \"0x1E32\")."); return; }
+        if (id is null) { _errors.Add($"{where}: id: required (table name, e.g. \"SYFCCRTB\", or parameter name, e.g. \"HyperdriveModifier\", or its decimal id)."); return; }
         if (type is "generalParam" or "sideParam")
         {
             if (op != "override") { _errors.Add($"{where}: op: parameters can only be overridden."); return; }
-            var list = type == "generalParam" ? _tb.General : _tb.Side;
-            bool hex = id.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
-            int at = uint.TryParse(hex ? id[2..] : id, hex ? System.Globalization.NumberStyles.HexNumber : System.Globalization.NumberStyles.Integer, null, out uint pid)
-                ? list.FindIndex(p => p.ParamId == pid) : -1;
-            if (at < 0) { _errors.Add($"{where}: id: no {type} '{id}' in {(type == "generalParam" ? "GNPRTB" : "SDPRTB")}."); return; }
+            bool general = type == "generalParam";
+            var list = general ? _tb.General : _tb.Side;
+            uint pid;
+            bool known = general ? ParamIds.TryParse<GeneralParam>(id, out pid) : ParamIds.TryParse<SideParam>(id, out pid);
+            int at = known ? list.FindIndex(p => p.ParamId == pid) : -1;
+            if (at < 0) { _errors.Add($"{where}: id: no {type} '{id}' in {(general ? "GNPRTB" : "SDPRTB")}; write the parameter name, e.g. {(general ? "CorePopulatedChance" : "MinorCharactersSmall")}, or its decimal id."); return; }
             var values = (int[])list[at].Values.Clone();
             if (e.TryGetProperty("value", out var one))
             {
@@ -556,7 +560,7 @@ sealed class ModSet
             }
             else { _errors.Add($"{where}: value (every column) or values (array of {values.Length}) required."); return; }
             list[at] = list[at] with { Values = values };
-            _tableOrigin[$"{(type == "generalParam" ? "G" : "S")} {list[at].ParamId:X}"] = $"{mod.Id} {file}";
+            _tableOrigin[$"{(general ? "G" : "S")} {list[at].ParamId}"] = $"{mod.Id} {file}";
             return;
         }
 
@@ -583,7 +587,8 @@ sealed class ModSet
                 _errors.Add($"{at}: key: an integer.");
                 continue;
             }
-            object? Value(JsonElement v) => v.ValueKind == JsonValueKind.String ? FullId(mod, v.GetString()!)
+            // a bad base id is already reported: 0 keeps the resolver from reporting it again
+            object? Value(JsonElement v) => v.ValueKind == JsonValueKind.String ? (object?)FullId(mod, v.GetString()!, where) ?? 0
                 : v.ValueKind == JsonValueKind.Null ? null : v.TryGetInt32(out int i) ? i : (object)"";
             if (seed)
             {
@@ -602,7 +607,7 @@ sealed class ModSet
         _tableOrigin[name] = $"{mod.Id} {file}";
     }
 
-    /// <summary>Resolves references, sets added systems' families, builds the definitions. Origins: record SdRef (X8) or table name gives where it was last changed.</summary>
+    /// <summary>Resolves references, sets added systems' families, builds the definitions. Origins: record id (<see cref="FamilyNames.BaseId"/>) or table name gives where it was last changed.</summary>
     public (GameDefinitions, Dictionary<string, string>) Finish(IReadOnlyList<ModManifest> mods)
     {
         foreach (var (file, index, field, id, where) in _refs)
@@ -641,7 +646,7 @@ sealed class ModSet
             _descriptions.ToDictionary(x => RefOf(x.Key), x => x.Value), _models.ToDictionary(x => RefOf(x.Key), x => x.Value),
             mods.LastOrDefault(m => m.GalaxyPicture is not null)?.GalaxyPicture);
         var origins = new Dictionary<string, string>(_tableOrigin);
-        foreach (var (key, where) in _origin) origins[RefOf(key).ToString("X8")] = where;
+        foreach (var (key, where) in _origin) origins[FamilyNames.BaseId(RefOf(key))] = where;
         return (defs, origins);
     }
 }

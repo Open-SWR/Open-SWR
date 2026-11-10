@@ -177,7 +177,7 @@ public class ModTests(ITestOutputHelper output)
     {
         // the highest-Index fighter goes, a new fighter comes: its Index must not be the removed one (records naming the removed one would silently point at it)
         var gone = Definitions.Fighters.MaxBy(f => f.Common.Index)!;
-        string records = $$"""{"op": "remove", "type": "fighter", "id": "base:{{gone.Common.Ref:X8}}"}, {"op": "add", "type": "fighter", "id": "x", "from": "base:1C000003", "name": "X"}""";
+        string records = $$"""{"op": "remove", "type": "fighter", "id": "{{FamilyNames.BaseId(gone.Common.Ref)}}"}, {"op": "add", "type": "fighter", "id": "x", "from": "base:fighter:3", "name": "X"}""";
         var d = WithMod(records, dir => { try { return ModLoader.Load(GameDir.Path, dir, ["m"]); } catch (ModLoadException e) { output.WriteLine(e.Message); return null; } });
         Assert.NotNull(d); // refused when the removed fighter is still referenced: pick another record for this test
         Assert.DoesNotContain(d.Fighters, f => f.Common.Index == gone.Common.Index);
@@ -188,7 +188,7 @@ public class ModTests(ITestOutputHelper output)
     {
         // a PNG header alone (signature + IHDR) claiming 5000 x 5000: the size is read from the header before anything is decoded
         byte[] png = [137, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10, 0, 0, 0, 13, (byte)'I', (byte)'H', (byte)'D', (byte)'R', 0, 0, 19, 136, 0, 0, 19, 136];
-        var e = WithMod("""{"op": "add", "type": "fighter", "id": "x", "from": "base:1C000003", "name": "X", "picture": "big.png"}""",
+        var e = WithMod("""{"op": "add", "type": "fighter", "id": "x", "from": "base:fighter:3", "name": "X", "picture": "big.png"}""",
             dir => Assert.Throws<ModLoadException>(() => ModLoader.Load(GameDir.Path, dir, ["m"])), ("big.png", png));
         Assert.Contains("larger than 4096 pixels", e.Message);
     }
@@ -215,59 +215,83 @@ public class ModTests(ITestOutputHelper output)
 
     [GameTheory]
     // Families with an object class only; no new major characters, missions or HQ
-    [InlineData("""{"op": "add", "type": "capitalShip", "id": "x", "name": "X", "family": "0x15"}""", "bad defs.json: bad:x: family: capitalShip family must be one of 0x14, 0x18")]
+    [InlineData("""{"op": "add", "type": "capitalShip", "id": "x", "name": "X", "family": 21}""", "bad defs.json: bad:x: family: capitalShip family must be one of capitalShip, deathStar")]
     [InlineData("""{"op": "add", "type": "majorCharacter", "id": "x", "name": "X"}""", "bad defs.json: x: majorCharacter records cannot be added")]
     [InlineData("""{"op": "add", "type": "mission", "id": "x", "name": "X"}""", "mission records cannot be added")]
-    [InlineData("""{"op": "add", "type": "facility", "id": "x", "name": "X", "family": "0x20"}""", "facility family must be one of 0x22")]
+    [InlineData("""{"op": "add", "type": "facility", "id": "x", "name": "X", "family": 32}""", "facility family must be one of ionCannon, gun, planetaryShield, deathStarShield, shipyard, trainingFacility, constructionYard, mine, refinery")]
     // Hard-coded references
-    [InlineData("""{"op": "remove", "type": "system", "id": "base:90000109"}""", "bad defs.json: base:90000109: cannot be removed: the game code refers to 90000109 directly")]
-    [InlineData("""{"op": "remove", "type": "minorCharacter", "id": "base:38000343"}""", "cannot be removed")]
-    [InlineData("""{"op": "override", "type": "capitalShip", "id": "base:14000041", "family": "0x18"}""", "bad defs.json: base:14000041: family: only allowed on add")]
+    [InlineData("""{"op": "remove", "type": "system", "id": "base:coreSystem:265"}""", "bad defs.json: base:coreSystem:265: cannot be removed: the game code refers to base:coreSystem:265 directly")]
+    [InlineData("""{"op": "remove", "type": "minorCharacter", "id": "base:minorCharacter:835"}""", "cannot be removed")]
+    [InlineData("""{"op": "override", "type": "capitalShip", "id": "base:capitalShip:65", "family": 24}""", "bad defs.json: base:capitalShip:65: family: only allowed on add")]
     // At most 200 systems (the install has 200)
-    [InlineData("""{"op": "add", "type": "system", "id": "x", "name": "X", "sector": "base:80000016", "x": 330, "y": 650}""", "bad defs.json: bad:x: no free system Index left in 100–299")]
+    [InlineData("""{"op": "add", "type": "system", "id": "x", "name": "X", "sector": "base:sector:22", "x": 330, "y": 650}""", "bad defs.json: bad:x: no free system Index left in 100–299")]
     // Group 1 <=> core systems; galaxy sizes 1-3; Coruscant's sector in every galaxy
-    [InlineData("""{"op": "override", "type": "system", "id": "base:92000082", "sector": "base:80000017"}""", "bad defs.json: base:92000082: sector: family 0x92 in a sector of group 1")]
-    [InlineData("""{"op": "override", "type": "sector", "id": "base:80000016", "galaxySize": 4}""", "bad defs.json: base:80000016: galaxySize: 1, 2 or 3")]
-    [InlineData("""{"op": "override", "type": "sector", "id": "base:80000024", "galaxySize": 2}""", "base:90000109: sector: its sector must have galaxySize 1")]
-    [InlineData("""{"op": "override", "type": "system", "id": "base:92000082", "x": 900}""", "base:92000082: x / y: (900, 678) must lie in its sector's box")]
+    [InlineData("""{"op": "override", "type": "system", "id": "base:rimSystem:130", "sector": "base:sector:23"}""", "bad defs.json: base:rimSystem:130: sector: family rimSystem in a sector of group 1")]
+    [InlineData("""{"op": "override", "type": "sector", "id": "base:sector:22", "galaxySize": 4}""", "bad defs.json: base:sector:22: galaxySize: 1, 2 or 3")]
+    [InlineData("""{"op": "override", "type": "sector", "id": "base:sector:36", "galaxySize": 2}""", "base:coreSystem:265: sector: its sector must have galaxySize 1")]
+    [InlineData("""{"op": "override", "type": "system", "id": "base:rimSystem:130", "x": 900}""", "base:rimSystem:130: x / y: (900, 678) must lie in its sector's box")]
     // Quotas
-    [InlineData("""{"op": "override", "type": "sideParam", "id": "0x1E00", "value": 0}""", "galaxy size 1, settings column 1: 30 core systems give the Empire a quota of 0; the Empire capital (90000109) needs 1")]
+    [InlineData("""{"op": "override", "type": "sideParam", "id": "SetupLoyalShare", "value": 0}""", "galaxy size 1, settings column 1: 30 core systems give the Empire a quota of 0; the Empire capital (base:coreSystem:265) needs 1")]
     // timer bases and divisors: a base of 0 would never end the day, a divisor of 0 throws on the first move
-    [InlineData("""{"op": "override", "type": "generalParam", "id": "0x1802", "value": 0}""", "general parameter 0x1802, column 1: 0 must be at least 1")]
-    [InlineData("""{"op": "override", "type": "generalParam", "id": "0x1400", "value": 0}""", "general parameter 0x1400, column 1: 0 must be at least 1")]
+    [InlineData("""{"op": "override", "type": "generalParam", "id": "DagobahDays", "value": 0}""", "general parameter DagobahDays, column 1: 0 must be at least 1")]
+    [InlineData("""{"op": "override", "type": "generalParam", "id": "TravelDistanceDivisor", "value": 0}""", "general parameter TravelDistanceDivisor, column 1: 0 must be at least 1")]
     // Research orders, side flags, field ranges, cross-references
-    [InlineData("""{"op": "add", "type": "capitalShip", "id": "x", "name": "X", "from": "base:14000040"}""", "researchOrder: order 2 is used by 14000040, 1400008F for the Alliance at producer 0x28")]
+    [InlineData("""{"op": "add", "type": "capitalShip", "id": "x", "name": "X", "from": "base:capitalShip:64"}""", "researchOrder: order 2 is used by base:capitalShip:64, base:capitalShip:143 for the Alliance at producer shipyard")]
     [InlineData("""{"op": "add", "type": "minorCharacter", "id": "x", "name": "X", "alliance": 1, "empire": 1}""", "bad defs.json: bad:x: alliance / empire: a character belongs to exactly one side")]
     [InlineData("""{"op": "add", "type": "capitalShip", "id": "x", "name": "X", "alliance": 1}""", "bad defs.json: bad:x: hull: must be > 0")]
-    [InlineData("""{"op": "add", "type": "specialForce", "id": "x", "name": "X", "alliance": 1, "missionMask": 1}""", "missionMask: 0x1 shares bits with 3C000001")]
-    [InlineData("""{"op": "override", "type": "system", "id": "base:92000082", "sector": "nowhere"}""", "bad defs.json: base:92000082: sector: no record 'bad:nowhere'")]
-    [InlineData("""{"op": "override", "type": "sector", "id": "base:80000016", "x": 70000}""", "bad defs.json: base:80000016: x: an integer 0–65535")]
-    [InlineData("""{"op": "override", "type": "sector", "id": "base:80000016", "colour": 3}""", "bad defs.json: base:80000016: colour: unknown field for SECTORSD records")]
-    [InlineData("""{"op": "add", "type": "fighter", "id": "x", "from": "base:1C000003", "name": "X", "picture": "missing.png"}""", "bad defs.json: bad:x: picture: file 'missing.png' not found")]
-    [InlineData("""{"op": "add", "type": "fighter", "id": "x", "from": "base:1C000003"}""", "bad defs.json: bad:x: name: required on add")]
-    [InlineData("""{"op": "override", "type": "fighter", "id": "base:1C000003", "picture": "defs.json"}""", "bad defs.json: base:1C000003: picture: a .png path relative to the mod folder")]
-    [InlineData("""{"op": "override", "type": "fighter", "id": "base:1C000003", "picture": "../x.png"}""", "bad defs.json: base:1C000003: picture: must lie inside the mod folder")]
-    [InlineData("""{"op": "override", "type": "fighter", "id": "base:1C000003", "model": "ship.obj"}""", "bad defs.json: base:1C000003: model: a .glb or .gltf path relative to the mod folder")]
-    [InlineData("""{"op": "override", "type": "fighter", "id": "base:1C000003", "model": "ship.glb"}""", "bad defs.json: base:1C000003: model: file 'ship.glb' not found")]
-    [InlineData("""{"op": "override", "type": "fighter", "id": "base:1C000003", "description": 5}""", "bad defs.json: base:1C000003: description: a string")]
-    [InlineData("""{"op": "override", "type": "fighter", "id": "base:14000041", "hull": 5}""", "type: 'base:14000041' is not a fighter record")]
+    [InlineData("""{"op": "add", "type": "specialForce", "id": "x", "name": "X", "alliance": 1, "missionMask": 1}""", "missionMask: 1 shares bits with base:specialForce:1")]
+    [InlineData("""{"op": "override", "type": "system", "id": "base:rimSystem:130", "sector": "nowhere"}""", "bad defs.json: base:rimSystem:130: sector: no record 'bad:nowhere'")]
+    [InlineData("""{"op": "override", "type": "sector", "id": "base:sector:22", "x": 70000}""", "bad defs.json: base:sector:22: x: a decimal JSON integer 0–65535")]
+    [InlineData("""{"op": "override", "type": "sector", "id": "base:sector:22", "colour": 3}""", "bad defs.json: base:sector:22: colour: unknown field for SECTORSD records")]
+    [InlineData("""{"op": "add", "type": "fighter", "id": "x", "from": "base:fighter:3", "name": "X", "picture": "missing.png"}""", "bad defs.json: bad:x: picture: file 'missing.png' not found")]
+    [InlineData("""{"op": "add", "type": "fighter", "id": "x", "from": "base:fighter:3"}""", "bad defs.json: bad:x: name: required on add")]
+    [InlineData("""{"op": "override", "type": "fighter", "id": "base:fighter:3", "picture": "defs.json"}""", "bad defs.json: base:fighter:3: picture: a .png path relative to the mod folder")]
+    [InlineData("""{"op": "override", "type": "fighter", "id": "base:fighter:3", "picture": "../x.png"}""", "bad defs.json: base:fighter:3: picture: must lie inside the mod folder")]
+    [InlineData("""{"op": "override", "type": "fighter", "id": "base:fighter:3", "model": "ship.obj"}""", "bad defs.json: base:fighter:3: model: a .glb or .gltf path relative to the mod folder")]
+    [InlineData("""{"op": "override", "type": "fighter", "id": "base:fighter:3", "model": "ship.glb"}""", "bad defs.json: base:fighter:3: model: file 'ship.glb' not found")]
+    [InlineData("""{"op": "override", "type": "fighter", "id": "base:fighter:3", "description": 5}""", "bad defs.json: base:fighter:3: description: a string")]
+    [InlineData("""{"op": "override", "type": "fighter", "id": "base:capitalShip:65", "hull": 5}""", "type: 'base:capitalShip:65' is not a fighter record")]
     // Tables
-    [InlineData("""{"op": "replace", "type": "table", "id": "SYFCCRTB", "entries": [{"key": 50, "value": 0}, {"key": 10, "value": "base:2C000001"}]}""", "bad defs.json: SYFCCRTB entries[1].key: keys must ascend")]
-    [InlineData("""{"op": "replace", "type": "table", "id": "SYFCCRTB", "entries": [{"key": 0, "value": "base:14000041"}]}""", "SYFCCRTB key 0: value 14000041 is not a facility type")]
-    [InlineData("""{"op": "replace", "type": "seedTable", "id": "CMUNALTB", "entries": [{"key": 1, "items": ["base:14000080"]}]}""", "CMUNALTB key 1: items[0]: 14000080 is not available to the Alliance")]
+    [InlineData("""{"op": "replace", "type": "table", "id": "SYFCCRTB", "entries": [{"key": 50, "value": 0}, {"key": 10, "value": "base:mine:1"}]}""", "bad defs.json: SYFCCRTB entries[1].key: keys must ascend")]
+    [InlineData("""{"op": "replace", "type": "table", "id": "SYFCCRTB", "entries": [{"key": 0, "value": "base:capitalShip:65"}]}""", "SYFCCRTB key 0: value base:capitalShip:65 is not a facility type")]
+    [InlineData("""{"op": "replace", "type": "seedTable", "id": "CMUNALTB", "entries": [{"key": 1, "items": ["base:capitalShip:128"]}]}""", "CMUNALTB key 1: items[0]: base:capitalShip:128 is not available to the Alliance")]
     [InlineData("""{"op": "replace", "type": "seedTable", "id": "CMUNXXTB", "entries": [{"key": 1, "items": [null]}]}""", "id: no seedTable 'CMUNXXTB'")]
-    [InlineData("""{"op": "remove", "type": "system", "id": "base:9200006E"}, {"op": "add", "type": "system", "id": "x", "name": "X", "sector": "base:80000016", "x": 330, "y": 650}""", "base:80000016: systems: 11 systems in this sector, at most 10")]
+    [InlineData("""{"op": "remove", "type": "system", "id": "base:rimSystem:110"}, {"op": "add", "type": "system", "id": "x", "name": "X", "sector": "base:sector:22", "x": 330, "y": 650}""", "base:sector:22: systems: 11 systems in this sector, at most 10")]
     // Values of the wrong JSON kind and bad paths are record errors, never a crash
-    [InlineData("""{"op": "override", "type": "capitalShip", "id": "base:14000041", "producer": 5}""", "bad defs.json: record 0:")]
+    [InlineData("""{"op": "override", "type": "capitalShip", "id": "base:capitalShip:65", "producer": 5}""", "bad defs.json: record 0:")]
     [InlineData("""{"op": "replace", "type": "table", "id": "SYFCCRTB", "entries": [{"key": "5", "value": 0}]}""", "bad defs.json: record 0:")]
     [InlineData("""{"op": "replace", "type": "table", "id": "SYFCCRTB", "entries": [{"key": 0, "value": true}]}""", "bad defs.json: record 0:")]
     [InlineData("""{"op": "replace", "type": "seedTable", "id": "CMUNALTB", "entries": [{"key": 1, "items": [true]}]}""", "bad defs.json: record 0:")]
-    [InlineData("""{"op": "override", "type": "fighter", "id": "base:1C000003", "picture": "a\u0000.png"}""", "bad defs.json: record 0:")]
+    // The old hex forms (no 0x prefix either) and numbers written as strings are refused, with a message that says what to write
+    [InlineData("""{"op": "add", "type": "capitalShip", "id": "x", "name": "X", "family": "15"}""", "family: capitalShip family must be one of capitalShip, deathStar")]
+    [InlineData("""{"op": "add", "type": "fighter", "id": "x", "name": "X", "from": "base:14000041"}""", "'base:14000041' is not a record id; write base:<family>:<index>, e.g. base:capitalShip:65")]
+    [InlineData("""{"op": "override", "type": "capitalShip", "id": "base:14000041", "hull": 5}""", "'base:14000041' is not a record id; write base:<family>:<index>, e.g. base:capitalShip:65")]
+    [InlineData("""{"op": "override", "type": "generalParam", "id": "1E32", "value": 50}""", "no generalParam '1E32' in GNPRTB; write the parameter name, e.g. CorePopulatedChance, or its decimal id")]
+    [InlineData("""{"op": "override", "type": "generalParam", "id": "0x1E32", "value": 50}""", "no generalParam '0x1E32' in GNPRTB")]
+    [InlineData("""{"op": "override", "type": "sideParam", "id": "0x1400", "value": 5}""", "no sideParam '0x1400' in SDPRTB; write the parameter name, e.g. MinorCharactersSmall")]
+    [InlineData("""{"op": "add", "type": "capitalShip", "id": "x", "name": "X", "family": "0x14"}""", "family: capitalShip family must be one of capitalShip, deathStar")]
+    [InlineData("""{"op": "override", "type": "capitalShip", "id": "base:capitalShip:65", "hull": "0x10"}""", "hull: a decimal JSON integer 0")]
+    [InlineData("""{"op": "override", "type": "fighter", "id": "base:fighter:3", "family": 24}""", "family: only allowed on add")]
+    [InlineData("""{"op": "override", "type": "fighter", "id": "base:fighter:3", "picture": "a\u0000.png"}""", "bad defs.json: record 0:")]
     public void RefusesWithAClearError(string record, string expected)
     {
         var e = Refused(record);
         output.WriteLine(e.Message);
         Assert.Contains(e.Errors, x => x.Contains(expected));
+    }
+
+    [GameFact]
+    public void ReportsABadBaseIdOnce()
+    {
+        // the id form error says what to write; a second "no record" error for the same id would only repeat it
+        var e = Refused("""
+            {"op": "override", "type": "capitalShip", "id": "base:14000041", "hull": 5},
+            {"op": "add", "type": "fighter", "id": "x", "name": "X", "from": "base:14000041"},
+            {"op": "replace", "type": "table", "id": "SYFCCRTB", "entries": [{"key": 0, "value": "base:14000041"}]}
+            """);
+        output.WriteLine(e.Message);
+        Assert.Equal(3, e.Errors.Count(x => x.Contains("'base:14000041' is not a record id")));
+        Assert.DoesNotContain(e.Errors, x => x.Contains("no record 'base:14000041'"));
     }
 
     [GameFact]
@@ -291,12 +315,12 @@ public class ModTests(ITestOutputHelper output)
             File.WriteAllText(Path.Combine(mod, "fake.png"), "not a picture");
             File.Copy(Path.Combine(ModsDir, "testmod", "art", "cinder.png"), Path.Combine(mod, "square.png"));
             File.WriteAllText(Path.Combine(mod, "mod.json"), "{\"id\": \"art\", \"version\": \"1\", \"galaxyPicture\": \"square.png\"}");
-            File.WriteAllText(Path.Combine(mod, "defs.json"), """{"records": [{"op": "override", "type": "fighter", "id": "base:1C000003", "picture": "fake.png"}]}""");
+            File.WriteAllText(Path.Combine(mod, "defs.json"), """{"records": [{"op": "override", "type": "fighter", "id": "base:fighter:3", "picture": "fake.png"}]}""");
             var e = Assert.Throws<ModLoadException>(() => ModLoader.Load(GameDir.Path, dir, ["art"]));
             Assert.Contains("art mod.json: galaxyPicture: 37×37 must have the galaxy's shape 607×437", e.Message);
             File.WriteAllText(Path.Combine(mod, "mod.json"), "{\"id\": \"art\", \"version\": \"1\"}");
             e = Assert.Throws<ModLoadException>(() => ModLoader.Load(GameDir.Path, dir, ["art"]));
-            Assert.Contains("art defs.json: base:1C000003: picture: 'fake.png' is not a PNG file.", e.Message);
+            Assert.Contains("art defs.json: base:fighter:3: picture: 'fake.png' is not a PNG file.", e.Message);
         }
         finally { Directory.Delete(dir, true); }
     }
@@ -317,9 +341,36 @@ public class ModTests(ITestOutputHelper output)
         var d = Definitions;
         Assert.Equal(d.Sectors.Count + d.Systems.Count + d.CapitalShips.Count + d.Fighters.Count + d.Troops.Count + d.Facilities.Count
             + d.DefenseFacilities.Count + d.MajorCharacters.Count + d.MinorCharacters.Count + d.SpecialForces.Count + d.Missions.Count, lines.Count);
-        Assert.Matches("^base:14000041\tcapitalShip\t.+$", lines.Single(l => l.StartsWith("base:14000041\t")));
-        Assert.Matches("^base:90000109\tsystem\t.+$", lines.Single(l => l.StartsWith("base:90000109\t")));
-        Assert.All(lines, l => Assert.Matches("^base:[0-9A-F]{8}\t[a-zA-Z]+\t", l));
+        Assert.Matches("^base:capitalShip:65\tcapitalShip\t.+$", lines.Single(l => l.StartsWith("base:capitalShip:65\t")));
+        Assert.Matches("^base:coreSystem:265\tsystem\t.+$", lines.Single(l => l.StartsWith("base:coreSystem:265\t")));
+        Assert.All(lines, l => Assert.Matches("^base:[a-zA-Z]+:[0-9]+\t[a-zA-Z]+\t", l));
+    }
+
+    [Fact]
+    public void BaseIdsRoundTrip()
+    {
+        // a record id is its family by name and its index in decimal; the family may also be written as its number
+        Assert.Equal("base:capitalShip:65", FamilyNames.BaseId(SdRef.Make(Families.CapitalShip, 65)));
+        Assert.Equal("base:coreSystem:265", FamilyNames.BaseId(SdRef.Make(Families.CoreSystem, 265)));
+        Assert.Equal("base:sector:22", FamilyNames.BaseId(SdRef.Make(Families.Sector, 22)));
+        Assert.Equal("base:espionage:19", FamilyNames.BaseId(SdRef.Make((uint)MissionKind.Espionage, 19)));
+        Assert.Equal("base:200:5", FamilyNames.BaseId(SdRef.Make(200, 5))); // a family without a name: its number
+        foreach (uint sdRef in new[] { SdRef.Make(Families.CapitalShip, 65), SdRef.Make(Families.CoreSystem, 265), SdRef.Make(Families.Sector, 22), SdRef.Make(200, 5) })
+            Assert.True(FamilyNames.TryParseBaseId(FamilyNames.BaseId(sdRef), out uint back) && back == sdRef);
+        Assert.True(FamilyNames.TryParseBaseId("base:20:65", out uint byNumber) && byNumber == SdRef.Make(Families.CapitalShip, 65));
+        foreach (string bad in new[] { "base:14000041", "base:capitalShip:4A", "base:capitalShip:+65", "base:capitalShip:16777216", "base:nosuch:1", "base:capitalShip", "capitalShip:65" })
+            Assert.False(FamilyNames.TryParseBaseId(bad, out _), bad);
+    }
+
+    [GameFact]
+    public void ParameterOverrideByNameAndByNumber()
+    {
+        // the parameter named CorePopulatedChance is row 7730; the same row by its decimal id
+        static int[] Row(GameDefinitions d) => d.GeneralParams.Single(p => p.ParamId == 7730).Values;
+        var byName = WithMod("""{"op": "override", "type": "generalParam", "id": "CorePopulatedChance", "value": 50}""", dir => ModLoader.Load(GameDir.Path, dir, ["m"]));
+        var byNumber = WithMod("""{"op": "override", "type": "generalParam", "id": "7730", "value": 50}""", dir => ModLoader.Load(GameDir.Path, dir, ["m"]));
+        Assert.Equal(Enumerable.Repeat(50, Row(byName).Length), Row(byName));
+        Assert.Equal(Row(byName), Row(byNumber));
     }
 
     [GameFact]
@@ -335,7 +386,7 @@ public class ModTests(ITestOutputHelper output)
                 {"records": [
                   {"op": "override", "type": "capitalShip", "id": "testmod:warden", "hull": 1200, "name": "Warden Mk II"},
                   {"op": "remove", "type": "system", "id": "testmod:kiln"},
-                  {"op": "override", "type": "generalParam", "id": "0x1E32", "values": [50, 50, 50, 50, 50, 50, 50, 50]}
+                  {"op": "override", "type": "generalParam", "id": "CorePopulatedChance", "values": [50, 50, 50, 50, 50, 50, 50, 50]}
                 ]}
                 """);
             foreach (var sub in Directory.GetDirectories(ModsDir)) CopyDir(sub, Path.Combine(dir, Path.GetFileName(sub)));

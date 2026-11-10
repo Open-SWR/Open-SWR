@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="OpenSWR.Data.Dat" />
   </ItemGroup>
 
   <ItemGroup>

@@ -46,13 +46,13 @@ mods/rebalance/
 {
   "records": [
     // Imperial I Star Destroyer: more hull, stronger forward turbolasers
-    { "op": "override", "type": "capitalShip", "id": "base:14000085", "hull": 3200, "fore": { "turbolaser": 120, "ionCannon": 100, "laserCannon": 0 } },
+    { "op": "override", "type": "capitalShip", "id": "base:capitalShip:133", "hull": 3200, "fore": { "turbolaser": 120, "ionCannon": 100, "laserCannon": 0 } },
     // TIE Interceptor: more agile
-    { "op": "override", "type": "fighter", "id": "base:1C000006", "maneuverability": 9 },
+    { "op": "override", "type": "fighter", "id": "base:fighter:6", "maneuverability": 9 },
     // Stormtrooper Regiment: better attack, cheaper upkeep
-    { "op": "override", "type": "troop", "id": "base:10000006", "attackStrength": 8, "maintenanceCost": 5 },
+    { "op": "override", "type": "troop", "id": "base:troop:6", "attackStrength": 8, "maintenanceCost": 5 },
     // Orbital Shipyard: builds faster
-    { "op": "override", "type": "facility", "id": "base:28000001", "processingRate": 5 }
+    { "op": "override", "type": "facility", "id": "base:shipyard:1", "processingRate": 5 }
   ]
 }
 ```
@@ -76,7 +76,7 @@ Notes:
 ```json
 {
   "records": [
-    { "op": "override", "type": "capitalShip", "id": "base:14000043", "name": "Escort Frigate",
+    { "op": "override", "type": "capitalShip", "id": "base:capitalShip:67", "name": "Escort Frigate",
       "description": "A long, narrow escort ship.\nGood against fighters, weak in a line battle." }
   ]
 }
@@ -106,7 +106,7 @@ mods/newship/
 {
   "records": [
     {
-      "op": "add", "type": "capitalShip", "id": "patrol", "from": "base:14000084", "name": "Patrol Cruiser",
+      "op": "add", "type": "capitalShip", "id": "patrol", "from": "base:capitalShip:132", "name": "Patrol Cruiser",
       "picture": "art/patrol.png",
       "model": "art/patrol.glb",
       "description": "A fast cruiser for guarding quiet sectors.",
@@ -122,9 +122,9 @@ mods/newship/
 
 Notes:
 
-- The copy comes from `base:14000084` (Victory I Star Destroyer), an Empire ship. So the new ship is Empire only.
+- The copy comes from `base:capitalShip:132` (Victory I Star Destroyer), an Empire ship. So the new ship is Empire only.
   For an Alliance ship, copy an Alliance ship or set `"alliance": 1, "empire": 0`.
-- **Research order.** Each side can have only one unit per research order and producer. The shipyard (0x28) builds both
+- **Research order.** Each side can have only one unit per research order and producer. The shipyard builds both
   capital ships and fighters, so they share the numbers. In the original data, orders 1–11 are taken for both sides at the
   shipyard; 12 is free. Order 0 means "available from the start". If you pick a taken order, the error lists the records
   that use it.
@@ -146,7 +146,7 @@ Notes:
 ```json
 {
   "records": [
-    { "op": "add", "type": "fighter", "id": "lancer", "from": "base:1C000003", "name": "Lancer Heavy Fighter",
+    { "op": "add", "type": "fighter", "id": "lancer", "from": "base:fighter:3", "name": "Lancer Heavy Fighter",
       "researchOrder": 12, "researchDifficulty": 20,
       "shieldStrength": 2, "maneuverability": 5,
       "fore": { "turbolaser": 0, "ionCannon": 2, "laserCannon": 7 } }
@@ -154,7 +154,7 @@ Notes:
 }
 ```
 
-Copied from the X-wing (`base:1C000003`), so it is an Alliance fighter. `squadronSize` (the number of craft per squadron)
+Copied from the X-wing (`base:fighter:3`), so it is an Alliance fighter. `squadronSize` (the number of craft per squadron)
 must stay above 0.
 
 ## 5. Add a troop regiment
@@ -168,7 +168,7 @@ must stay above 0.
 ```json
 {
   "records": [
-    { "op": "add", "type": "troop", "id": "garrison", "from": "base:10000008", "name": "Garrison Regiment",
+    { "op": "add", "type": "troop", "id": "garrison", "from": "base:troop:8", "name": "Garrison Regiment",
       "researchOrder": 3, "researchDifficulty": 25,
       "attackStrength": 3, "defenseStrength": 9, "bombardmentDefense": 8 }
   ]
@@ -189,14 +189,14 @@ orders 1 and 2 in the original; 3 is free.
 ```json
 {
   "records": [
-    { "op": "add", "type": "facility", "id": "heavybattery", "from": "base:22000001", "name": "Heavy Planetary Battery",
+    { "op": "add", "type": "facility", "id": "heavybattery", "from": "base:ionCannon:1", "name": "Heavy Planetary Battery",
       "researchOrder": 12, "researchDifficulty": 50,
       "refinedMaterialCost": 9, "maintenanceCost": 6, "attackStrength": 3500 }
   ]
 }
 ```
 
-With `from`, the new facility takes the family of the copied record (here 0x22, a planetary battery) and its role. Without
+With `from`, the new facility takes the family of the copied record (here `ionCannon`, a planetary battery) and its role. Without
 `from`, set `"family"` yourself (see the table in `docs/modding.md`). You cannot invent a new facility role.
 
 ## 7. Add a minor character
@@ -241,23 +241,23 @@ that bit added to each mission it may run.
 ```json
 {
   "records": [
-    { "op": "add", "type": "specialForce", "id": "slicers", "from": "base:3C000002", "name": "Slicer Team",
-      "missionMask": "0x10",
+    { "op": "add", "type": "specialForce", "id": "slicers", "from": "base:specialForce:2", "name": "Slicer Team",
+      "missionMask": 16,
       "espionage": { "base": 65, "variance": 0 }, "combat": { "base": 10, "variance": 0 } },
-    // Espionage (0x208) and Sabotage (0x402) also accept the new force's bit 0x10
-    { "op": "override", "type": "mission", "id": "base:52000013", "specialForceMask": "0x218" },
-    { "op": "override", "type": "mission", "id": "base:69000012", "specialForceMask": "0x412" }
+    // Espionage (520) and Sabotage (1026) also accept the new force's bit 16
+    { "op": "override", "type": "mission", "id": "base:espionage:19", "specialForceMask": 536 },
+    { "op": "override", "type": "mission", "id": "base:sabotage:18", "specialForceMask": 1042 }
   ]
 }
 ```
 
 Notes:
 
-- The original forces use bits 0x1, 0x2, 0x4, 0x8 (Alliance) and 0x100, 0x200, 0x400, 0x800, 0x1000 (Empire). Free bits
-  include 0x10, 0x20, 0x40 and 0x80.
-- `specialForceMask` replaces the whole value, so add your bit to the original mask. Original masks of the main missions: Espionage 0x208,
-  Sabotage 0x402, Reconnaissance 0x104, Diplomacy 0, Incite Uprising 0x401, Subdue Uprising 0x401, Rescue 0x802,
-  Abduction 0x802, Assassination 0x800, Death Star Sabotage 0x2.
+- The original forces use bits 1, 2, 4, 8 (Alliance) and 256, 512, 1024, 2048, 4096 (Empire). Free bits
+  include 16, 32, 64 and 128.
+- `specialForceMask` replaces the whole value, so add your bit to the original mask. Original masks of the main missions: Espionage 520,
+  Sabotage 1026, Reconnaissance 260, Diplomacy 0, Incite Uprising 1025, Subdue Uprising 1025, Rescue 2050,
+  Abduction 2050, Assassination 2048, Death Star Sabotage 2.
 - The computer opponent never builds mod special forces. It still uses ones it gets as agents.
 
 ## 9. Change the starting fleet (a mod that needs another mod)
@@ -274,13 +274,13 @@ full (`newship:patrol`), so it must load after `newship`. `requires` makes sure 
 ```json
 {
   "records": [
-    // the Empire fleet places entries with keys 0x1412–0x1413 (originally 1–1): let it place key 2 too
-    { "op": "override", "type": "generalParam", "id": "0x1413", "value": 2 },
+    // the Empire fleet places entries with keys from EmpireFleetUnitsFirstKey to EmpireFleetUnitsLastKey (originally 1 to 1): let it place key 2 too
+    { "op": "override", "type": "generalParam", "id": "EmpireFleetUnitsLastKey", "value": 2 },
     { "op": "replace", "type": "seedTable", "id": "CMUNEFTB", "entries": [
-        { "key": 1, "count": 1, "items": ["base:14000085",
-            "base:1C000005", "base:1C000005", "base:1C000005", "base:1C000005", "base:1C000005", "base:1C000005",
-            "base:10000006", "base:10000006", "base:10000006"] },
-        { "key": 2, "count": 2, "items": ["newship:patrol", "base:1C000006"] } ] }
+        { "key": 1, "count": 1, "items": ["base:capitalShip:133",
+            "base:fighter:5", "base:fighter:5", "base:fighter:5", "base:fighter:5", "base:fighter:5", "base:fighter:5",
+            "base:troop:6", "base:troop:6", "base:troop:6"] },
+        { "key": 2, "count": 2, "items": ["newship:patrol", "base:fighter:6"] } ] }
   ]
 }
 ```
@@ -292,15 +292,15 @@ How it reads:
 - In each entry, the first item is the ship that carries the rest. Entry 2 places `count` = 2 copies of "a Patrol Cruiser
   carrying one TIE Interceptor squadron".
 - The starting tables place only the entries whose keys lie in a fixed key range. For the Empire fleet that range is general
-  parameters 0x1412–0x1413, originally 1 to 1. Raising 0x1413 to 2 places entry 2 as well. The Alliance fleet
-  (`CMUNAFTB`) uses 0x1410–0x1411, originally 1 to 2. The other tables are listed in `docs/modding.md`, Tables, and their
+  parameters `EmpireFleetUnitsFirstKey` and `EmpireFleetUnitsLastKey`, originally 1 to 1. Raising `EmpireFleetUnitsLastKey`
+  to 2 places entry 2 as well. The Alliance fleet (`CMUNAFTB`) uses `AllianceFleetUnitsFirstKey` and `AllianceFleetUnitsLastKey`, originally 1 to 2. The other tables are listed in `docs/modding.md`, Tables, and their
   key ranges in `docs/spec/new-game.md` section 5.3.
 - Load order: on the Mods screen, `newship` must be above `startfleet`. Otherwise the error is
   `startfleet mod.json: requires: mod 'newship' must come before 'startfleet' in the load order.`
 
 ## 10. Change a game parameter
 
-Side parameters 0x1400 / 0x1401 / 0x1402 are the number of random minor characters each side gets at the start, for galaxy
+Side parameters `MinorCharactersSmall` / `MinorCharactersMedium` / `MinorCharactersLarge` are the number of random minor characters each side gets at the start, for galaxy
 size small / medium / large (originally 1 / 2 / 4). This mod gives each side two in a small galaxy.
 
 ```json
@@ -312,18 +312,18 @@ size small / medium / large (originally 1 / 2 / 4). This mod gives each side two
 ```json
 {
   "records": [
-    { "op": "override", "type": "sideParam", "id": "0x1400", "values": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2] }
+    { "op": "override", "type": "sideParam", "id": "MinorCharactersSmall", "values": [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2] }
   ]
 }
 ```
 
 `values` lists every column: 8 game-setting columns for each of the two sides. `"value": 2` instead sets all columns at
-once. Parameter ids and their meaning are in the specs, mostly `docs/spec/new-game.md`.
+once. Parameter names are the enum names in `src/OpenSWR.Data/Dat/Parameters.cs`; their meaning is in the specs, mostly `docs/spec/new-game.md`.
 
 ## 11. Add a sector with new planets
 
 The original game already uses all 200 system slots. To add planets, first remove as many. This mod removes one sector that
-only exists in the large galaxy (Outer Rim North, `base:80000015`) with its ten systems. It then adds a new rim sector with
+only exists in the large galaxy (Outer Rim North, `base:sector:21`) with its ten systems. It then adds a new rim sector with
 three planets that exists in every galaxy size.
 
 ```json
@@ -336,17 +336,17 @@ three planets that exists in every galaxy size.
 {
   "records": [
     // free ten system slots: remove a galaxy-size-3 sector and its ten systems
-    { "op": "remove", "type": "sector", "id": "base:80000015" },
-    { "op": "remove", "type": "system", "id": "base:9200006E" },
-    { "op": "remove", "type": "system", "id": "base:9200006F" },
-    { "op": "remove", "type": "system", "id": "base:92000070" },
-    { "op": "remove", "type": "system", "id": "base:92000071" },
-    { "op": "remove", "type": "system", "id": "base:92000072" },
-    { "op": "remove", "type": "system", "id": "base:92000073" },
-    { "op": "remove", "type": "system", "id": "base:92000074" },
-    { "op": "remove", "type": "system", "id": "base:92000075" },
-    { "op": "remove", "type": "system", "id": "base:92000076" },
-    { "op": "remove", "type": "system", "id": "base:92000077" },
+    { "op": "remove", "type": "sector", "id": "base:sector:21" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:110" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:111" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:112" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:113" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:114" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:115" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:116" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:117" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:118" },
+    { "op": "remove", "type": "system", "id": "base:rimSystem:119" },
     // a new rim sector in every galaxy size; systems lie in x 160–238, y 500–602
     { "op": "add", "type": "sector", "id": "drift", "name": "Ember Drift", "group": 2, "galaxySize": 1, "x": 160, "y": 500 },
     { "op": "add", "type": "system", "id": "cinder", "name": "Cinder", "sector": "drift", "x": 172, "y": 512, "systemPicture": 5 },
@@ -390,12 +390,12 @@ names the mod, file, record and field.
 
 | Error | Fix |
 |---|---|
-| `researchOrder: order 3 is used by 1400008F, 1C000006 for the Empire at producer 0x28; one record per order.` | Pick a free research order (example 3 notes). |
+| `researchOrder: order 3 is used by base:capitalShip:143, base:fighter:6 for the Empire at producer shipyard; one record per order.` | Pick a free research order (example 3 notes). |
 | `requires: mod 'newship' is not enabled.` | Enable the required mod too. |
 | `requires: mod 'newship' must come before 'startfleet' in the load order.` | Move the required mod up on the Mods screen. |
 | `no free system Index left in 100–299` | Remove as many systems as you add (example 11). |
 | `x / y: (900, 678) must lie in its sector's box: x 311–389, y 631–733.` | Move the system into its sector's box. |
-| `missionMask: 0x1 shares bits with 3C000001 (0x1); each force needs its own bit.` | Use a free bit (example 8). |
+| `missionMask: 1 shares bits with base:specialForce:1 (1); each force needs its own bit.` | Use a free bit (example 8). |
 | `cannot be removed: the game code refers to … directly` | That record can be changed, not removed. |
 | `colour: unknown field for SECTORSD records` | Check the field name against the tables in `docs/modding.md`. |
 | `Save game was played with mods: …` | Load the save with the same mods, versions and order it was made with. |

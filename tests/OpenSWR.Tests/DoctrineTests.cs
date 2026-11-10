@@ -44,7 +44,7 @@ public class DoctrineTests(ITestOutputHelper output)
 
     // an invented picket: lasers only on every arc, a fast weapon recharge; every other role stat 0
     static string Picket(uint from) => $$"""
-        {"op": "add", "type": "capitalShip", "id": "picket", "from": "base:{{from:X8}}", "name": "Test Picket", "alliance": 1, "empire": 0,
+        {"op": "add", "type": "capitalShip", "id": "picket", "from": "{{FamilyNames.BaseId(from)}}", "name": "Test Picket", "alliance": 1, "empire": 0,
          "maintenanceCost": 20, "researchOrder": 0, "refinedMaterialCost": 10, "weaponRechargeRate": 50,
          "fore": {"turbolaser": 0, "ionCannon": 0, "laserCannon": 4}, "aft": {"turbolaser": 0, "ionCannon": 0, "laserCannon": 4},
          "port": {"turbolaser": 0, "ionCannon": 0, "laserCannon": 4}, "starboard": {"turbolaser": 0, "ionCannon": 0, "laserCannon": 4},
@@ -97,7 +97,7 @@ public class DoctrineTests(ITestOutputHelper output)
     {
         uint from = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) == Families.CapitalShip).Common.Ref;
         string Ship(string id, int bombardment, int hull) => $$"""
-            {"op": "add", "type": "capitalShip", "id": "{{id}}", "from": "base:{{from:X8}}", "name": "Test {{id}}", "alliance": 1, "empire": 0,
+            {"op": "add", "type": "capitalShip", "id": "{{id}}", "from": "{{FamilyNames.BaseId(from)}}", "name": "Test {{id}}", "alliance": 1, "empire": 0,
              "maintenanceCost": 40, "researchOrder": 0, "refinedMaterialCost": 10, "weaponRechargeRate": 60, "hull": {{hull}}, "bombardment": {{bombardment}},
              "fore": {"turbolaser": 10, "ionCannon": 0, "laserCannon": 0}, "aft": {"turbolaser": 10, "ionCannon": 0, "laserCannon": 0},
              "port": {"turbolaser": 10, "ionCannon": 0, "laserCannon": 0}, "starboard": {"turbolaser": 10, "ionCannon": 0, "laserCannon": 0},
@@ -149,7 +149,7 @@ public class DoctrineTests(ITestOutputHelper output)
     {
         var gun = Definitions.DefenseFacilities.Where(r => r.Alliance != 0 && r.AttackStrength > 0 && r.ResearchOrder == 0).OrderBy(r => r.Common.Ref).First();
         string records = $$"""
-            {"op": "add", "type": "facility", "id": "dud", "from": "base:{{gun.Common.Ref:X8}}", "name": "Test Dud", "alliance": 1, "empire": 1,
+            {"op": "add", "type": "facility", "id": "dud", "from": "{{FamilyNames.BaseId(gun.Common.Ref)}}", "name": "Test Dud", "alliance": 1, "empire": 1,
              "maintenanceCost": {{gun.MaintenanceCost + 3}}, "attackStrength": {{Math.Max(1, gun.AttackStrength / 4)}}, "shieldStrength": 0,
              "bombardmentDefense": 0, "researchOrder": 0, "refinedMaterialCost": 10}
             """;

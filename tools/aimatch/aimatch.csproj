@@ -14,4 +14,8 @@
     <ProjectReference Include="..\..\src\OpenSWR.Sim\OpenSWR.Sim.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Using Include="OpenSWR.Data.Dat" />
+  </ItemGroup>
+
 </Project>
