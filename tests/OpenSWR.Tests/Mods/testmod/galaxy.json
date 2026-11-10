@@ -1,0 +1,21 @@
+{
+  "records": [
+    { "op": "remove", "type": "sector", "id": "base:80000015" },
+    { "op": "remove", "type": "system", "id": "base:9200006E" },
+    { "op": "remove", "type": "system", "id": "base:9200006F" },
+    { "op": "remove", "type": "system", "id": "base:92000070" },
+    { "op": "remove", "type": "system", "id": "base:92000071" },
+    { "op": "remove", "type": "system", "id": "base:92000072" },
+    { "op": "remove", "type": "system", "id": "base:92000073" },
+    { "op": "remove", "type": "system", "id": "base:92000074" },
+    { "op": "remove", "type": "system", "id": "base:92000075" },
+    { "op": "remove", "type": "system", "id": "base:92000076" },
+    { "op": "remove", "type": "system", "id": "base:92000077" },
+    { "op": "add", "type": "sector", "id": "drift", "name": "Ember Drift", "group": 2, "galaxySize": 1, "x": 160, "y": 500 },
+    { "op": "add", "type": "system", "id": "cinder", "name": "Cinder", "sector": "drift", "x": 172, "y": 512, "systemPicture": 5, "picture": "art/cinder.png" },
+    { "op": "add", "type": "system", "id": "ashfall", "name": "Ashfall", "sector": "drift", "x": 201, "y": 538, "systemPicture": 17 },
+    { "op": "add", "type": "system", "id": "slag", "name": "Slag Reach", "sector": "drift", "x": 184, "y": 579, "systemPicture": 42 },
+    { "op": "add", "type": "system", "id": "kiln", "name": "Kiln", "sector": "drift", "x": 222, "y": 521, "systemPicture": 77 },
+    { "op": "add", "type": "system", "id": "lantern", "name": "Lantern", "sector": "drift", "x": 215, "y": 590, "systemPicture": 120 }
+  ]
+}

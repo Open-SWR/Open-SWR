@@ -1,0 +1,39 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://MainScreen.cs" id="1"]
+[ext_resource type="Script" path="res://GalaxyMap.cs" id="2"]
+
+[node name="MainScreen" type="Node2D"]
+script = ExtResource("1")
+
+[node name="Clip" type="Control" parent="."]
+clip_contents = true
+mouse_filter = 2
+
+[node name="Map" type="Node2D" parent="Clip"]
+script = ExtResource("2")
+
+[node name="Frame" type="Sprite2D" parent="."]
+centered = false
+
+[node name="Hud" type="CanvasLayer" parent="."]
+
+[node name="Info" type="Label" parent="Hud"]
+offset_left = 4.0
+offset_top = 400.0
+offset_right = 636.0
+offset_bottom = 480.0
+theme_override_font_sizes/font_size = 8
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+vertical_alignment = 2
+autowrap_mode = 3
+
+[node name="Status" type="Label" parent="Hud"]
+offset_left = 4.0
+offset_top = 2.0
+offset_right = 636.0
+offset_bottom = 14.0
+theme_override_font_sizes/font_size = 8
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3

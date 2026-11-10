@@ -1,0 +1,31 @@
+{
+  "records": [
+    {
+      "op": "add", "type": "capitalShip", "id": "warden", "from": "base:14000041", "name": "Warden Picket",
+      "picture": "art/warden.png",
+      "model": "art/warden.glb",
+      "description": "A light picket ship built on an escort frame: heavier hull and shields, a stronger forward battery. openswr test content.",
+      "researchOrder": 12, "researchDifficulty": 100,
+      "hull": 900, "shieldStrength": 400,
+      "fore": { "turbolaser": 30, "ionCannon": 10, "laserCannon": 20 }
+    },
+    {
+      "op": "add", "type": "fighter", "id": "kestrel", "from": "base:1C000003", "name": "Kestrel Interceptor",
+      "maneuverability": 7, "fore": { "laserCannon": 6 }
+    },
+    {
+      "op": "add", "type": "minorCharacter", "id": "varn", "name": "Ilsa Varn",
+      "alliance": 1, "empire": 0,
+      "diplomacy": { "base": 40, "variance": 20 }, "espionage": { "base": 30, "variance": 30 },
+      "combat": { "base": 50, "variance": 20 }, "leadership": { "base": 60, "variance": 20 }, "loyalty": { "base": 100, "variance": 0 },
+      "jediProbability": 5, "jediLevel": { "base": 10, "variance": 20 }, "canBeCommander": 1
+    },
+    {
+      "op": "replace", "type": "seedTable", "id": "CMUNAFTB",
+      "entries": [
+        { "key": 1, "count": 1, "items": ["warden", "kestrel", "kestrel"] },
+        { "key": 2, "count": 1, "items": ["base:14000046", "base:10000001", "base:10000001"] }
+      ]
+    }
+  ]
+}

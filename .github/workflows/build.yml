@@ -1,0 +1,144 @@
+name: Release
+
+# Runs only when a tag is pushed: tests, exports Windows / Linux / macOS, publishes a release with the three zips.
+on:
+  push:
+    tags: ["*"]
+
+env:
+  GODOT_VERSION: "4.7.2"
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: dotnet build OpenSWR.sln -c Release
+      # Tests that need the original game files skip without OPENSWR_GAME_DIR.
+      - run: dotnet test tests/OpenSWR.Tests -c Release --no-build
+
+  export:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            preset: Windows Desktop
+            editor: Godot_v4.7.2-stable_mono_win64
+            exe: Godot_v4.7.2-stable_mono_win64/Godot_v4.7.2-stable_mono_win64_console.exe
+          - platform: linux
+            os: ubuntu-latest
+            preset: Linux
+            editor: Godot_v4.7.2-stable_mono_linux_x86_64
+            exe: Godot_v4.7.2-stable_mono_linux_x86_64/Godot_v4.7.2-stable_mono_linux.x86_64
+          - platform: macos
+            os: macos-latest
+            preset: macOS
+            editor: Godot_v4.7.2-stable_mono_macos.universal
+            exe: Godot_mono.app/Contents/MacOS/Godot
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Cache Godot
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            godot-editor
+            godot-templates
+          key: godot-${{ env.GODOT_VERSION }}-mono-${{ matrix.platform }}
+
+      - name: Download Godot editor and export templates
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -fsSL -o editor.zip "$base/${{ matrix.editor }}.zip"
+          mkdir -p godot-editor && unzip -q editor.zip -d godot-editor
+          curl -fsSL -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_mono_export_templates.tpz"
+          unzip -q templates.tpz -d godot-templates-raw
+          mkdir -p godot-templates
+          # Keep only this platform's templates (the full set is over 1 GB).
+          case "${{ matrix.platform }}" in
+            windows) pattern='windows_*_x86_64*' ;;
+            linux)   pattern='linux_*.x86_64' ;;
+            macos)   pattern='macos.zip' ;;
+          esac
+          cp godot-templates-raw/templates/version.txt godot-templates/
+          find godot-templates-raw/templates -maxdepth 1 -name "$pattern" -exec cp {} godot-templates/ \;
+          ls godot-templates
+
+      - name: Install export templates
+        run: |
+          case "${{ matrix.platform }}" in
+            windows) dir="$APPDATA/Godot/export_templates/${GODOT_VERSION}.stable.mono" ;;
+            linux)   dir="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable.mono" ;;
+            macos)   dir="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable.mono" ;;
+          esac
+          mkdir -p "$dir"
+          cp godot-templates/* "$dir/"
+
+      - name: Export
+        run: |
+          godot="$PWD/godot-editor/${{ matrix.exe }}"
+          chmod +x "$godot" || true
+          cp ci/export_presets.cfg godot/export_presets.cfg
+          dotnet build godot/OpenSWR.csproj -c Release
+          "$godot" --headless --path godot --import || true
+          mkdir -p "build/${{ matrix.platform }}"
+          "$godot" --headless --path godot --export-release "${{ matrix.preset }}"
+          ls -la "build/${{ matrix.platform }}"
+
+      - name: Package
+        run: |
+          name="Open-SWR-${{ github.ref_name }}-${{ matrix.platform }}"
+          mkdir -p dist
+          if [ "${{ matrix.platform }}" = macos ]; then
+            mkdir -p "pkg/$name"
+            (cd "pkg/$name" && unzip -q "../../build/macos/Open-SWR.zip")
+          else
+            mkdir -p pkg && cp -r "build/${{ matrix.platform }}" "pkg/$name"
+          fi
+          cp README.md LICENSE "pkg/$name/"
+          if [ "${{ matrix.platform }}" = windows ]; then
+            (cd pkg && 7z a -tzip "../dist/$name.zip" "$name" > /dev/null)
+          else
+            (cd pkg && zip -qry "../dist/$name.zip" "$name")
+          fi
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Open-SWR-${{ matrix.platform }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: export
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/*.zip --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes

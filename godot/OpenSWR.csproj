@@ -1,0 +1,14 @@
+<Project Sdk="Godot.NET.Sdk/4.7.2">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\src\OpenSWR.Data\OpenSWR.Data.csproj" />
+    <ProjectReference Include="..\src\OpenSWR.Sim\OpenSWR.Sim.csproj" />
+  </ItemGroup>
+
+</Project>

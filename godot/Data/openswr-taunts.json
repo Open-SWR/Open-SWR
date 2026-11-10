@@ -1,0 +1,45 @@
+{
+  "battleWon": [
+    "Was that your fleet at {system}? I thought it was target practice.",
+    "Good fight at {system}. Well, good for me.",
+    "My gunners would like to thank you for the training session at {system}.",
+    "I have filed your fleet at {system} under \"scrap metal\".",
+    "Next time bring more ships to {system}. Or ships that work.",
+    "That went exactly as planned at {system}. My plan, not yours.",
+    "Your admirals should consider a career in farming. Ask them about {system}.",
+    "I would send flowers to {system}, but you have nobody left there to receive them."
+  ],
+  "battleLost": [
+    "{system}? We call that a tactical retreat. Very tactical.",
+    "I let you win at {system}. Morale matters, and yours was looking low.",
+    "Those ships at {system} were due for scrapping anyway.",
+    "Fine. Enjoy {system}. It is a short moment.",
+    "I was only testing your defences at {system}. Result: annoying.",
+    "Our insurance covers {system}. Probably.",
+    "Lucky shot at {system}. Several lucky shots. In a row.",
+    "My captains at {system} were distracted by the view."
+  ],
+  "systemTaken": [
+    "{system} is under new management. Mine.",
+    "Thank you for keeping {system} warm for me.",
+    "{system} has been redecorated in my colours. Much better.",
+    "I took {system}. You may file a complaint. Nobody will read it.",
+    "{system} looked lonely. Now it has me.",
+    "Adding {system} to my collection. It goes well with the others."
+  ],
+  "systemLost": [
+    "Didn't want {system} anyway.",
+    "{system}? The weather there was terrible.",
+    "Keep {system}. The taxes were a nightmare.",
+    "I was going to give {system} away. You saved me the paperwork.",
+    "{system} was more of a holiday spot. Overrated.",
+    "Losing {system} was part of the plan. I have a plan now."
+  ],
+  "attackLaunched": [
+    "Surprise! I am at {system}. Did you miss me?",
+    "Hello, {system}. I brought friends. Lots of friends.",
+    "Knock knock. Who is there? Me, at {system}.",
+    "Do not mind my fleet at {system}. Purely a social call.",
+    "Polish your shields at {system}. Not that it will help."
+  ]
+}

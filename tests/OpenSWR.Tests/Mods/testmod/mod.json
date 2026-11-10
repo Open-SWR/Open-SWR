@@ -1,0 +1,8 @@
+{
+  "id": "testmod",
+  "name": "openswr test content",
+  "version": "1.0",
+  "galaxyPicture": "art/galaxy.png",
+  "requires": [],
+  "conflicts": []
+}
