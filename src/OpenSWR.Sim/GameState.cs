@@ -760,12 +760,9 @@ public sealed class KnownObjects(GameState game)
     public Character? Luke => CharacterOf(Refs.Luke);
     public Character? Leia => CharacterOf(Refs.Leia);
     public Character? Han => CharacterOf(Refs.Han);
-    public Character? Chewbacca => CharacterOf(Refs.Chewbacca);
     public Character? Vader => CharacterOf(Refs.Vader);
     public Character? Palpatine => CharacterOf(Refs.Palpatine);
     public Character? Mothma => CharacterOf(Refs.Mothma);
-    public Character? Wedge => CharacterOf(Refs.Wedge);
-    public Character? Dodonna => CharacterOf(Refs.Dodonna);
 
     Character? CharacterOf(uint type) => game.Characters.FirstOrDefault(c => c.Type == type);
 }
