@@ -116,13 +116,13 @@ public static class Match
         var commands = new Dictionary<Owner, int> { [Owner.Alliance] = 0, [Owner.Empire] = 0 };
         state.Clock.Executed = (c, r) =>
         {
-            if (r.Success && c.Type is not (1 or 0x280) && commands.ContainsKey(c.Side)) commands[c.Side]++;
-            if (r.Success && c.Type is >= 0x220 and <= 0x223 && c.ArgRef is StarSystem at) slices?.Bombard.Order(c.Side, c.Type, at);
+            if (r.Success && c.Type is not (CommandType.TickToken or CommandType.GameSpeed) && commands.ContainsKey(c.Side)) commands[c.Side]++;
+            if (r.Success && c.Type is >= CommandType.Bombard and <= CommandType.BombardDestroy && c.ArgRef is StarSystem at) slices?.Bombard.Order(c.Side, (int)c.Type, at);
         };
         state.BattleResults = _ => null; // the engine runs every battle
         state.BattleTrace = []; // battle reports (won side per battle)
         if (slices is not null) state.StrikeTrace = []; // strike records (UI only, no draw): the bombardment measurement
-        state.FactTrace = []; // mission TaskStatus changes (0x60); read and cleared every tick
+        state.FactTrace = []; // mission TaskStatus changes; read and cleared every tick
         var owners = new Dictionary<uint, (Owner Owner, uint Kind)>();
         var missions = new SortedDictionary<uint, MissionCount>();
         void Count(uint kind, MissionCount add) => missions[kind] = missions.GetValueOrDefault(kind, new(0, 0, 0)) + add;
@@ -131,15 +131,15 @@ public static class Match
         {
             foreach (var m in state.Missions.Where(m => !owners.ContainsKey(m.Ref)))
             {
-                owners[m.Ref] = (m.Owner, m.Kind);
-                if (m.Owner == openswr) Count(m.Kind, new(1, 0, 0));
+                owners[m.Ref] = (m.Owner, (uint)m.Kind);
+                if (m.Owner == openswr) Count((uint)m.Kind, new(1, 0, 0));
             }
             // foiled (3 / 4), or ended early without a success (a rescue that succeeded ends with 6 after TaskStatus 3: not counted)
-            foreach (var m in state.Missions.Where(m => m.Owner == openswr && (m.CompletionStatus is 3 or 4 || m.CompletionStatus is not (0 or 1) && m.TaskStatus != 3)
+            foreach (var m in state.Missions.Where(m => m.Owner == openswr && (m.CompletionStatus is MissionCompletion.FoiledEnRoute or MissionCompletion.Foiled || m.CompletionStatus is not (MissionCompletion.None or MissionCompletion.Done) && m.TaskStatus != MissionTaskStatus.Succeeded)
                          && ended.Add(m.Ref)))
-                Count(m.Kind, new(0, 0, 0, 1));
-            foreach (var f in state.FactTrace!.Where(f => f.Kind == 0x60 && f.New is 2 or 3))
-                if (owners.TryGetValue(f.Object, out var o) && o.Owner == openswr) Count(o.Kind, f.New == 3 ? new(0, 1, 0) : new(0, 0, 1));
+                Count((uint)m.Kind, new(0, 0, 0, 1));
+            foreach (var f in state.FactTrace!.Where(f => f.Kind == FactKind.TaskStatus && (MissionTaskStatus)f.New is MissionTaskStatus.Failed or MissionTaskStatus.Succeeded))
+                if (owners.TryGetValue(f.Object, out var o) && o.Owner == openswr) Count(o.Kind, (MissionTaskStatus)f.New == MissionTaskStatus.Succeeded ? new(0, 1, 0) : new(0, 0, 1));
             state.FactTrace!.Clear();
         }
         // owner changes: each tick compared with the state before it (owner, Uprising, the owner's Usable troops there)
@@ -244,14 +244,14 @@ public static class Match
             slices.AttackLaunches += launcher.AttackLaunches;
         }
         if (slices is not null && state.Controllers[openswr] is OpenSWRController { AssaultLossesSeen: { } seen }) slices.AssaultLossesSeen.AddRange(seen);
-        if (slices is not null && state.Controllers[openswr] is OpenSWRController hunter) slices.Objectives.Hunted(hunter); // step 21 (Hunt) measurement
+        if (slices is not null && state.Controllers[openswr] is OpenSWRController hunter) slices.Objectives.Hunted(hunter); // Hunt measurement
         if (slices is not null && state.Controllers[openswr] is OpenSWRController { PivotEvents: { } pivots, RetryRecords: { } retries })
         {
             slices.PivotEvents.AddRange(pivots);
             slices.RetryRecords.AddRange(retries);
             slices.FewerDecoys += ((OpenSWRController)state.Controllers[openswr]).FewerDecoys;
         }
-        if (state.Controllers[openswr] is OpenSWRController { RimDropped.Count: > 0 } rim) // step 37 (RimFirst) measurement
+        if (state.Controllers[openswr] is OpenSWRController { RimDropped.Count: > 0 } rim) // RimFirst measurement
         {
             var dropped = rim.RimDropped.Distinct().Select(r => state.Systems.First(s => s.Ref == r)).ToList();
             Console.WriteLine($"  game {game}: rim drops {rim.RimDropped.Count} at {dropped.Count} systems, held at end {dropped.Count(s => s.Owner == openswr)}, enemy-held at end {dropped.Count(s => s.Owner == (openswr == Owner.Alliance ? Owner.Empire : Owner.Alliance))}, rim systems owned {state.Systems.Count(s => s.Owner == openswr && !s.Sector.IsCore)}");
@@ -263,14 +263,14 @@ public static class Match
     /// <summary>The production category of a unit or facility type, null for anything else.</summary>
     static ProductCategory? Category(uint type) => Family.Of(type) switch
     {
-        >= 0x14 and < 0x1C => ProductCategory.CapitalShips,
-        >= 0x1C and < 0x20 => ProductCategory.Fighters,
-        >= 0x10 and < 0x14 => ProductCategory.Troops,
-        >= 0x3C and < 0x40 => ProductCategory.SpecialForces,
-        >= 0x28 and < 0x2B => ProductCategory.ProductionFacilities,
-        0x2C => ProductCategory.Mines,
-        0x2D => ProductCategory.Refineries,
-        >= 0x22 and < 0x28 => ProductCategory.DefenceFacilities,
+        >= 20 and < 28 => ProductCategory.CapitalShips,
+        >= 28 and < 32 => ProductCategory.Fighters,
+        >= 16 and < 20 => ProductCategory.Troops,
+        >= 60 and < 64 => ProductCategory.SpecialForces,
+        >= 40 and < 43 => ProductCategory.ProductionFacilities,
+        44 => ProductCategory.Mines,
+        45 => ProductCategory.Refineries,
+        >= 34 and < 40 => ProductCategory.DefenceFacilities,
         _ => null,
     };
 
@@ -455,10 +455,10 @@ public static class Match
 
     /// <summary>
     /// The cause of an owner change, from the system's state after it (the runner is an observer: real state) and before it. Inferred
-    /// classification (the sim keeps no cause): the system Destroyed -> destruction; the new owner holds the military control (only its
-    /// troops are there) -> troops (assault or landing); else, with no troops of either side: the system was in
-    /// Uprising before -> uprising, the old owner had troops there before the tick -> abandonment (all units gone), the new owner holds
-    /// the support control -> diplomacy (support moved over the threshold); anything else -> other.
+    /// classification (the sim keeps no cause): the system Destroyed gives destruction; the new owner holds the military control (only its
+    /// troops are there) gives troops (assault or landing); else, with no troops of either side: the system was in
+    /// Uprising before gives uprising, the old owner had troops there before the tick gives abandonment (all units gone), the new owner holds
+    /// the support control gives diplomacy (support moved over the threshold); anything else gives other.
     /// </summary>
     public static ChangeCause Cause(StarSystem s, bool uprisingBefore, int ownerTroopsBefore)
     {
@@ -538,15 +538,15 @@ public static class Match
             else fl++;
         var own = game.Systems.Where(s => s.Owner == side && !s.Destroyed).ToList();
         var eco = game.Facilities.Where(f => f.Owner == side && f.Usable && f.IsMineOrRefinery).ToList();
-        var mines = eco.Where(f => Family.Of(f.Type) == 0x2C).ToList();
-        var refineries = eco.Where(f => Family.Of(f.Type) == 0x2D).ToList();
+        var mines = eco.Where(f => Family.Of(f.Type) == Families.Mine).ToList();
+        var refineries = eco.Where(f => Family.Of(f.Type) == Families.Refinery).ToList();
         var economy = new EconomyStats(mines.Count, refineries.Count, mines.Sum(f => f.Capacity), mines.Sum(f => f.Allocated),
             refineries.Sum(f => f.Capacity), refineries.Sum(f => f.Allocated),
             own.Sum(s => Math.Max(0, s.RawMaterials - s.UsedRaw)), own.Sum(s => Math.Max(0, s.Energy - s.UsedEnergy)));
         var ships = game.Created.Where(o => Family.IsCapitalShip(o.Type) && o.Owner == side && o.Existing).ToList();
         int fighterCapacity = ships.Sum(x => (int)(game.Definitions.CapitalShips.FirstOrDefault(r => r.Common.Ref == x.Type)?.FighterCapacity ?? 0));
-        int aboard = ships.Sum(x => x.Contents.Count(y => Family.Of(y.Type) is >= 0x1C and < 0x20 && y.Existing));
-        int fighters = game.Created.Count(o => Family.Of(o.Type) is >= 0x1C and < 0x20 && o.Owner == side && o.Existing);
+        int aboard = ships.Sum(x => x.Contents.Count(y => Family.Of(y.Type) is >= Families.Fighter and < Families.Headquarters && y.Existing));
+        int fighters = game.Created.Count(o => Family.Of(o.Type) is >= Families.Fighter and < Families.Headquarters && o.Owner == side && o.Existing);
         var fleets = game.Systems.SelectMany(s => s.Contents.OfType<Fleet>()).Where(f => f.Owner == side && f.Existing).ToList();
         var battles = game.BattleTrace ?? [];
         return new(
@@ -557,8 +557,8 @@ public static class Match
             battles.Count(b => b.Sides.Contains(side) && b.Won == side),
             battles.Count(b => b.Sides.Contains(side) && b.Won is Owner.Alliance or Owner.Empire && b.Won != side),
             commands[side],
-            game.Facilities.Count(f => f.Owner == side && f.Usable && Family.Of(f.Type) == 0x28),
-            game.Facilities.Count(f => f.Owner == side && f.Usable && Family.Of(f.Type) is >= 0x28 and < 0x2B),
+            game.Facilities.Count(f => f.Owner == side && f.Usable && Family.Of(f.Type) == Families.Shipyard),
+            game.Facilities.Count(f => f.Owner == side && f.Usable && Family.Of(f.Type) is >= Families.Shipyard and < Families.ManufacturingEnd),
             game.Sides[side].MaintenanceCapacity, game.Sides[side].MaintenanceAllocated,
             new TroopSplit(d, st, g, fl, en), economy, fighters, Math.Max(0, fighterCapacity - aboard), fighterCapacity, mix);
     }
@@ -584,13 +584,15 @@ public static class Match
     }
 
     /// <summary>Mission kind names (family of the MISSNSD type).</summary>
+    public static string MissionName(MissionKind kind) => MissionName((uint)kind);
+
     public static string MissionName(uint kind) => kind switch
     {
-        0x51 => "diplomacy", 0x52 => "espionage", 0x53 => "research", 0x54 => "reconnaissance", 0x55 => "recruitment", 0x56 => "incite",
-        0x57 => "subdue", 0x58 => "jedi training", 0x61 => "rescue", 0x62 => "abduction", 0x63 => "assassination", 0x69 => "sabotage",
-        0x41 => "move*", 0x42 => "return*", 0x43 => "autorouting*", 0x44 => "adrift*", 0x64 => "palace*", 0x65 => "bounty*", 0x71 => "dagobah*",
-        0x72 => "vacation*", 0x73 => "pickup*", // *: not ordered by rule 5 (movement, story)
-        _ => $"kind {kind:X2}",
+        81 => "diplomacy", 82 => "espionage", 83 => "research", 84 => "reconnaissance", 85 => "recruitment", 86 => "incite",
+        87 => "subdue", 88 => "jedi training", 97 => "rescue", 98 => "abduction", 99 => "assassination", 105 => "sabotage",
+        65 => "move*", 66 => "return*", 67 => "autorouting*", 68 => "adrift*", 100 => "palace*", 101 => "bounty*", 113 => "dagobah*",
+        114 => "vacation*", 115 => "pickup*", // *: not ordered by rule 5 (movement, story)
+        _ => $"kind {kind}",
     };
 
     /// <summary>One line per mission kind: started, attempts succeeded / failed, success rate, missions foiled or ended early.</summary>

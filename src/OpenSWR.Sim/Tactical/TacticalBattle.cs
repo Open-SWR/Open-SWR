@@ -8,11 +8,11 @@ public sealed partial class TacticalUnit
     public GameObject Object => U.Object;
     /// <summary>Engine side index: 0 = side 1 (Alliance), 1 = side 2 (Empire).</summary>
     public int Side => U.Side;
-    public bool Fighter => U.Type == 1;
+    public bool Fighter => U.Type == TacticalUnitType.Fighter;
     /// <summary>The class's place in the engine type table (models, pictures 2001 + i); a class not in the table gets 0.</summary>
     public int TypeIndex => U.TypeIndex;
-    /// <summary>State: 1 docked, 2 active, 6-8 jumping, 9 withdrawn, 11 dead, ...</summary>
-    public int State => U.State;
+    /// <summary>State: TacticalUnitState.Docked docked, 2 active, 6-8 jumping, 9 withdrawn, 11 dead, ...</summary>
+    public TacticalUnitState State => U.State;
     public double Hull => U.Hull;
     public double HullMax => U.HullMax;
     public double Shield => U.Shield;
@@ -23,7 +23,7 @@ public sealed partial class TacticalUnit
     public V3 Previous { get; internal set; }
     /// <summary>Heading (x and z components of the facing).</summary>
     public (double X, double Z) Heading { get => (Facing.X, Facing.Z); set => Facing = new V3(value.X, 0, value.Z); }
-    /// <summary>Its group in the simulation, written by the message handlers 0x30 / 0x33 / 0x37.</summary>
+    /// <summary>Its group in the simulation, written by the task-force create, join and leave message handlers.</summary>
     public TacticalGroup? Group { get; internal set; }
     /// <summary>
     /// Its task force as the UI knows it, written at once by the orders; a fighter's: its fighter group. A deleted
@@ -36,7 +36,7 @@ public sealed partial class TacticalUnit
     /// <summary>A weapon in some arc.</summary>
     public bool Armed => Enumerable.Range(0, 4).Any(a => U.ArcCapacity(a) > 0);
     /// <summary>Active: state 2, 4 or 6.</summary>
-    public bool Active => U.State is 2 or 4 or 6;
+    public bool Active => U.State is TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered;
 }
 
 /// <summary>
@@ -55,12 +55,12 @@ public sealed partial class TacticalGroup
     /// <summary>Fighter group colour (0-3: Red, Blue, Green, Gold; its HUD slot); -1 for a task force.</summary>
     public int Colour { get; }
     public bool Fighters => G.Formation;
-    /// <summary>Simulation mission (message 0x0A; 3 / 2 set by the withdraw).</summary>
-    public int Mission { get; internal set; }
+    /// <summary>Simulation mission (set-mission message; 3 / 2 set by the withdraw).</summary>
+    public TacticalMissionNumber Mission { get; internal set; }
     /// <summary>Target list entries after the current target (Inferred: the list's first entry is the current target).</summary>
     internal List<TacticalUnit> More { get; } = [];
     /// <summary>
-    /// Simulation leader: the setup founder (message 0x30) or the first simulation join while none; the
+    /// Simulation leader: the setup founder (task-force create message) or the first simulation join while none; the
     /// simulation leave hands it to the lowest other member key, else none. Readers: launch nav point, formation change, delete test.
     /// </summary>
     public TacticalUnit? SimLeader { get; internal set; }
@@ -70,8 +70,8 @@ public sealed partial class TacticalGroup
     public bool Deleted { get; internal set; }
 }
 
-/// <summary>A shot display message (0x0D laser, 0x0E turbolaser, 0x0F ion, 0x10 torpedo) at the turn it ran, with the shot value as its payload.</summary>
-public readonly record struct TacticalShot(int Turn, int Kind, TacticalUnit From, TacticalUnit To, double Value);
+/// <summary>A shot display message (laser, turbolaser, ion, torpedo) at the turn it ran, with the shot value as its payload.</summary>
+public readonly record struct TacticalShot(int Turn, TacticalMessage Kind, TacticalUnit From, TacticalUnit To, double Value);
 
 /// <summary>
 /// Tactical space battle ("take command"): the world object of the interactive branch on the units of the shared setup
@@ -92,13 +92,13 @@ public sealed partial class TacticalBattle
     readonly List<TacticalGroup> _groups = [];
     readonly Func<int, int, int> _between;
     readonly List<Message> _queue = [];
-    readonly int[] _state = new int[2]; // side state: 0 fighting, 2 withdraw ordered, 3 jumping, 4 jump finished
+    readonly TacticalSideState[] _state = new TacticalSideState[2]; // side state, one per engine side (fighting until a withdraw is ordered)
     readonly double[] _countdown = new double[2]; // side countdown (ms)
     readonly double[] _targeting = new double[2]; // side targeting countdown
     double _clock, _next, _frameAt, _end = -1;
 
     /// <summary>A queued message: stamp, kind, the action its handler runs; the key of an inserted message.</summary>
-    sealed record Message(int Stamp, int Kind, Action Run, object? Key = null);
+    sealed record Message(int Stamp, TacticalMessage Kind, Action Run, object? Key = null);
 
     public StarSystem System { get; }
     /// <summary>The local player's engine side index.</summary>
@@ -124,7 +124,7 @@ public sealed partial class TacticalBattle
     /// <summary>Shot display messages as they ran (the front end draws the beams).</summary>
     public List<TacticalShot> Shots { get; } = [];
     /// <summary>State of engine side <paramref name="side"/>.</summary>
-    public int SideState(int side) => _state[side];
+    public TacticalSideState SideState(int side) => _state[side];
     /// <summary>Fraction of the frame step since the last frame (display interpolation between <see cref="TacticalUnit.Previous"/> and the position).</summary>
     public double FrameFraction => Math.Clamp((_clock - _frameAt) / FrameMs, 0, 1);
 
@@ -134,7 +134,7 @@ public sealed partial class TacticalBattle
         System = system;
         if (between is null)
         {
-            var rand = new GameRandom(Math.Max(1, (int)((uint)Environment.TickCount % 0x40000000))); // seeded from the clock (srand(timeGetTime()) in the original)
+            var rand = new GameRandom(Math.Max(1, (int)((uint)Environment.TickCount % 1073741824))); // seeded from the clock (srand(timeGetTime()) in the original)
             between = (lo, hi) => rand.Between(lo, hi);
         }
         _between = between;
@@ -145,11 +145,11 @@ public sealed partial class TacticalBattle
         Ui.PanelValue = (int)(Sides[1].Scene?.Charge ?? 0); // Inferred: the panel starts from the charge
         foreach (var u in Sides[0].Battle) _byUnit[u] = new TacticalUnit(u);
         _units.AddRange(Sides[0].Battle.Select(u => _byUnit[u]));
-        foreach (var t in _units.Where(t => t.State != 1)) AddToWorld(t); // every unit not docked
+        foreach (var t in _units.Where(t => t.State != TacticalUnitState.Docked)) AddToWorld(t); // every unit not docked
         SetupDocks(); // the setup docks run in the engine add, before the placement
         foreach (var t in _units) Kinematics(game, t);
         // W = 100 + 3 * max(n0, n1) over the undocked units (state != 1)
-        Size = 100 + 3 * Math.Max(Sides[0].Battle.Count(u => u.Side == 0 && u.State != 1), Sides[0].Battle.Count(u => u.Side == 1 && u.State != 1));
+        Size = 100 + 3 * Math.Max(Sides[0].Battle.Count(u => u.Side == 0 && u.State != TacticalUnitState.Docked), Sides[0].Battle.Count(u => u.Side == 1 && u.State != TacticalUnitState.Docked));
         foreach (var side in Sides)
         {
             double forward = side.Index == 0 ? 1 : -1, back = -forward * Size / 2;
@@ -170,7 +170,7 @@ public sealed partial class TacticalBattle
             for (int a = 0; a < 4; a++)
             {
                 double cap = u.ArcCapacity(a);
-                if (cap > 0 && (u.Type == 1 || u.WeaponCh < 4)) (u.Energy[a], u.Ready[a]) = (cap, true);
+                if (cap > 0 && (u.Type == TacticalUnitType.Fighter || u.WeaponCh < 4)) (u.Energy[a], u.Ready[a]) = (cap, true);
                 else if (cap > 0) u.Queue.Add(a);
             }
     }
@@ -196,7 +196,7 @@ public sealed partial class TacticalBattle
     /// </summary>
     void MakeGroups(BattleEngine.Side side)
     {
-        var fighters = side.Battle.Where(u => u.Side == side.Index && u.Type == 1).GroupBy(u => u.Object.Type).OrderBy(g => g.First().TypeIndex).ToList();
+        var fighters = side.Battle.Where(u => u.Side == side.Index && u.Type == TacticalUnitType.Fighter).GroupBy(u => u.Object.Type).OrderBy(g => g.First().TypeIndex).ToList();
         var slots = new TacticalGroup?[4];
         // openswr deviation: the HUD and the groups have four fighter slots; a fifth and later type of a modded side joins slot i % 4
         // (left out it would have no group and sit idle, while the automatic battle fights with it)
@@ -357,7 +357,7 @@ public sealed partial class TacticalBattle
             var u = t.U;
             if (!t.Active) continue;
             Recharge(u);
-            if (u.Type == 0)
+            if (u.Type == TacticalUnitType.CapitalShip)
             {
                 ShipTimers(t); // ion timers and damage control
                 if (FindHangar(u) is { } h) Schedule(h); // the hangar's schedule
@@ -368,20 +368,20 @@ public sealed partial class TacticalBattle
         Turn++;
     }
 
-    void Post(int stamp, int kind, Action run) => _queue.Add(new Message(stamp, kind, run));
+    void Post(int stamp, TacticalMessage kind, Action run) => _queue.Add(new Message(stamp, kind, run));
 
     /// <summary>Insert with an explicit stamp: dropped when a message with that key is queued (Inferred: key = kind and its object).</summary>
-    void Insert(int stamp, int kind, object key, Action run)
+    void Insert(int stamp, TacticalMessage kind, object key, Action run)
     {
         if (_queue.Any(m => m.Kind == kind && Equals(m.Key, key))) return;
         _queue.Add(new Message(stamp, kind, run, key));
     }
 
     /// <summary>Queued messages of a kind and stamp (tests).</summary>
-    internal int Queued(int kind, int? stamp = null) => _queue.Count(m => m.Kind == kind && (stamp is null || m.Stamp == stamp));
+    internal int Queued(TacticalMessage kind, int? stamp = null) => _queue.Count(m => m.Kind == kind && (stamp is null || m.Stamp == stamp));
 
     /// <summary>The kinds of the queued messages in queue order (tests).</summary>
-    internal List<int> QueuedKinds() => [.. _queue.Select(m => m.Kind)];
+    internal List<TacticalMessage> QueuedKinds() => [.. _queue.Select(m => m.Kind)];
 
     /// <summary>Recharge: the shared shield part, then the weapon energy W * dt fills the queued arcs in order to capacity (ready), the rest carrying on.</summary>
     static void Recharge(BattleEngine.Unit u)
@@ -407,7 +407,7 @@ public sealed partial class TacticalBattle
     // ---- side turn ----
 
     /// <summary>
-    /// Side turn: strength; state 2 countdown (to 3; side index 1 with a live scene: 0x45); the candidate build
+    /// Side turn: strength; state 2 countdown (to 3; side index 1 with a live scene: scene-withdraw message); the candidate build
     /// (every turn of both sides); side index 1's superlaser charge; state 3 jumps; state 0 and computer-controlled:
     /// the targeting countdown -1.0, at <= 0 the rebuild when due, 6.0, the targeting, the withdraw decision (not the
     /// local side, no Death Star run in progress), then the Death Star cases. Fire-event records are not kept (their
@@ -418,19 +418,19 @@ public sealed partial class TacticalBattle
         var side = Sides[i];
         var other = Sides[1 - i];
         side.Strength = Strength(side); // 1. strength of the side
-        if (_state[i] == 2)
+        if (_state[i] == TacticalSideState.WithdrawOrdered)
         {
             _countdown[i] -= TurnMs;
             if (_countdown[i] <= 0)
             {
-                _state[i] = 3;
+                _state[i] = TacticalSideState.Jumping;
                 if (i == 1 && SceneAlive) SceneWithdraw(); // the scene is withdrawn
             }
         }
         BuildCandidates(i); // resets the side's candidate field (Inferred throughout)
         if (i == 1) Charge(); // superlaser charge
-        if (_state[i] == 3) Jump(side);
-        if (_state[i] == 0 && Computer[i])
+        if (_state[i] == TacticalSideState.Jumping) Jump(side);
+        if (_state[i] == TacticalSideState.Fighting && Computer[i])
         {
             _targeting[i] -= 1.0;
             if (_targeting[i] <= 0)
@@ -466,22 +466,22 @@ public sealed partial class TacticalBattle
     }
 
     /// <summary>Retreat possible: the automatic battle's rule with the tactical side state 0.</summary>
-    public bool RetreatPossible(int side) => _state[side] == 0 && BattleEngine.RetreatPossible(Sides[side], Sides);
+    public bool RetreatPossible(int side) => _state[side] == TacticalSideState.Fighting && BattleEngine.RetreatPossible(Sides[side], Sides);
 
     /// <summary>
     /// World withdraw:
-    /// side state 2 (local side: voice 0x8F / 0x10D); every group of the side in order: a fighter group leaves the local side's
-    /// fighter button and, with a first member, a Death Star run (simulation mission 6) posts its abort 0x3C(G, 8) first, then
+    /// side state 2 (local side: the withdraw-ordered voice); every group of the side in order: a fighter group leaves the local side's
+    /// fighter button and, with a first member, a Death Star run (simulation mission 6) posts its abort run-state message (group G, state 8) first, then
     /// gets mission 2 (that member without a working hyperdrive) or 3, a task force mission 3, both through the UI setter (its rule 1 keeps a computer group's Recover); then every
     /// capital ship of the first list leaves its group (a numbered task force of the local side frees the button holding it; UI remove,
-    /// message 0x37) and gets its own new task force (0x30) with mission 3 (0x0A). Countdown max(the side's countdown field, 30000 ms), 150000 ms for side
+    /// the task-force leave message) and gets its own new task force (the task-force create message) with mission 3 (the set-mission message). Countdown max(the side's countdown field, 30000 ms), 150000 ms for side
     /// index 1 with a live Death Star scene (Inferred: that field = 0.4 * v4 * 1000 with v4 not computed, 0).
     /// </summary>
     public void Withdraw(int side)
     {
-        if (_state[side] != 0) return; // Inferred: once
-        _state[side] = 2;
-        if (side == Local) Ui.Voices.Add(side == 0 ? 0x8F : 0x10D);
+        if (_state[side] != TacticalSideState.Fighting) return; // Inferred: once
+        _state[side] = TacticalSideState.WithdrawOrdered;
+        if (side == Local) Ui.Voices.Add(side == 0 ? TacticalVoice.WithdrawOrdered : TacticalVoice.WithdrawOrderedEmpire);
         foreach (var bg in Sides[side].Groups.ToList())
         {
             if (!_byGroup.TryGetValue(bg, out var g)) continue;
@@ -489,10 +489,10 @@ public sealed partial class TacticalBattle
             {
                 if (side == Local) for (int c = 0; c < 4; c++) if (Ui.Fighters[c] == g) Ui.Fighters[c] = null;
                 if (g.Members.FirstOrDefault() is not { } fm) continue;
-                if (g.Mission == 6) PostRun(g, 8); // a plain post, no pending flag (Inferred)
-                SetMission(g, fm.U.Hyperdrives - fm.U.HyperCh > 0 ? 3 : 2); // working hyperdrives
+                if (g.Mission == TacticalMissionNumber.AttackDeathStar) PostRun(g, TacticalRunState.Abort); // a plain post, no pending flag (Inferred)
+                SetMission(g, fm.U.Hyperdrives - fm.U.HyperCh > 0 ? TacticalMissionNumber.Withdraw : TacticalMissionNumber.Recover); // working hyperdrives
             }
-            else SetMission(g, 3);
+            else SetMission(g, TacticalMissionNumber.Withdraw);
         }
         foreach (var u in Sides[side].Ships.ToList())
         {
@@ -500,28 +500,28 @@ public sealed partial class TacticalBattle
             if (t.Group is { } g)
             {
                 if (Ui.Unassigned(t) is null && g.Side == Local) for (int i = 0; i < 8; i++) if (Ui.TaskForces[i] == g) Ui.TaskForces[i] = null;
-                UiLeave(g, t); // UI remove, then message 0x37
-                Post(Stamp, 0x37, () => { if (t.Group == g) Leave(t); });
+                UiLeave(g, t); // UI remove, then the task-force leave message
+                Post(Stamp, TacticalMessage.TaskForceLeave, () => { if (t.Group == g) Leave(t); });
             }
-            SetMission(CreateTaskForce(t), 3); // no button
+            SetMission(CreateTaskForce(t), TacticalMissionNumber.Withdraw); // no button
         }
         _countdown[side] = side == 1 && BattleEngine.Alive(Sides[1].Scene) ? 150000 : 30000;
     }
 
     /// <summary>
     /// Side state 3: while a unit of the two lists that can jump is active or in state 7 / 8, nothing more; else
-    /// state 4 and every unit of both lists that cannot jump gets message 0x2F (scuttle: destroyed). The jumps themselves start in
-    /// the groups' withdraw movement (state 6, message 0x2D to state 7, 4000 ms to state 8, message 0x2E to state 9).
+    /// state 4 and every unit of both lists that cannot jump gets the scuttle message (scuttle: destroyed). The jumps themselves start in
+    /// the groups' withdraw movement (state 6, jump-start message to state 7, 4000 ms to state 8, retreat message to state 9).
     /// </summary>
     void Jump(BattleEngine.Side side)
     {
         bool CanJump(BattleEngine.Unit u) => this.CanJump(_byUnit[u]);
-        if (side.Ships.Concat(side.Fighters).Any(u => CanJump(u) && u.State is 2 or 4 or 6 or 7 or 8)) return;
-        _state[side.Index] = 4;
+        if (side.Ships.Concat(side.Fighters).Any(u => CanJump(u) && u.State is TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered or TacticalUnitState.Accelerating or TacticalUnitState.InHyperspace)) return;
+        _state[side.Index] = TacticalSideState.JumpFinished;
         foreach (var u in side.Ships.Concat(side.Fighters).Where(u => !CanJump(u)).ToList())
         {
             var t = _byUnit[u];
-            Post(Stamp, 0x2F, () => Scuttle(t)); // Inferred stamp: the current Stamp
+            Post(Stamp, TacticalMessage.Scuttle, () => Scuttle(t)); // Inferred stamp: the current Stamp
         }
     }
 
@@ -562,16 +562,16 @@ public sealed partial class TacticalBattle
     void Fire(TacticalUnit t)
     {
         var u = t.U;
-        if (!t.Active || u.State == 6 || !u.Ready.Any(r => r)) return;
+        if (!t.Active || u.State == TacticalUnitState.JumpOrdered || !u.Ready.Any(r => r)) return;
         if (_between(0, 2) != 0) return;
         int r = 2;
         var g = t.Group;
         if (g is not null)
         {
-            if (g.Mission == 1) return;
+            if (g.Mission == TacticalMissionNumber.Escort) return;
             if (Current(g) is { } p)
             {
-                if (BattleEngine.Arc(u, p.U.Type != 1) == 4) return;
+                if (BattleEngine.Arc(u, p.U.Type != TacticalUnitType.Fighter) == BattleEngine.NoArc) return;
                 r = Aimed(t, p);
             }
             foreach (var next in g.NearestList)
@@ -581,7 +581,7 @@ public sealed partial class TacticalBattle
             }
         }
         Tractor(t, g is null ? null : Current(g)); // tractor beam handling
-        if (g is { Mission: 4 } || BattleEngine.HasLaser(u) && r == 2) Opportunistic(t);
+        if (g is { Mission: TacticalMissionNumber.AttackFighters } || BattleEngine.HasLaser(u) && r == 2) Opportunistic(t);
     }
 
     /// <summary>Aimed shot at P, giving r: 1 arc not ready, 2 out of range, 3 nothing fired, 4 fired.</summary>
@@ -596,7 +596,7 @@ public sealed partial class TacticalBattle
         if (!u.Ready[a]) return 1;
         bool ship = !p.Fighter;
         double laser = u.Arcs[a, 0], ion = u.Arcs[a, 1], tl = u.Arcs[a, 2];
-        if (ion > 0 && d <= u.IonRange && p.U.Type == 0) (slots.Ion[a], slots.IonT[a]) = (ion * Base * 1.0, p);
+        if (ion > 0 && d <= u.IonRange && p.U.Type == TacticalUnitType.CapitalShip) (slots.Ion[a], slots.IonT[a]) = (ion * Base * 1.0, p);
         if (tl > 0 && d <= u.TlRange) (slots.Tl[a], slots.TlT[a]) = (tl * Base * (ship ? 1.0 : 0.5), p);
         if (laser > 0 && d <= u.LaserRange) (slots.Laser[a], slots.LaserT[a]) = (laser * (ship ? LaserVsShip : 1.0) * Base, p);
         return Execute(t, slots) ? 4 : 3;
@@ -630,7 +630,7 @@ public sealed partial class TacticalBattle
     /// other side, |dy| and |dz| within the range.
     /// </summary>
     internal List<TacticalUnit> FireQuery(TacticalUnit t, double range) =>
-        [.. Walk(t, true, x => Math.Abs(x.Position.X - t.Position.X) > range).Where(x => x.Active && x.State != 6 && x.Side != t.Side
+        [.. Walk(t, true, x => Math.Abs(x.Position.X - t.Position.X) > range).Where(x => x.Active && x.State != TacticalUnitState.JumpOrdered && x.Side != t.Side
             && Math.Abs(x.Position.Y - t.Position.Y) <= range && Math.Abs(x.Position.Z - t.Position.Z) <= range)];
 
     /// <summary>
@@ -654,33 +654,33 @@ public sealed partial class TacticalBattle
             }
             if (best < 0) return fired;
             int arc = best, T = Stamp;
-            bool Ok(TacticalUnit? x) => x is { Active: true } && u.State != 6;
+            bool Ok(TacticalUnit? x) => x is { Active: true } && u.State != TacticalUnitState.JumpOrdered;
             if (s.Ion[arc] != 0 && Ok(s.IonT[arc]))
             {
                 var (p, v) = (s.IonT[arc]!, s.Ion[arc]);
-                Post(T + 1, 0x0F, () => Show(0x0F, t, p, v));
-                Post(T + 2, 0x12, () => { if (p.Active) IonHit(p, v, t); });
+                Post(T + 1, TacticalMessage.IonShot, () => Show(TacticalMessage.IonShot, t, p, v));
+                Post(T + 2, TacticalMessage.IonHit, () => { if (p.Active) IonHit(p, v, t); });
                 Spend(arc, u.Arcs[arc, 1]);
             }
             if (s.Laser[arc] != 0 && Ok(s.LaserT[arc]))
             {
                 var (p, v) = (s.LaserT[arc]!, s.Laser[arc]);
-                Post(T, 0x0D, () => Show(0x0D, t, p, v));
-                Post(T + 1, 0x11, () => { if (p.Active) Hit(p, v, t, ratio: true, 0); });
+                Post(T, TacticalMessage.LaserShot, () => Show(TacticalMessage.LaserShot, t, p, v));
+                Post(T + 1, TacticalMessage.LaserHit, () => { if (p.Active) Hit(p, v, t, ratio: true, TacticalWeapon.Laser); });
                 double sf = p.ShieldMax > 0 ? p.Shield / p.ShieldMax : 0;
                 if (t.Fighter && !p.Fighter && sf == 0 && Distance(t, p) <= u.TorpedoRange)
                 {
                     double hf = u.HullMax > 0 ? u.Hull / u.HullMax : 0, torpedo = hf * u.Torpedo * Torpedo;
-                    Post(T, 0x10, () => Show(0x10, t, p, torpedo));
-                    Post(T + 2, 0x14, () => { if (p.Active) Hit(p, torpedo, t, ratio: false, 3); });
+                    Post(T, TacticalMessage.TorpedoShot, () => Show(TacticalMessage.TorpedoShot, t, p, torpedo));
+                    Post(T + 2, TacticalMessage.TorpedoHit, () => { if (p.Active) Hit(p, torpedo, t, ratio: false, TacticalWeapon.Torpedo); });
                 }
                 Spend(arc, u.Arcs[arc, 0]);
             }
             if (s.Tl[arc] != 0 && Ok(s.TlT[arc]))
             {
                 var (p, v) = (s.TlT[arc]!, s.Tl[arc]);
-                Post(T, 0x0E, () => Show(0x0E, t, p, v));
-                Post(T + 1, 0x13, () => { if (p.Active) Hit(p, v, t, ratio: true, 1); });
+                Post(T, TacticalMessage.TurbolaserShot, () => Show(TacticalMessage.TurbolaserShot, t, p, v));
+                Post(T + 1, TacticalMessage.TurbolaserHit, () => { if (p.Active) Hit(p, v, t, ratio: true, TacticalWeapon.Turbolaser); });
                 Spend(arc, u.Arcs[arc, 2]);
             }
             (s.Tl[arc], s.Laser[arc], s.Ion[arc]) = (0, 0, 0);
@@ -700,14 +700,14 @@ public sealed partial class TacticalBattle
     /// sound (laser: capital ship 0, fighter 3 / 4 by side index; turbolaser and torpedo 1; ion: capital ship 2, fighter 5) and the
     /// bolt (<see cref="Shots"/>, drawn by the front end).
     /// </summary>
-    void Show(int kind, TacticalUnit from, TacticalUnit to, double value)
+    void Show(TacticalMessage kind, TacticalUnit from, TacticalUnit to, double value)
     {
         if (!from.Active || !to.Active) return;
         Sounds.Add(kind switch
         {
-            0x0D => from.Fighter ? 3 + from.Side : 0,
-            0x0F => from.Fighter ? 5 : 2,
-            _ => 1,
+            TacticalMessage.LaserShot => from.Fighter ? TacticalEffectSound.LaserFighter + from.Side : TacticalEffectSound.LaserCapital,
+            TacticalMessage.IonShot => from.Fighter ? TacticalEffectSound.IonFighter : TacticalEffectSound.IonCapital,
+            _ => TacticalEffectSound.TurbolaserShot,
         });
         Shots.Add(new TacticalShot(Turn, kind, from, to, value));
     }
@@ -718,7 +718,7 @@ public sealed partial class TacticalBattle
     double Ratio(TacticalUnit p, TacticalUnit shooter)
     {
         double ta = Maneuverability(p);
-        if (shooter.State is 9 or 11) return ta;
+        if (shooter.State is TacticalUnitState.Withdrawn or TacticalUnitState.Destroyed) return ta;
         return Math.Max(0.1, ta / Maneuverability(shooter));
     }
 
@@ -726,10 +726,10 @@ public sealed partial class TacticalBattle
     /// Turbolaser / laser / torpedo hit: fighter target d / ratio (not torpedoes); d >= 1;
     /// shield held (ship target): crit 0 when rand 0...100 <= max(1, 100 * d / s0); shield broken: the whole overflow on the hull; dead:
     /// destroy; else ship target: rand 0...100 + 100 * delta hull / hull, then crit bands. Crit messages stamped with the stamp base. Presentation (no draws):
-    /// weapon <paramref name="w"/> (0 laser, 1 turbolaser, 3 torpedo); shield held: sound 0xD (laser) / 0xC and a
-    /// spark; hull: sound 0x12 / 0x11, then either the kill voices, the death effect and the explosion sound, or the hull explosion.
+    /// weapon <paramref name="w"/> (0 laser, 1 turbolaser, 3 torpedo); shield held: sound laser shield hit / other shield hit and a
+    /// spark; hull: sound laser hull hit / other hull hit, then either the kill voices, the death effect and the explosion sound, or the hull explosion.
     /// </summary>
-    internal void Hit(TacticalUnit p, double d, TacticalUnit shooter, bool ratio, int w = 0)
+    internal void Hit(TacticalUnit p, double d, TacticalUnit shooter, bool ratio, TacticalWeapon w = TacticalWeapon.Laser)
     {
         var u = p.U;
         double s0 = u.Shield, h0 = u.Hull;
@@ -739,14 +739,14 @@ public sealed partial class TacticalBattle
         u.Shield = s0 - d;
         if (u.Shield >= 0)
         {
-            Sounds.Add(w == 0 ? 0xD : 0xC);
-            Effect(p, w, 0);
-            if (u.Type == 0 && _between(0, 100) <= Math.Max(1, 100 * d / s0)) CritMessage(p, 0);
+            Sounds.Add(w == TacticalWeapon.Laser ? TacticalEffectSound.LaserShieldHit : TacticalEffectSound.OtherShieldHit);
+            Effect(p, w, TacticalEffectKind.Spark);
+            if (u.Type == TacticalUnitType.CapitalShip && _between(0, 100) <= Math.Max(1, 100 * d / s0)) CritMessage(p, 0);
             return;
         }
         u.Shield = 0;
         u.Hull = h0 + (s0 - d);
-        Sounds.Add(w == 0 ? 0x12 : 0x11);
+        Sounds.Add(w == TacticalWeapon.Laser ? TacticalEffectSound.LaserHullHit : TacticalEffectSound.OtherHullHit);
         if (u.Hull <= 0)
         {
             KillVoices(p, shooter); // the kill statistics are not modelled
@@ -755,17 +755,18 @@ public sealed partial class TacticalBattle
             Destroy(p);
             return;
         }
-        Effect(p, w, 1);
-        if (u.Type != 0) return;
+        Effect(p, w, TacticalEffectKind.HullExplosion);
+        if (u.Type != TacticalUnitType.CapitalShip) return;
         double x = 100 * (u.Hull - h0) / h0 + _between(0, 100);
-        int k = x > 95 ? 4 : x > 90 ? 3 : x > 80 ? 2 : x > 65 ? 1 : x > 50 ? 0 : -1;
-        if (k >= 0) CritMessage(p, k);
+        CriticalKind? k = x > 95 ? CriticalKind.Hyperdrive : x > 90 ? CriticalKind.Speed : x > 80 ? CriticalKind.Tractor
+            : x > 65 ? CriticalKind.Weapon : x > 50 ? CriticalKind.Shield : null;
+        if (k is { } crit) CritMessage(p, crit);
     }
 
     /// <summary>
     /// Ion hit: as the shield part of a hit; the excess never reaches the hull: per whole point (not on a
     /// fighter) k = rand 1...10: 1 tractor-down += rand 30...50, 2 engine-down += rand 30...50, 3...10 arc (k - 3) div 2 down; then
-    /// message 0x16 stamped with the stamp base applies them. Presentation: shield held gives sound 0xE and a spark; overflow gives sound 0x13 and the
+    /// shield-overflow message stamped with the stamp base applies them. Presentation: shield held gives the ion shield hit sound and a spark; overflow gives the ion overflow hit sound and the
     /// hull explosion (w = 2).
     /// </summary>
     internal void IonHit(TacticalUnit p, double d, TacticalUnit shooter)
@@ -778,13 +779,13 @@ public sealed partial class TacticalBattle
         u.Shield = s0 - d;
         if (u.Shield >= 0)
         {
-            Sounds.Add(0xE);
-            Effect(p, 2, 0);
-            if (u.Type == 0 && _between(0, 100) <= Math.Max(1, 100 * d / s0)) CritMessage(p, 0);
+            Sounds.Add(TacticalEffectSound.IonShieldHit);
+            Effect(p, TacticalWeapon.Ion, TacticalEffectKind.Spark);
+            if (u.Type == TacticalUnitType.CapitalShip && _between(0, 100) <= Math.Max(1, 100 * d / s0)) CritMessage(p, 0);
             return;
         }
-        Sounds.Add(0x13);
-        Effect(p, 2, 1);
+        Sounds.Add(TacticalEffectSound.IonOverflowHit);
+        Effect(p, TacticalWeapon.Ion, TacticalEffectKind.HullExplosion);
         double x = -u.Shield;
         u.Shield = 0;
         if (p.Fighter) return;
@@ -798,7 +799,7 @@ public sealed partial class TacticalBattle
             else arcs[(k - 3) / 2] = true;
             x -= 1.0;
         }
-        Post(Stamp, 0x16, () =>
+        Post(Stamp, TacticalMessage.ShieldOverflow, () =>
         {
             u.EngineDown += b;
             u.TractorDown += a;
@@ -809,15 +810,26 @@ public sealed partial class TacticalBattle
         });
     }
 
+    /// <summary>The critical-hit message kind of a critical kind.</summary>
+    static TacticalMessage CriticalHitMessage(CriticalKind k) => k switch
+    {
+        CriticalKind.Shield => TacticalMessage.CriticalHitShield,
+        CriticalKind.Weapon => TacticalMessage.CriticalHitWeapon,
+        CriticalKind.Tractor => TacticalMessage.CriticalHitTractor,
+        CriticalKind.Speed => TacticalMessage.CriticalHitSpeed,
+        CriticalKind.Hyperdrive => TacticalMessage.CriticalHitHyperdrive,
+        _ => throw new ArgumentOutOfRangeException(nameof(k)),
+    };
+
     /// <summary>
-    /// Crit messages 0x1E ... 0x22 (stamped with the stamp base): the shared crit function for kind k (the automatic battle's critical hit), the crit total
-    /// + 1; a TractorCH crit (k = 2) leaving a holder without power releases its hold (0x29, pending).
+    /// Critical-hit messages, one per kind k (stamped with the stamp base): the shared crit function for kind k (the automatic battle's critical hit), the crit total
+    /// + 1; a TractorCH crit (k = 2) leaving a holder without power releases its hold (tractor-release message, pending).
     /// </summary>
-    internal void CritMessage(TacticalUnit p, int k) => Post(Stamp, 0x1E + k, () =>
+    internal void CritMessage(TacticalUnit p, CriticalKind k) => Post(Stamp, CriticalHitMessage(k), () =>
     {
         BattleEngine.Crit(p.U, k);
         p.CritTotal++;
-        if (k == 2 && p.Held is { } held && TractorPowerOf(p) == 0)
+        if (k == CriticalKind.Tractor && p.Held is { } held && TractorPowerOf(p) == 0)
         {
             PostRelease(p, held);
             p.TractorPending = true;
@@ -834,13 +846,13 @@ public sealed partial class TacticalBattle
     void EndTest()
     {
         if (Ending || Done) return;
-        int Count(int side) => _units.Count(u => u.Side == side && u.State is 2 or 4 or 6 or 7 or 8 or 10);
+        int Count(int side) => _units.Count(u => u.Side == side && u.State is TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered or TacticalUnitState.Accelerating or TacticalUnitState.InHyperspace or TacticalUnitState.DeathStarRun);
         bool scene = BattleEngine.Alive(Sides[1].Scene);
         int n0 = Count(0), n1 = Count(1);
         if (n0 > 0 && (n1 > 0 || scene)) return;
-        bool Gone(int side) => _state[side] is 3 or 4 or 5 && !_units.Any(u => u.Side == side && u.State is 2 or 4 or 6 or 7 or 8);
-        S[0] = Gone(0) && _units.Any(u => u.Side == 0 && u.State == 9) ? 1 : 0;
-        S[2] = Gone(1) && (_units.Any(u => u.Side == 1 && u.State == 9) || Sides[1].Scene?.Withdrawn == true) ? 1 : 0;
+        bool Gone(int side) => _state[side] is TacticalSideState.Jumping or TacticalSideState.JumpFinished or TacticalSideState.Withdrawn &&!_units.Any(u => u.Side == side && u.State is TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered or TacticalUnitState.Accelerating or TacticalUnitState.InHyperspace);
+        S[0] = Gone(0) && _units.Any(u => u.Side == 0 && u.State == TacticalUnitState.Withdrawn) ? 1 : 0;
+        S[2] = Gone(1) && (_units.Any(u => u.Side == 1 && u.State == TacticalUnitState.Withdrawn) || Sides[1].Scene?.Withdrawn == true) ? 1 : 0;
         S[1] = n1 == 0 && !scene ? 1 : 0;
         S[3] = n0 == 0 ? 1 : 0;
         if (S[1] != 0 && S[3] != 0) S[1] = S[3] = 0;
@@ -854,16 +866,16 @@ public sealed partial class TacticalBattle
     /// Finish re-dock: the first word of H is set to 0 when observing; per unit of the world battle list (Inferred: the battle list in
     /// setup order) that is a fighter, active (2 / 4 / 6) or in state 1, 5 or 9: the first capital ship of the same list and side,
     /// active or in state 7, 8 or 9, whose hangar accepts it (state 1, count + 1); none, then for side index 1 a
-    /// Death Star scene that is alive or withdrawn. The two 0x4A messages after it are not modelled (no reader). Not on abort.
+    /// Death Star scene that is alive or withdrawn. The two follow-up messages of an unnamed kind are not modelled (no reader). Not on abort.
     /// </summary>
     void Finish()
     {
         Ui.InCommand = false;
         var battle = Sides[0].Battle;
-        foreach (var f in battle.Where(u => u.Type == 1 && u.State is 1 or 2 or 4 or 5 or 6 or 9).ToList())
+        foreach (var f in battle.Where(u => u.Type == TacticalUnitType.Fighter && u.State is TacticalUnitState.Docked or TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.Recovered or TacticalUnitState.JumpOrdered or TacticalUnitState.Withdrawn).ToList())
         {
             var t = _byUnit[f];
-            if (battle.FirstOrDefault(x => x.Type == 0 && x.Side == f.Side && x.State is 2 or 4 or 6 or 7 or 8 or 9 && BattleEngine.Dock(f, x)) is { } c) HangarOf(c).Landed.Add(t);
+            if (battle.FirstOrDefault(x => x.Type == TacticalUnitType.CapitalShip && x.Side == f.Side && x.State is TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered or TacticalUnitState.Accelerating or TacticalUnitState.InHyperspace or TacticalUnitState.Withdrawn && BattleEngine.Dock(f, x)) is { } c) HangarOf(c).Landed.Add(t);
             else if (f.Side == 1 && Sides[1].Scene is { } sc && (BattleEngine.Alive(sc) || sc.Withdrawn) && BattleEngine.Dock(f, sc)) HangarOf(sc).Landed.Add(t);
         }
     }

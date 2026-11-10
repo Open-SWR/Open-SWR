@@ -24,33 +24,33 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
     /// <summary>An Empire fleet in the system with the Assault flag and one capital ship carrying <paramref name="troops"/> Army regiments.</summary>
     static (Fleet Fleet, GameObject Ship, List<GameObject> Troops) Attacker(GameState game, StarSystem s, int troops)
     {
-        var fleet = s.Add(new Fleet(SdRef.Make(Family.Fleet, 4), Owner.Empire, game.NextId()) { Real = true, Assault = true });
+        var fleet = s.Add(new Fleet(SdRef.Make(Families.Fleet, 4), Owner.Empire, game.NextId()) { Real = true, Assault = true });
         var ship = fleet.Add(new GameObject(Definitions.CapitalShips.First(r => r.Empire != 0).Common.Ref, Owner.Empire, game.NextId()));
         var list = Enumerable.Range(0, troops).Select(_ => ship.Add(new GameObject(Refs.EmpireArmy, Owner.Empire, game.NextId()))).ToList();
         return (fleet, ship, list);
     }
 
     // Assault pre-check: no Usable fleet with the Blockade flag gives (8, 7); no troop aboard gives (8, 5); a non-fleet
-    // target fails the fleet resolver with (1, 1); 0x203 takes one target only, (1, 0x15)
+    // target fails the fleet resolver with (1, 1); Rename takes one target only, Refusal.SeveralTargets
     [GameFact]
     public void AssaultPreCheck()
     {
         var (game, s, _) = Scene();
         var (empty, _, _) = Attacker(game, s, 0);
         var (fleet, ship, _) = Attacker(game, s, 1);
-        OrderResult Run(int type, params GameObject[] targets) =>
-            Orders.Execute(game, new Command(type, Owner.Empire) { Targets = [.. targets.Select(t => (t, 0))], ArgRef = s });
-        Assert.Equal(new OrderResult(8, 7), Run(0x234, fleet));
+        OrderResult Run(CommandType type, params GameObject[] targets) =>
+            Orders.Execute(game, new Command(type, Owner.Empire) { Targets = [.. targets.Select(t => (t, GroupMode.Object))], ArgRef = s });
+        Assert.Equal(Refusal.NoBlockade, Run(CommandType.Assault, fleet));
         empty.Blockade = true;
-        Assert.Equal(new OrderResult(0x90, 6), Run(0x234, empty)); // the system check (0x90, 6) runs in the pre-check, before the troop check
+        Assert.Equal(Refusal.SystemNotBlockaded, Run(CommandType.Assault, empty)); // the system check (Refusal.SystemNotBlockaded) runs in the pre-check, before the troop check
         s.Blockade = true;
-        Assert.Equal(new OrderResult(8, 5), Run(0x234, empty));
+        Assert.Equal(Refusal.NoTroops, Run(CommandType.Assault, empty));
         fleet.Blockade = true;
-        Assert.Equal(new OrderResult(1, 1), Run(0x234, fleet, ship));
-        Assert.Equal(new OrderResult(1, 0x15), Run(0x203, fleet, empty));
-        s.Destroyed = true; // system-event slots resolve direct: (1, 0x12), the system check's (1, 0x22) is unreachable
-        Assert.Equal(new OrderResult(1, 0x12), Run(0x234, fleet));
-        Assert.Equal(new OrderResult(1, 0x12), Run(0x220, fleet));
+        Assert.Equal(Refusal.WrongClass, Run(CommandType.Assault, fleet, ship));
+        Assert.Equal(Refusal.SeveralTargets, Run(CommandType.Rename, fleet, empty));
+        s.Destroyed = true; // system-event slots resolve direct: Refusal.Missing, the system check's Refusal.NoDestination is unreachable
+        Assert.Equal(Refusal.Missing, Run(CommandType.Assault, fleet));
+        Assert.Equal(Refusal.Missing, Run(CommandType.Bombard, fleet));
     }
 
     // Duel: v = r + (attack + leadA div 30) - (defense + leadD div 30); v >= 6 kills the defender, v <= 4 kills the attacker
@@ -113,7 +113,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal(v > 0, defender.Destroyed);
         Assert.Equal(v < 0, troops[0].Destroyed);
         Assert.Equal(v > 0, troops[0].Container == s); // the winner lands
-        Assert.Equal(v == 0, troops[0].Container == ship && !troops[0].Destroyed); // a destroyed troop stays aboard until its 0x372
+        Assert.Equal(v == 0, troops[0].Container == ship && !troops[0].Destroyed); // a destroyed troop stays aboard until its final move
     }
 
     /// <summary>Collateral damage: t = (F - H) + (Energy != 0) + (RawMaterial != 0); r = roll(t - 1) picks a facility, Energy, RawMaterial.</summary>
@@ -123,16 +123,16 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         var (game, s, draws) = Scene();
         Assert.False(Combat.Collateral(game, s));                     // t = 0: no draw
         s.Energy = 2;
-        Assert.True(Combat.Collateral(game, s));                      // t = 1: roll(0), no step -> Energy - 1
+        Assert.True(Combat.Collateral(game, s));                      // t = 1: roll(0), no step gives Energy - 1
         Assert.Equal((1, 0), (s.Energy, s.RawMaterials));
         var mine = s.Add(new GameObject(Refs.Mine, Owner.Neutral, game.NextId()));
         Assert.True(Combat.Collateral(game, s));                      // t = 2: r = 0 the Mine, r = 1 Energy
         Assert.Equal([(DrawSite.CollateralPick, 1, 0), (DrawSite.CollateralPick, 2, draws[1].Result)], draws);
         Assert.Equal(draws[1].Result == 0 ? (true, 1) : (false, 0), (mine.Destroyed, s.Energy));
-        if (mine.Destroyed) Assert.Equal(0xE, mine.DestroyedReason);
+        if (mine.Destroyed) Assert.Equal(DestroyedReason.Assault, mine.DestroyedReason);
     }
 
-    // Bombardment shots = max(0, B - Sh); a shot hits iff defense < between(G 0x602 = 1, G 0x603 = 10)
+    // Bombardment shots = max(0, B - Sh); a shot hits iff defense < between(G BombardHitMin = 1, G BombardHitMax = 10)
     [Theory]
     [InlineData(10, 3, 7)]
     [InlineData(3, 10, 0)]
@@ -167,17 +167,17 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     static CapitalShipRecord Ship(Func<CapitalShipRecord, bool> pick) =>
-        Definitions.CapitalShips.First(r => Family.Of(r.Common.Ref) < 0x18 && pick(r));
+        Definitions.CapitalShips.First(r => Family.Of(r.Common.Ref) < Families.DeathStar && pick(r));
     static int Field(uint type, SdField field) => Definitions.Resolve(type)!.Get(field);
 
     /// <summary>The admiral bonus needs the admiral's ship unit active (state 2); retreated or destroyed gives 1.0.</summary>
     [Fact]
     public void AdmiralBonusNeedsAnActiveShip()
     {
-        var ship = new BattleEngine.Unit(new GameObject(0x14000001, Owner.Alliance, 1), 0);
+        var ship = new BattleEngine.Unit(new GameObject(SdRef.Make(Families.CapitalShip, 1), Owner.Alliance, 1), 0);
         var side = new BattleEngine.Side(0, 0, false) { AdmiralShip = ship, AdmiralValue = 5 };
         Assert.Equal(5, side.Admiral);
-        foreach (int state in new[] { 1, 4, 5, 6, 9, 0xB })
+        foreach (var state in new[] { TacticalUnitState.Docked, TacticalUnitState.Recovering, TacticalUnitState.Recovered, TacticalUnitState.JumpOrdered, TacticalUnitState.Withdrawn, TacticalUnitState.Destroyed })
         {
             ship.State = state;
             Assert.Equal(1.0, side.Admiral);
@@ -227,10 +227,10 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Null(Fleets.Search(game, fighter, from, null, flag: false, stay: true));          // 5-7 refuse a fighter
 
         var empireFleet = from.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId()));
-        // flag 0 closes the fleet's own system (1, 0x29), so it leaves (run 9 day 164): no own unblockaded system or
+        // flag 0 closes the fleet's own system (Refusal.DestinationClosed), so it leaves (run 9 day 164): no own unblockaded system or
         // own fleet here, so stage 5, the nearest own blockaded system
         Assert.Equal(blockaded, Fleets.Search(game, empireFleet, from, null, flag: false, stay: true));
-        Assert.Equal(from, Fleets.Search(game, empireFleet, from, null, flag: true, stay: true)); // flag != 0: stage 1 accepts it (0x204)
+        Assert.Equal(from, Fleets.Search(game, empireFleet, from, null, flag: true, stay: true)); // flag != 0: stage 1 accepts it (MoveObject)
     }
 
     /// <summary>Bombardment value: ship value B - B*HullDamage div Hull (0 with ion left over); fighter value b - b*damage div SquadSize.</summary>
@@ -264,7 +264,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     /// <summary>
-    /// Critical hit: x = 0 -> no draw; h <= 0 -> destroyed (0xF), no draw; else roll(50) + 100*x div (h + x) >= 50 -> roll(50) picks
+    /// Critical hit: x = 0 gives no draw; h <= 0 gives destroyed (DestroyedReason.Bombardment), no draw; else roll(50) + 100*x div (h + x) >= 50 gives roll(50) picks
     /// the CSCRHTTB kind (2-5 CH + 1, 6 hyperdrive modifier, 7 destroyed).
     /// </summary>
     [GameFact]
@@ -282,17 +282,17 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         var dead = NewShip(hull);
         Combat.CriticalHit(game, dead, 1);
         Assert.Empty(draws);
-        Assert.Equal((true, 0xF), (dead.Destroyed, dead.DestroyedReason));
+        Assert.Equal((true, DestroyedReason.Bombardment), (dead.Destroyed, dead.DestroyedReason));
 
         for (int i = 0; i < 200; i++)
         {
-            // h = x: 100*x div 2x = 50 -> always the table roll; h = hull - 1, x = 1: 100 div hull < 50 unless the roll does it
+            // h = x: 100*x div 2x = 50 gives always the table roll; h = hull - 1, x = 1: 100 div hull < 50 unless the roll does it
             bool half = i % 2 == 0;
             int x = half ? hull / 2 : 1;
             var ship = NewShip(half ? hull - hull / 2 : 1);
             draws.Clear();
             Combat.CriticalHit(game, ship, x);
-            draws.RemoveAll(d => d.Site == DrawSite.Timer); // a new crit starts the repair timer 0x380: roll(0), no step
+            draws.RemoveAll(d => d.Site == DrawSite.Timer); // a new crit starts the repair timer (TimerType.Repair): roll(0), no step
             int h = hull - ship.HullDamage;
             Assert.Equal((DrawSite.CriticalHit, 51), (draws[0].Site, draws[0].N));
             bool table = draws[0].Result + 100 * x / (h + x) >= 50;
@@ -331,8 +331,8 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         var fighters = new Dictionary<GameObject, FighterResult>
         {
             [aboard[0]] = new(12 - 3, ship),  // damaged, stays aboard
-            [aboard[1]] = new(0, ship),       // destroyed (0xC)
-            [enemy] = new(12, ship),          // repaired; carrier of another owner -> stays in the system
+            [aboard[1]] = new(0, ship),       // destroyed (Battle)
+            [enemy] = new(12, ship),          // repaired; carrier of another owner gives stays in the system
         };
         foreach (var f in aboard.Skip(2)) fighters[f] = new(12, ship);
         var ships = new Dictionary<GameObject, ShipResult>
@@ -343,17 +343,17 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         var result = new BattleResult(Auto: true, S: [0, 1, 0, 1, 0, 0, 0], fighters, ships, new Dictionary<GameObject, DeathStarResult>());
         Combat.ApplyBattle(game, x, result);
 
-        Assert.Equal(Owner.Alliance, x.BattleWon); // S[1], S[3] both != 0 -> opp(BattleReady)
+        Assert.Equal(Owner.Alliance, x.BattleWon); // S[1], S[3] both != 0 gives opp(BattleReady)
         Assert.Equal(3, aboard[0].SquadSizeDamage);
-        Assert.Equal((true, 0xC), (aboard[1].Destroyed, aboard[1].DestroyedReason));
+        Assert.Equal((true, DestroyedReason.Battle), (aboard[1].Destroyed, aboard[1].DestroyedReason));
         Assert.Equal((0, x), (enemy.SquadSizeDamage, enemy.Container));
         Assert.Equal(10, ship.HullDamage);
         Assert.Equal(new CriticalHitCounts(2, 1, 0, 3, 1, 0), ship.CriticalHits);
         Assert.Equal((7, default(CriticalHitCounts)), (stuck.HullDamage, stuck.CriticalHits));
         // capacity + 1 - 1 destroyed = capacity Existing aboard: no overflow
-        Assert.Equal(aboard.Where(f => !f.Destroyed), ship.Contents.Where(f => f.Existing)); // the destroyed one stays aboard until its 0x372
+        Assert.Equal(aboard.Where(f => !f.Destroyed), ship.Contents.Where(f => f.Existing)); // the destroyed one stays aboard until its final move
 
-        // withdraw: undecided, not automatic, S[6] != 0 -> BattleWon not written
+        // withdraw: undecided, not automatic, S[6] != 0 gives BattleWon not written
         x.BattleWon = Owner.Empire;
         Combat.ApplyBattle(game, x, result with { Auto = false, S = [1, 0, 0, 0, 0, 0, 1] });
         Assert.Equal(Owner.Empire, x.BattleWon);
@@ -363,8 +363,8 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     /// <summary>
-    /// Battle set clears the battle loss records; the 0x300 of a destroyed unit adds its CombatValue to
-    /// its owner's record by DestroyedReason (0xC battle, 0xE assault, 0xF bombardment, others nowhere).
+    /// Battle set clears the battle loss records; the existing notification of a destroyed unit adds its CombatValue to
+    /// its owner's record by DestroyedReason (Battle, Assault, Bombardment, others nowhere).
     /// </summary>
     [GameFact]
     public void LossRecordsFromDestroyedUnits()
@@ -375,8 +375,8 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal([0, 0, 0], s.BattleLoss);
         var shipType = Ship(r => r.Empire != 0 && Field(r.Common.Ref, SdField.CombatValue) != 0).Common.Ref;
         var allianceShipType = Ship(r => r.Alliance != 0 && Field(r.Common.Ref, SdField.CombatValue) != 0).Common.Ref;
-        foreach (var (type, owner, reason) in new[] { (shipType, Owner.Empire, 0xC), (shipType, Owner.Empire, 0xC), (allianceShipType, Owner.Alliance, 0xC),
-            (shipType, Owner.Empire, 0xE), (shipType, Owner.Empire, 0xF), (shipType, Owner.Empire, 5) })
+        foreach (var (type, owner, reason) in new[] { (shipType, Owner.Empire, DestroyedReason.Battle), (shipType, Owner.Empire, DestroyedReason.Battle), (allianceShipType, Owner.Alliance, DestroyedReason.Battle),
+            (shipType, Owner.Empire, DestroyedReason.Assault), (shipType, Owner.Empire, DestroyedReason.Bombardment), (shipType, Owner.Empire, DestroyedReason.CannotTravel) })
             Objects.Destroy(game, Objects.Create(game, type, owner, s, completed: true), reason);
         game.Clock.Flush(game);
         int e = Field(shipType, SdField.CombatValue), a = Field(allianceShipType, SdField.CombatValue);
@@ -440,7 +440,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         var result = new BattleResult(true, [1, 0, 0, 0, 0, 0, 0], aboard.ToDictionary(f => f, _ => new FighterResult(12, ship)),
             new Dictionary<GameObject, ShipResult> { [ship] = new(hull, 0, 0, 0, 0, 0) }, new Dictionary<GameObject, DeathStarResult>());
         Combat.ApplyBattle(game, x, result);
-        Assert.Equal(aboard.Take(2), x.Contents.Where(o => Family.Of(o.Type) is >= 0x1C and < 0x20));
+        Assert.Equal(aboard.Take(2), x.Contents.Where(o => Family.Of(o.Type) is >= Families.Fighter and < Families.Headquarters));
         Assert.Equal(aboard.Skip(2), ship.Contents);
     }
 
@@ -458,8 +458,8 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
             SdField.AftLaserCannon, SdField.PortTurbolaser, SdField.PortIonCannon, SdField.PortLaserCannon, SdField.StarboardTurbolaser,
             SdField.StarboardIonCannon, SdField.StarboardLaserCannon];
         int Armed(CapitalShipRecord r) => arcs.Sum(f => Field(r.Common.Ref, f));
-        var strong = Definitions.CapitalShips.Where(r => r.Empire != 0 && Family.Of(r.Common.Ref) < 0x18 && Field(r.Common.Ref, SdField.WeaponRechargeRate) > 0).MaxBy(Armed)!;
-        var weak = Definitions.CapitalShips.Where(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < 0x18 && Armed(r) > 0).MinBy(Armed)!;
+        var strong = Definitions.CapitalShips.Where(r => r.Empire != 0 && Family.Of(r.Common.Ref) < Families.DeathStar && Field(r.Common.Ref, SdField.WeaponRechargeRate) > 0).MaxBy(Armed)!;
+        var weak = Definitions.CapitalShips.Where(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < Families.DeathStar && Armed(r) > 0).MinBy(Armed)!;
         var empire = x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId()));
         empire.Add(new GameObject(strong.Common.Ref, Owner.Empire, game.NextId()));
         empire.Add(new GameObject(strong.Common.Ref, Owner.Empire, game.NextId()));
@@ -506,16 +506,16 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
     {
         var (game, s) = Galaxy(1);
         var x = s[0];
-        var strong = Definitions.CapitalShips.First(r => r.Empire != 0 && Family.Of(r.Common.Ref) < 0x18 && Field(r.Common.Ref, SdField.WeaponRechargeRate) > 0 && Field(r.Common.Ref, SdField.ForeTurbolaser) > 0);
-        var weak = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < 0x18);
+        var strong = Definitions.CapitalShips.First(r => r.Empire != 0 && Family.Of(r.Common.Ref) < Families.DeathStar && Field(r.Common.Ref, SdField.WeaponRechargeRate) > 0 && Field(r.Common.Ref, SdField.ForeTurbolaser) > 0);
+        var weak = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < Families.DeathStar);
         x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId())).Add(new GameObject(strong.Common.Ref, Owner.Empire, game.NextId()));
         x.Add(new Fleet(Refs.Fleet, Owner.Alliance, game.NextId())).Add(new GameObject(weak.Common.Ref, Owner.Alliance, game.NextId()));
         (x.BattlePending, x.BattleToHost) = (true, true);
         game.BattleTrace = [];
-        var log = new Messages(game, Owner.Alliance, c => $"{c.Ref:X}");
+        var log = new Messages(game, Owner.Alliance, c => $"{c.Ref}");
         Combat.HostBattles(game);
         Assert.Single(game.BattleTrace); // hosted: the battle report windows read it
-        Assert.DoesNotContain(log.Update(), e => e.Type == 1 || e.Text is not null);
+        Assert.DoesNotContain(log.Update(), e => e.Type == MessageType.Battle || e.Text is not null);
         // The host walk cleared BattleToHost; a system still (or again) BattlePending without a rise is not hosted again
         Assert.False(x.BattleToHost);
         int hosted = 0;
@@ -548,8 +548,8 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal(Owner.None, x.BattleWithdrew);
     }
 
-    // A real departure (0x201) out of a BattlePending system writes BattleWithdrew on the departure system: the
-    // 0x301 hook runs on the parent captured at post time, before the 0x320 parent change
+    // A real departure (Move) out of a BattlePending system writes BattleWithdrew on the departure system: the
+    // The Usable hook runs on the parent captured at post time, before the parent change
     [GameFact]
     public void DepartureFromABattleSetsBattleWithdrew()
     {
@@ -563,7 +563,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         Combat.SetBattlePending(game, from, true);
         from.BattleWon = Owner.Empire;
         OrderResult? result = null;
-        Orders.Submit(game, new Command(0x201, Owner.Alliance) { Targets = [(fleet, 0)], ArgRef = to }, r => result = r);
+        Orders.Submit(game, new Command(CommandType.Move, Owner.Alliance) { Targets = [(fleet, GroupMode.Object)], ArgRef = to }, r => result = r);
         while (game.Clock.DispatchOne(game)) { }
         Assert.True(result?.Success);
         Assert.Equal(Owner.Alliance, from.BattleWithdrew);
@@ -577,7 +577,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
     {
         var (game, s) = Galaxy(1);
         var x = s[0];
-        var ship = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < 0x18);
+        var ship = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < Families.DeathStar);
         x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId())).Add(new GameObject(ship.Common.Ref, Owner.Empire, game.NextId()));
         x.Add(new Fleet(Refs.Fleet, Owner.Alliance, game.NextId())).Add(new GameObject(ship.Common.Ref, Owner.Alliance, game.NextId()));
         var human = new OpenSWR.Sim.Ai.HumanController(Owner.Alliance) { AskBattles = true };
@@ -603,8 +603,8 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     /// <summary>
-    /// Worked example under the corrected rules: two 0x14000046 (A1, A2; side 1, one fleet, one laser group) against one
-    /// 0x14000081 (E), decision floats 0. The first eight battle-generator draws after the 16-step warm-up are 79, 70, 35, 61, 1, 73,
+    /// Worked example under the corrected rules: two capital ships of index 70 (A1, A2; side 1, one fleet, one laser group) against one
+    /// capital ship of index 129 (E), decision floats 0. The first eight battle-generator draws after the 16-step warm-up are 79, 70, 35, 61, 1, 73,
     /// 52, 8. E's group keeps A1 while its TTK &lt; 300: A1 shield crits at steps 3, 38, 47, 69, first hull hit at 123; E shield crits
     /// at 31, 228. With retreat allowed side 1 withdraws in step 266 (A1 destroyed, its destroy the last draw; A2 retreats;
     /// S[0], S[3]; 534 draws); without, A2's first hull hit is in step 411 and the last draw an A2 hull draw in step 810 (S[3]; 1621).
@@ -617,9 +617,9 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         var (game, s) = Galaxy(1);
         var x = s[0];
         var a = x.Add(new Fleet(Refs.Fleet, Owner.Alliance, game.NextId()));
-        var ship1 = a.Add(new GameObject(0x14000046, Owner.Alliance, game.NextId()));
-        var ship2 = a.Add(new GameObject(0x14000046, Owner.Alliance, game.NextId()));
-        var enemy = x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId())).Add(new GameObject(0x14000081, Owner.Empire, game.NextId()));
+        var ship1 = a.Add(new GameObject(SdRef.Make(Families.CapitalShip, 70), Owner.Alliance, game.NextId()));
+        var ship2 = a.Add(new GameObject(SdRef.Make(Families.CapitalShip, 70), Owner.Alliance, game.NextId()));
+        var enemy = x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId())).Add(new GameObject(SdRef.Make(Families.CapitalShip, 129), Owner.Empire, game.NextId()));
         var trace = new List<(string, int, int)>();
         var crits = new List<(long Step, GameObject Unit, int K)>();
         (BattleEngine.Trace, BattleEngine.CritTrace, BattleEngine.RetreatAllowedOverride) = (trace, crits, (_, _) => retreat);
@@ -627,7 +627,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         {
             var r = BattleEngine.Run(game, x);
             Assert.Equal([79, 70, 35, 61, 1, 73, 52, 8], trace.Take(8).Select(t => t.Item3));
-            string one = $"{ship1.Ref:X8}", two = $"{ship2.Ref:X8}", e = $"{enemy.Ref:X8}";
+            string one = $"{Family.Of(ship1.Ref)}:{SdRef.IndexOf(ship1.Ref)}", two = $"{Family.Of(ship2.Ref)}:{SdRef.IndexOf(ship2.Ref)}", e = $"{Family.Of(enemy.Ref)}:{SdRef.IndexOf(enemy.Ref)}";
             Assert.Equal([$"{one} 1 s", $"{e} 1 s", $"{one} 2 s", $"{e} 2 s", $"{one} 3 s", $"{e} 3 s"], trace.Take(6).Select(t => t.Item1));
             long[] ShieldCrits(GameObject o) => [.. crits.Where(c => c.Unit == o && c.K == 0).Select(c => c.Step).Take(4)];
             long FirstHull(string unit) => long.Parse(trace.First(t => t.Item1.StartsWith(unit) && t.Item1.EndsWith('h')).Item1.Split(' ')[1]);
@@ -659,17 +659,17 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     /// <summary>
-    /// Death Star battle examples: one Empire fleet with the Death Star 0x18000088 against one Alliance fleet with 0x14000046 (example 1); plus an
+    /// Death Star battle examples: one Empire fleet with the Death Star (Refs.DeathStarType) against one Alliance fleet with capital ship index 70 (example 1); plus an
     /// X-wing squadron directly in the system (example 2); plus a Usable Death Star shield facility (example 3, shielded).
     /// </summary>
     static (GameState Game, StarSystem System, GameObject DeathStar, GameObject Ship, GameObject? XWing) DeathStarBattle(bool xwing, bool shield = false)
     {
         var (game, s) = Galaxy(1);
         var x = s[0];
-        var ds = x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId())).Add(new GameObject(0x18000088, Owner.Empire, game.NextId()));
-        var ship = x.Add(new Fleet(Refs.Fleet, Owner.Alliance, game.NextId())).Add(new GameObject(0x14000046, Owner.Alliance, game.NextId()));
-        var wing = xwing ? x.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId())) : null;
-        if (shield) x.Add(new GameObject(Definitions.DefenseFacilities.First(r => Family.Of(r.Common.Ref) == 0x25).Common.Ref, Owner.Empire, game.NextId()));
+        var ds = x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId())).Add(new GameObject(Refs.DeathStarType, Owner.Empire, game.NextId()));
+        var ship = x.Add(new Fleet(Refs.Fleet, Owner.Alliance, game.NextId())).Add(new GameObject(SdRef.Make(Families.CapitalShip, 70), Owner.Alliance, game.NextId()));
+        var wing = xwing ? x.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId())) : null;
+        if (shield) x.Add(new GameObject(Definitions.DefenseFacilities.First(r => Family.Of(r.Common.Ref) == Families.DeathStarShield).Common.Ref, Owner.Empire, game.NextId()));
         x.BattleReady = Owner.Empire;
         return (game, x, ds, ship, wing);
     }
@@ -681,7 +681,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         finally { (BattleEngine.Trace, BattleEngine.StateTrace, BattleEngine.RetreatAllowedOverride) = (null, null, null); }
     }
 
-    // Example 1: the superlaser destroys 0x14000046 in step 1 (draws 79, 70)
+    // Example 1: the superlaser destroys capital ship index 70 in step 1 (draws 79, 70)
     [GameFact]
     public void DeathStarSuperlaserFiresInStepOne()
     {
@@ -696,7 +696,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         Combat.ApplyBattle(game, x, r);
         Assert.Equal(Owner.Empire, x.BattleWon);
         Assert.True(ship.Destroyed);
-        Assert.Equal(0xC, ship.DestroyedReason);
+        Assert.Equal(DestroyedReason.Battle, ship.DestroyedReason);
         Assert.False(ds.Destroyed);
         Assert.Equal(0, ds.HullDamage);
     }
@@ -719,7 +719,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.Equal(Owner.Alliance, x.BattleWon);
         Assert.True(ship.Destroyed);
         Assert.True(ds.Destroyed);
-        Assert.Equal(0xC, ds.DestroyedReason);
+        Assert.Equal(DestroyedReason.Battle, ds.DestroyedReason);
         Assert.Equal(25000, ds.HullDamage);
     }
 
@@ -746,7 +746,7 @@ public class CombatTests(Xunit.Abstractions.ITestOutputHelper output)
         var (game, x, ds, ship, _) = DeathStarBattle(xwing: false);
         ds.HullDamage = 1000;
         var mm = x.Managers[(int)ManufacturingKind.Ship] = new ManufacturingManager(x, ManufacturingKind.Ship, game.NextId());
-        var building = new GameObject(0x18000088, Owner.Empire, game.NextId());
+        var building = new GameObject(Refs.DeathStarType, Owner.Empire, game.NextId());
         (building.Completed, building.Usable) = (false, false);
         mm.Orders.Add(building);
         var trace = new List<(string Site, int N, int Result)>();

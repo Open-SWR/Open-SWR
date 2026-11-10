@@ -14,9 +14,84 @@ public readonly record struct StatusItem(int Id, int Picture, bool Gokres, int T
 /// <summary>A built page: title TEXTSTRA id (0 = none), the object rows, the picture rows (Galaxy Overview / Objectives).</summary>
 public sealed record StatusPage(int Title, List<StatusRow> Rows, List<StatusItem> Items)
 {
-    // label / value ids (TEXTSTRA)
-    const int Status = 34406, Eta = 34662, Day = 14356, Maintenance = 34385, Yes = 34646, No = 34645, Attached = 34736, Location = 34404,
-        EnrouteText = 34628, UnderConstruction = 34647, Active = 34659, Awaiting = 34632, NotAssigned = 34658, None = 34644, OnMission = 34629;
+    /// <summary>The full share in per cent (support pages) and the number of critical levels a rate loses (Inferred: 4 steps of damage).</summary>
+    const int FullSupport = 100, CriticalLevels = 4;
+    /// <summary>GameSettings.VictoryFlag of the standard victory (any other value: headquarters victory).</summary>
+    const int StandardVictory = 0;
+
+    /// <summary>Page title ids (TEXTSTRA) by object kind; managers by manufacturing kind.</summary>
+    public static class Titles
+    {
+        public const int Fleet = 34616, CapitalShip = 34562, Character = 34595, DefenceFacility = 34403, Fighter = 34384, Troop = 34405,
+            ManufacturingFacility = 34560, StarSystem = 34432, Mission = 34422, SpecialForce = 34416;
+        /// <summary>The manager titles (FacilitiesUnderConstruction, ShipConstruction, TroopsInTraining in the strategy text).</summary>
+        public const int ConstructionManager = 6195, ShipManager = 6185, TrainingManager = 6193;
+    }
+
+    /// <summary>Label, status and value ids (TEXTSTRA) of the object pages, named by the row they label (Inferred from the value shown).</summary>
+    public static class Text
+    {
+        // shared rows and statuses
+        public const int Status = 34406, Location = 34404, Attached = 34736, Eta = 34662, DayUnit = 14356, Maintenance = 34385,
+            Yes = 34646, No = 34645, None = 34644, Enroute = 34628, UnderConstruction = 34647, Active = 34659, Awaiting = 34632,
+            NotAssigned = 34658, OnMission = 34629, Captured = 34630, Injured = 34631;
+        /// <summary>Header rows with no value (a label only).</summary>
+        public const int CapacityHeader = 34564, AboardHeader = 34566;
+        // fleet
+        public const int FleetShips = 34624, FighterSquadrons = 14368, Troops = 34565, Characters = 34567, DamagedShips = 34625, Hyperdrive = 34387,
+            FleetAdmiral = 12358, FleetGeneral = 12360, FleetCommander = 12356;
+        // capital ship
+        public const int ShipClass = 34819, Parent = 34563, Fighters = 34457, Damaged = 34568, HyperdriveRating = 34569, Hull = 34576,
+            DamageControl = 34577, ShieldRecharge = 34578, ShieldStrength = 34388, TractorBeam = 34579, Speed = 34580, Maneuverability = 34390,
+            Detection = 34391, WeaponRecharge = 34581, Bombardment = 34582, ArcFore = 34583, ArcAft = 34592, ArcStarboard = 34593, ArcPort = 34594,
+            Turbolaser = 34584, IonCannon = 34401, LaserCannon = 34585;
+        // character
+        public const int Commanding = 34596, ForceRankBand1 = 34633, ForceRankBand2 = 34640, ForceRankBand3 = 34641, ForceRankBand4 = 34642,
+            ForceRankBand5 = 34643, ForceRank = 34597, Diplomacy = 34598, Espionage = 34599, Combat = 34600, Leadership = 34601,
+            TechnicalSkillsHeader = 34608, ShipDesign = 34609, TroopTraining = 34610, FacilityDesign = 34611, RankHeader = 34615,
+            Admiral = 34435, General = 34433, Commander = 34434;
+        // defence facility, fighter, troop, manufacturing facility
+        public const int AttackStrength = 34393, DefenceShield = 34627, DefenceBombardment = 34409, SquadronSize = 34386, FighterSpeed = 34389,
+            TorpedoRange = 34392, FighterLaserCannon = 34400, Torpedoes = 34402, TroopAttack = 34407, TroopDefense = 34408, TroopDetection = 34417,
+            InTraining = 34673, ProcessingRate = 34561, BombardmentDefense = 34392;
+        // star system
+        public const int OwnedByAlliance = 34648, OwnedByEmpire = 34649, NeutralSystem = 34657, PopularSupport = 34436, PopularDissent = 34437,
+            Energy = 34438, RawMaterials = 34439, FacilitiesHeader = 34440, Mines = 34441, Refineries = 34448, Shipyards = 34449,
+            TrainingFacilities = 34450, ConstructionYards = 34451, PlanetaryShields = 34452, IonCannons = 34453, DeathStarShields = 34454,
+            ForcesHeader = 34455, TroopsInSystem = 34456;
+        // mission
+        public const int Target = 34423, TargetNone = 34087, Members = 34424, Decoys = 34425;
+        // special force (agent skills)
+        public const int AgentDiplomacy = 34418, AgentEspionage = 34419, AgentCombat = 34420, AgentLeadership = 34421;
+        // manufacturing manager
+        public const int ManagerIdle = 34665, NoFacility = 34674, InProduction = 34672, Queue = 34664, CompletionDay = 34661;
+    }
+
+    /// <summary>Objective texts of the Objectives page (TEXTSTRA): the "not yet" and "done" text per side and objective.</summary>
+    public static class ObjectiveText
+    {
+        public const int AllianceCoruscantNot = 34689, AllianceCoruscantDone = 34690, AlliancePalpatineNot = 34697, AlliancePalpatineDone = 34698,
+            AllianceVaderNot = 34701, AllianceVaderDone = 34702, AllianceHqNot = 34692, AllianceHqDone = 34695, AllianceLukeNot = 34708,
+            AllianceLukeDone = 34711, AllianceMothmaNot = 34704, AllianceMothmaDone = 34707;
+        public const int EmpireHqNot = 34693, EmpireHqDone = 34694, EmpireLukeNot = 34709, EmpireLukeDone = 34710, EmpireMothmaNot = 34705,
+            EmpireMothmaDone = 34706, EmpireCoruscantNot = 34688, EmpireCoruscantDone = 34691, EmpirePalpatineNot = 34696, EmpirePalpatineDone = 34699,
+            EmpireVaderNot = 34700, EmpireVaderDone = 34703;
+    }
+
+    /// <summary>STRATEGY bitmaps of the Objectives page pictures.</summary>
+    public static class ObjectivePicture
+    {
+        public const int Coruscant = 1068, Hq = 904, Palpatine = 11013, Vader = 11055, Luke = 11028, Mothma = 11032;
+    }
+
+    /// <summary>GOKRES pictures of the manager pages: construction, ship, training.</summary>
+    public static class ManagerPictures
+    {
+        public const int Construction = 263, Ship = 262, Training = 264;
+    }
+
+    /// <summary>Added to a definition's string number to get its Galaxy Overview picture (GOKRES).</summary>
+    const int OverviewPictureOffset = 16384;
 
     /// <summary>
     /// The page of an object as <paramref name="side"/> sees it (dispatch by family, first match). Values come from the side's
@@ -37,13 +112,13 @@ public sealed record StatusPage(int Title, List<StatusRow> Rows, List<StatusItem
         string Name(GameObject? x) => x is null ? "" : name(x);
         string Num(long n) => n.ToString();
         void Row(int label, string value = "", int text = 0, bool colon = false) => rows.Add(new(label, value, text, colon));
-        void YesNo(int label, bool yes) => Row(label, text: yes ? Yes : No);
+        void YesNo(int label, bool yes) => Row(label, text: yes ? Text.Yes : Text.No);
         void EtaRow(GameObject x, ViewObject xv)
         {
-            if (xv.Enroute && ScreenViews.Sees(x, side) && x.Eta != 0) Row(Eta, Num(x.Eta), Day);
+            if (xv.Enroute && ScreenViews.Sees(x, side) && x.Eta != 0) Row(Text.Eta, Num(x.Eta), Text.DayUnit);
         }
-        void MaintenanceRow() => Row(Maintenance, Num(f is >= 0x10 and < 0x40 ? game.MaintenanceCost(o.Type) : 0));
-        void StatusA() => Row(Status, text: v.Enroute ? EnrouteText : !v.Completed ? UnderConstruction : Active);
+        void MaintenanceRow() => Row(Text.Maintenance, Num(f is >= Families.Troop and < Families.Mission ? game.MaintenanceCost(o.Type) : 0));
+        void StatusA() => Row(Text.Status, text: v.Enroute ? Text.Enroute : !v.Completed ? Text.UnderConstruction : Text.Active);
         List<ViewObject> Inside(GameObject c) => ScreenViews.Existing(game, c, side);
         IEnumerable<ViewObject> Deep(GameObject c) => Inside(c).SelectMany(x => Deep(x.Object).Prepend(x));
         string Commander(GameObject c, int kind) =>
@@ -51,242 +126,249 @@ public sealed record StatusPage(int Title, List<StatusRow> Rows, List<StatusItem
         void CommanderRow(int label, GameObject c, int kind, bool colon)
         {
             string who = Commander(c, kind);
-            if (who == "") Row(label, text: NotAssigned, colon: colon);
+            if (who == "") Row(label, text: Text.NotAssigned, colon: colon);
             else Row(label, who, colon: colon);
         }
         string Pair(long cur, long max) => $"{cur}:{max}";
 
         switch (f)
         {
-            case >= 0x08 and < 0x10: // fleet, title 34616
+            case >= Families.Fleet and < Families.Troop: // fleet, title 34616
             {
-                int status = v.Enroute ? EnrouteText : !v.Completed ? UnderConstruction : o.EnrouteActive && live ? EnrouteText : Awaiting;
-                Row(Status, text: status);
+                int status = v.Enroute ? Text.Enroute : !v.Completed ? Text.UnderConstruction : o.EnrouteActive && live ? Text.Enroute : Text.Awaiting;
+                Row(Text.Status, text: status);
                 EtaRow(o, v);
-                CommanderRow(12358, o, 2, true);
-                CommanderRow(12360, o, 3, true);
-                CommanderRow(12356, o, 1, true);
-                var ships = Inside(o).Where(x => x.In(0x14, 0x1C)).ToList();
-                Row(34624, Num(ships.Count));
-                Row(34564);
+                CommanderRow(Text.FleetAdmiral, o, CommandKind.Admiral, true);
+                CommanderRow(Text.FleetGeneral, o, CommandKind.General, true);
+                CommanderRow(Text.FleetCommander, o, CommandKind.Commander, true);
+                var ships = Inside(o).Where(x => x.In(Families.CapitalShip, Families.Fighter)).ToList();
+                Row(Text.FleetShips, Num(ships.Count));
+                Row(Text.CapacityHeader);
                 var caps = ships.Select(x => game.Definitions.CapitalShips.FirstOrDefault(r => r.Common.Ref == x.Object.Type)).Where(r => r is not null).ToList();
-                Row(14368, Num(caps.Sum(r => r!.FighterCapacity)), colon: true);
-                Row(34565, Num(caps.Sum(r => r!.TroopCapacity)));
-                Row(34566);
+                Row(Text.FighterSquadrons, Num(caps.Sum(r => r!.FighterCapacity)), colon: true);
+                Row(Text.Troops, Num(caps.Sum(r => r!.TroopCapacity)));
+                Row(Text.AboardHeader);
                 var aboard = ships.SelectMany(x => Inside(x.Object)).ToList();
-                Row(14368, Num(aboard.Count(x => x.In(0x1C, 0x20))), colon: true);
-                Row(34565, Num(aboard.Count(x => x.In(0x10, 0x14))));
-                Row(34567, Num(aboard.Count(x => x.In(0x30, 0x40))));
-                Row(34625, Num(ships.Count(x => x.Damaged)));
-                YesNo(34387, live ? Orders.Speed(game, o) != 0 : caps.Any(r => r!.Hyperdrive != 0)); // Inferred: the fleet can jump
-                return new(34616, rows, []);
+                Row(Text.FighterSquadrons, Num(aboard.Count(x => x.In(Families.Fighter, Families.Headquarters))), colon: true);
+                Row(Text.Troops, Num(aboard.Count(x => x.In(Families.Troop, Families.CapitalShip))));
+                Row(Text.Characters, Num(aboard.Count(x => x.In(Families.MajorCharacter, Families.Mission))));
+                Row(Text.DamagedShips, Num(ships.Count(x => x.Damaged)));
+                YesNo(Text.Hyperdrive, live ? Orders.Speed(game, o) != 0 : caps.Any(r => r!.Hyperdrive != 0)); // Inferred: the fleet can jump
+                return new(Titles.Fleet, rows, []);
             }
-            case >= 0x14 and < 0x1C when game.Definitions.CapitalShips.FirstOrDefault(r => r.Common.Ref == o.Type) is { } ship: // title 34562
+            case >= Families.CapitalShip and < Families.Fighter when game.Definitions.CapitalShips.FirstOrDefault(r => r.Common.Ref == o.Type) is { } ship: // title 34562
             {
-                int Ch(int k) => live ? o.Critical(k) : 0;
-                long Rate(uint b, int k) => b * (4 - Ch(k)) / 4;
-                Row(34819, definition(ship.Common));
-                Row(34563, Name(parent));
-                Row(Status, text: v.Enroute ? EnrouteText : !v.Completed ? UnderConstruction : Awaiting);
+                int Ch(CriticalKind k) => live ? o.Critical((int)k) : 0;
+                long Rate(uint b, CriticalKind k) => b * (CriticalLevels - Ch(k)) / CriticalLevels;
+                Row(Text.ShipClass, definition(ship.Common));
+                Row(Text.Parent, Name(parent));
+                Row(Text.Status, text: v.Enroute ? Text.Enroute : !v.Completed ? Text.UnderConstruction : Text.Awaiting);
                 EtaRow(o, v);
                 MaintenanceRow();
-                Row(34564);
-                Row(34457, Num(ship.FighterCapacity));
-                Row(34565, Num(ship.TroopCapacity));
-                Row(34566);
+                Row(Text.CapacityHeader);
+                Row(Text.Fighters, Num(ship.FighterCapacity));
+                Row(Text.Troops, Num(ship.TroopCapacity));
+                Row(Text.AboardHeader);
                 var aboard = Inside(o);
-                Row(34457, Num(aboard.Count(x => x.In(0x1C, 0x20))));
-                Row(34565, Num(aboard.Count(x => x.In(0x10, 0x14))));
-                Row(34567, Num(aboard.Count(x => x.In(0x30, 0x40))));
-                YesNo(34568, v.Damaged);
-                Row(34569, Pair(ship.Hyperdrive * (1 - Math.Min(1, Ch(4))), ship.Hyperdrive));
-                Row(34576, Pair(ship.Hull - (live ? o.HullDamage : 0), ship.Hull));
-                Row(34577, Num(ship.DamageControl));
-                Row(34578, Pair(Rate(ship.ShieldRechargeRate, 0), ship.ShieldRechargeRate));
-                Row(34388, Num(ship.ShieldStrength));
-                Row(34579, Pair(Rate(ship.TractorBeamPower, 2), ship.TractorBeamPower));
-                Row(34580, Pair(Rate(ship.Speed, 3), ship.Speed));
-                Row(34390, Num(ship.Maneuverability));
-                Row(34391, Num(ship.Detection));
-                Row(34581, Pair(Rate(ship.WeaponRechargeRate, 1), ship.WeaponRechargeRate));
-                Row(34582, Num(ship.Bombardment));
-                foreach (var (header, arc) in new[] { (34583, ship.Fore), (34592, ship.Aft), (34593, ship.Starboard), (34594, ship.Port) })
+                Row(Text.Fighters, Num(aboard.Count(x => x.In(Families.Fighter, Families.Headquarters))));
+                Row(Text.Troops, Num(aboard.Count(x => x.In(Families.Troop, Families.CapitalShip))));
+                Row(Text.Characters, Num(aboard.Count(x => x.In(Families.MajorCharacter, Families.Mission))));
+                YesNo(Text.Damaged, v.Damaged);
+                Row(Text.HyperdriveRating, Pair(ship.Hyperdrive * (1 - Math.Min(1, Ch(CriticalKind.Hyperdrive))), ship.Hyperdrive));
+                Row(Text.Hull, Pair(ship.Hull - (live ? o.HullDamage : 0), ship.Hull));
+                Row(Text.DamageControl, Num(ship.DamageControl));
+                Row(Text.ShieldRecharge, Pair(Rate(ship.ShieldRechargeRate, CriticalKind.Shield), ship.ShieldRechargeRate));
+                Row(Text.ShieldStrength, Num(ship.ShieldStrength));
+                Row(Text.TractorBeam, Pair(Rate(ship.TractorBeamPower, CriticalKind.Tractor), ship.TractorBeamPower));
+                Row(Text.Speed, Pair(Rate(ship.Speed, CriticalKind.Speed), ship.Speed));
+                Row(Text.Maneuverability, Num(ship.Maneuverability));
+                Row(Text.Detection, Num(ship.Detection));
+                Row(Text.WeaponRecharge, Pair(Rate(ship.WeaponRechargeRate, CriticalKind.Weapon), ship.WeaponRechargeRate));
+                Row(Text.Bombardment, Num(ship.Bombardment));
+                foreach (var (header, arc) in new[] { (Text.ArcFore, ship.Fore), (Text.ArcAft, ship.Aft), (Text.ArcStarboard, ship.Starboard), (Text.ArcPort, ship.Port) })
                 {
                     Row(header);
-                    Row(34584, Num(arc.Turbolaser));
-                    Row(34401, Num(arc.IonCannon));
-                    Row(34585, Num(arc.LaserCannon));
+                    Row(Text.Turbolaser, Num(arc.Turbolaser));
+                    Row(Text.IonCannon, Num(arc.IonCannon));
+                    Row(Text.LaserCannon, Num(arc.LaserCannon));
                 }
-                return new(34562, rows, []);
+                return new(Titles.CapitalShip, rows, []);
             }
-            case >= 0x30 and < 0x3C when o is Character c: // title 34595
+            case >= Families.MajorCharacter and < Families.SpecialForce when o is Character c: // title 34595
             {
                 var commanding = live && c.CommandKind != 0 ? c.Container is Fleet or StarSystem ? c.Container : c.Container?.Container as Fleet : null;
-                if (commanding is null) Row(34596, text: None);
-                else Row(34596, name(commanding));
-                Row(Attached, Name(parent));
+                if (commanding is null) Row(Text.Commanding, text: Text.None);
+                else Row(Text.Commanding, name(commanding));
+                Row(Text.Attached, Name(parent));
                 var see = Knowledge.See(game, c, side);
-                int status = v.Enroute ? EnrouteText : see.Captured ? 34630 : live && c.Injury != 0 ? 34631
-                    : v.Mission is { Record.Unlisted: false } ? OnMission : Awaiting;
-                Row(Status, text: status);
+                int status = v.Enroute ? Text.Enroute : see.Captured ? Text.Captured : live && c.Injury != 0 ? Text.Injured
+                    : v.Mission is { Record.Unlisted: false } ? Text.OnMission : Text.Awaiting;
+                Row(Text.Status, text: status);
                 EtaRow(o, v);
                 int force = live ? c.Force : (int)c.Definition.JediLevel.Base;
-                Row(34597, text: force < 10 ? None : force < 20 ? 34633 : force < 80 ? 34640 : force < 100 ? 34641 : force < 120 ? 34642 : 34643);
+                Row(Text.ForceRank, text: force < 10 ? Text.None : force < 20 ? Text.ForceRankBand1 : force < 80 ? Text.ForceRankBand2
+                    : force < 100 ? Text.ForceRankBand3 : force < 120 ? Text.ForceRankBand4 : Text.ForceRankBand5);
                 int Skill(int i, Skill s) => live ? c.Skills[i] : (int)s.Base;
                 var k = c.Definition.Skills;
-                Row(34598, Num(Skill(SkillIndex.Diplomacy, k.Diplomacy)));
-                Row(34599, Num(Skill(SkillIndex.Espionage, k.Espionage)));
-                Row(34600, Num(Skill(SkillIndex.Combat, k.Combat)));
-                Row(34601, Num(Skill(SkillIndex.Leadership, k.Leadership)));
-                Row(34608);
-                YesNo(34609, Skill(SkillIndex.ShipDesign, k.ShipDesign) != 0);
-                YesNo(34610, Skill(SkillIndex.TroopTraining, k.TroopTraining) != 0);
-                YesNo(34611, Skill(SkillIndex.FacilityDesign, k.FacilityDesign) != 0);
-                Row(34615);
-                YesNo(34435, c.Definition.CanBeAdmiral != 0);
-                YesNo(34433, c.Definition.CanBeGeneral != 0);
-                YesNo(34434, c.Definition.CanBeCommander != 0);
-                return new(34595, rows, []);
+                Row(Text.Diplomacy, Num(Skill(SkillIndex.Diplomacy, k.Diplomacy)));
+                Row(Text.Espionage, Num(Skill(SkillIndex.Espionage, k.Espionage)));
+                Row(Text.Combat, Num(Skill(SkillIndex.Combat, k.Combat)));
+                Row(Text.Leadership, Num(Skill(SkillIndex.Leadership, k.Leadership)));
+                Row(Text.TechnicalSkillsHeader);
+                YesNo(Text.ShipDesign, Skill(SkillIndex.ShipDesign, k.ShipDesign) != 0);
+                YesNo(Text.TroopTraining, Skill(SkillIndex.TroopTraining, k.TroopTraining) != 0);
+                YesNo(Text.FacilityDesign, Skill(SkillIndex.FacilityDesign, k.FacilityDesign) != 0);
+                Row(Text.RankHeader);
+                YesNo(Text.Admiral, c.Definition.CanBeAdmiral != 0);
+                YesNo(Text.General, c.Definition.CanBeGeneral != 0);
+                YesNo(Text.Commander, c.Definition.CanBeCommander != 0);
+                return new(Titles.Character, rows, []);
             }
-            case >= 0x20 and < 0x28: // defence facility / HQ, title 34403
+            case >= Families.Headquarters and < Families.Shipyard: // defence facility / HQ, title 34403
             {
                 EtaRow(o, v);
-                Row(Location, Name(parent));
+                Row(Text.Location, Name(parent));
                 StatusA();
                 MaintenanceRow();
-                if (f >= 0x22 && game.Definitions.DefenseFacilities.FirstOrDefault(r => r.Common.Ref == o.Type) is { } d)
+                if (f >= Families.IonCannon && game.Definitions.DefenseFacilities.FirstOrDefault(r => r.Common.Ref == o.Type) is { } d)
                 {
-                    Row(34393, Num(d.AttackStrength));
-                    Row(34627, Num(d.ShieldStrength));
-                    Row(34409, Num(d.BombardmentDefense));
+                    Row(Text.AttackStrength, Num(d.AttackStrength));
+                    Row(Text.DefenceShield, Num(d.ShieldStrength));
+                    Row(Text.DefenceBombardment, Num(d.BombardmentDefense));
                 }
-                return new(34403, rows, []);
+                return new(Titles.DefenceFacility, rows, []);
             }
-            case >= 0x1C and < 0x20 when game.Definitions.Fighters.FirstOrDefault(r => r.Common.Ref == o.Type) is { } fighter: // title 34384
+            case >= Families.Fighter and < Families.Headquarters when game.Definitions.Fighters.FirstOrDefault(r => r.Common.Ref == o.Type) is { } fighter: // title 34384
             {
-                Row(Attached, Name(parent));
+                Row(Text.Attached, Name(parent));
                 EtaRow(o, v);
                 MaintenanceRow();
-                Row(34386, Pair(fighter.SquadronSize - (live ? o.SquadSizeDamage : 0), fighter.SquadronSize));
-                Row(34387, Num(fighter.Hyperdrive));
-                Row(34388, Pair(fighter.ShieldStrength, fighter.ShieldStrength));
-                Row(34389, Num(fighter.Speed));
-                Row(34390, Num(fighter.Maneuverability));
-                Row(34391, Num(fighter.Detection));
-                Row(34392, Pair(fighter.TorpedoRange, fighter.TorpedoRange));
-                Row(34393);
-                Row(34400, Pair(fighter.AttackStrength.LaserCannon, fighter.AttackStrength.LaserCannon));
-                Row(34401, Pair(fighter.AttackStrength.IonCannon, fighter.AttackStrength.IonCannon));
-                Row(34402, Pair(fighter.Torpedoes, fighter.Torpedoes));
-                return new(34384, rows, []);
+                Row(Text.SquadronSize, Pair(fighter.SquadronSize - (live ? o.SquadSizeDamage : 0), fighter.SquadronSize));
+                Row(Text.Hyperdrive, Num(fighter.Hyperdrive));
+                Row(Text.ShieldStrength, Pair(fighter.ShieldStrength, fighter.ShieldStrength));
+                Row(Text.FighterSpeed, Num(fighter.Speed));
+                Row(Text.Maneuverability, Num(fighter.Maneuverability));
+                Row(Text.Detection, Num(fighter.Detection));
+                Row(Text.TorpedoRange, Pair(fighter.TorpedoRange, fighter.TorpedoRange));
+                Row(Text.AttackStrength);
+                Row(Text.FighterLaserCannon, Pair(fighter.AttackStrength.LaserCannon, fighter.AttackStrength.LaserCannon));
+                Row(Text.IonCannon, Pair(fighter.AttackStrength.IonCannon, fighter.AttackStrength.IonCannon));
+                Row(Text.Torpedoes, Pair(fighter.Torpedoes, fighter.Torpedoes));
+                return new(Titles.Fighter, rows, []);
             }
-            case >= 0x10 and < 0x14 when game.Definitions.Troops.FirstOrDefault(r => r.Common.Ref == o.Type) is { } troop: // title 34405
+            case >= Families.Troop and < Families.CapitalShip when game.Definitions.Troops.FirstOrDefault(r => r.Common.Ref == o.Type) is { } troop: // title 34405
             {
-                Row(Attached, Name(parent));
-                Row(Status, text: v.Enroute ? EnrouteText : !v.Completed ? 34673 : Awaiting);
+                Row(Text.Attached, Name(parent));
+                Row(Text.Status, text: v.Enroute ? Text.Enroute : !v.Completed ? Text.InTraining : Text.Awaiting);
                 EtaRow(o, v);
                 MaintenanceRow();
-                Row(34407, Num(troop.AttackStrength));
-                Row(34408, Num(troop.DefenseStrength));
-                Row(34392, Num(troop.BombardmentDefense));
-                Row(34417, Num(troop.Detection));
-                return new(34405, rows, []);
+                Row(Text.TroopAttack, Num(troop.AttackStrength));
+                Row(Text.TroopDefense, Num(troop.DefenseStrength));
+                Row(Text.BombardmentDefense, Num(troop.BombardmentDefense));
+                Row(Text.TroopDetection, Num(troop.Detection));
+                return new(Titles.Troop, rows, []);
             }
-            case >= 0x28 and < 0x30: // manufacturing facility, Mine, Refinery, title 34560
+            case >= Families.Shipyard and < Families.MajorCharacter: // manufacturing facility, Mine, Refinery, title 34560
             {
                 var fac = game.Definitions.Facilities.FirstOrDefault(r => r.Common.Ref == o.Type);
-                Row(Location, Name(parent));
+                Row(Text.Location, Name(parent));
                 EtaRow(o, v);
                 StatusA();
                 MaintenanceRow();
-                Row(34561, Num(fac?.ProcessingRate ?? 0));
-                Row(34392, Num(fac?.BombardmentDefense ?? 0));
-                return new(34560, rows, []);
+                Row(Text.ProcessingRate, Num(fac?.ProcessingRate ?? 0));
+                Row(Text.BombardmentDefense, Num(fac?.BombardmentDefense ?? 0));
+                return new(Titles.ManufacturingFacility, rows, []);
             }
-            case >= 0x90 and < 0x98 when o is StarSystem s: // title 34432
+            case >= Families.CoreSystem and < Families.Abode when o is StarSystem s: // title 34432
             {
                 var see = Knowledge.See(game, s, side);
-                Row(Status, text: see.Owner switch { Owner.Alliance => 34648, Owner.Empire => 34649, _ => 34657 });
-                CommanderRow(34433, s, 3, false);
-                CommanderRow(34434, s, 1, false);
-                Row(34436, Num(see.Support));
-                Row(34437, Num(100 - see.Support));
-                Row(34438, Pair(s.UsedEnergy, s.Energy));
-                Row(34439, Pair(s.UsedRaw, s.RawMaterials));
-                Row(34440);
+                Row(Text.Status, text: see.Owner switch { Owner.Alliance => Text.OwnedByAlliance, Owner.Empire => Text.OwnedByEmpire, _ => Text.NeutralSystem });
+                CommanderRow(Text.General, s, CommandKind.General, false);
+                CommanderRow(Text.Commander, s, CommandKind.Commander, false);
+                Row(Text.PopularSupport, Num(see.Support));
+                Row(Text.PopularDissent, Num(FullSupport - see.Support));
+                Row(Text.Energy, Pair(s.UsedEnergy, s.Energy));
+                Row(Text.RawMaterials, Pair(s.UsedRaw, s.RawMaterials));
+                Row(Text.FacilitiesHeader);
                 var inside = Inside(s);
                 int Count(uint lo, uint hi) => inside.Count(x => x.In(lo, hi));
-                Row(34441, Num(Count(0x2C, 0x2D)));
-                Row(34448, Num(Count(0x2D, 0x2E)));
-                Row(34449, Num(Count(0x28, 0x29)));
-                Row(34450, Num(Count(0x29, 0x2A)));
-                Row(34451, Num(Count(0x2A, 0x2B)));
-                Row(34452, Num(Count(0x24, 0x25)));
-                Row(34453, Num(Count(0x22, 0x24)));
-                Row(34454, Num(Count(0x25, 0x26)));
-                Row(34455);
-                Row(34456, Num(Count(0x10, 0x14)));
-                Row(34457, Num(Count(0x1C, 0x20)));
-                return new(34432, rows, []);
+                Row(Text.Mines, Num(Count(Families.Mine, Families.Refinery)));
+                Row(Text.Refineries, Num(Count(Families.Refinery, Families.RefineryEnd)));
+                Row(Text.Shipyards, Num(Count(Families.Shipyard, Families.TrainingFacility)));
+                Row(Text.TrainingFacilities, Num(Count(Families.TrainingFacility, Families.ConstructionYard)));
+                Row(Text.ConstructionYards, Num(Count(Families.ConstructionYard, Families.ManufacturingEnd)));
+                Row(Text.PlanetaryShields, Num(Count(Families.PlanetaryShield, Families.DeathStarShield)));
+                Row(Text.IonCannons, Num(Count(Families.IonCannon, Families.PlanetaryShield)));
+                Row(Text.DeathStarShields, Num(Count(Families.DeathStarShield, Families.DeathStarShieldEnd)));
+                Row(Text.ForcesHeader);
+                Row(Text.TroopsInSystem, Num(Count(Families.Troop, Families.CapitalShip)));
+                Row(Text.Fighters, Num(Count(Families.Fighter, Families.Headquarters)));
+                return new(Titles.StarSystem, rows, []);
             }
-            case >= 0x50 and < 0x80 when o is Mission m: // title 34422
+            case >= Families.AgentMission and < Families.Sector when o is Mission m: // title 34422
             {
-                if (m.Record.Unlisted) return new(34422, rows, []);
-                var members = game.Characters.Cast<GameObject>().Concat(game.Created).Where(x => Family.Of(x.Type) is >= 0x30 and < 0x40)
+                if (m.Record.Unlisted) return new(Titles.Mission, rows, []);
+                var members = game.Characters.Cast<GameObject>().Concat(game.Created).Where(x => Family.Of(x.Type) is >= Families.MajorCharacter and < Families.Mission)
                     .Select(x => ScreenViews.View(game, x, side)).Where(x => x.Mission == m).ToList();
                 GameObject? target = null;
                 if (members.FirstOrDefault() is { } first)
-                    target = first.Owner == side ? m.Objective : m.Kind is >= 0x50 and < 0x60 ? Knowledge.Location(game, first.Object, side) : null;
-                if (target is null) Row(34423, text: 34087);
-                else Row(34423, name(target));
+                    target = first.Owner == side ? m.Objective : m.Kind is >= MissionKind.Diplomacy and <= MissionKind.JediTraining ? Knowledge.Location(game, first.Object, side) : null;
+                if (target is null) Row(Text.Target, text: Text.TargetNone);
+                else Row(Text.Target, name(target));
                 if (members.FirstOrDefault() is { } lead) EtaRow(lead.Object, lead);
-                Row(34424, Num(members.Count));
-                Row(34425, Num(members.Count(x => m.Decoys.Contains(x.Object))));
-                return new(34422, rows, []);
+                Row(Text.Members, Num(members.Count));
+                Row(Text.Decoys, Num(members.Count(x => m.Decoys.Contains(x.Object))));
+                return new(Titles.Mission, rows, []);
             }
-            case >= 0x3C and < 0x40 when game.Definitions.SpecialForces.FirstOrDefault(r => r.Common.Ref == o.Type) is { } force: // title 34416
+            case >= Families.SpecialForce and < Families.Mission when game.Definitions.SpecialForces.FirstOrDefault(r => r.Common.Ref == o.Type) is { } force: // title 34416
             {
-                Row(Attached, Name(parent));
-                Row(Status, text: v.Enroute ? EnrouteText : v.Mission is not null ? OnMission : !v.Completed ? UnderConstruction : Awaiting);
+                Row(Text.Attached, Name(parent));
+                Row(Text.Status, text: v.Enroute ? Text.Enroute : v.Mission is not null ? Text.OnMission : !v.Completed ? Text.UnderConstruction : Text.Awaiting);
                 EtaRow(o, v);
                 MaintenanceRow();
                 int Skill(int i, Skill s) => live && o is Agent a ? a.Skills[i] : (int)s.Base;
-                Row(34418, Num(Skill(SkillIndex.Diplomacy, force.Skills.Diplomacy)));
-                Row(34419, Num(Skill(SkillIndex.Espionage, force.Skills.Espionage)));
-                Row(34420, Num(Skill(SkillIndex.Combat, force.Skills.Combat)));
-                Row(34421, Num(Skill(SkillIndex.Leadership, force.Skills.Leadership)));
-                return new(34416, rows, []);
+                Row(Text.AgentDiplomacy, Num(Skill(SkillIndex.Diplomacy, force.Skills.Diplomacy)));
+                Row(Text.AgentEspionage, Num(Skill(SkillIndex.Espionage, force.Skills.Espionage)));
+                Row(Text.AgentCombat, Num(Skill(SkillIndex.Combat, force.Skills.Combat)));
+                Row(Text.AgentLeadership, Num(Skill(SkillIndex.Leadership, force.Skills.Leadership)));
+                return new(Titles.SpecialForce, rows, []);
             }
-            case >= 0xA0 and < 0xB0 when o is ManufacturingManager mm: // title by kind
+            case >= Families.ConstructionManager and < Families.ManagerEnd when o is ManufacturingManager mm: // title by kind
             {
                 var sys = mm.System;
                 var owner = Knowledge.See(game, sys, side).Owner;
-                uint yard = mm.Kind switch { ManufacturingKind.Construction => 0x2A, ManufacturingKind.Ship => 0x28, _ => 0x29 };
+                uint yard = mm.Kind switch { ManufacturingKind.Construction => Families.ConstructionYard, ManufacturingKind.Ship => Families.Shipyard, _ => Families.TrainingFacility };
                 int n = Inside(sys).Count(x => x.Family == yard && x.Owner == owner);
-                Row(Location, name(sys));
-                Row(Status, text: n == 0 ? 34674 : mm.Orders.Count == 0 ? 34665 : mm.Kind == ManufacturingKind.Training ? 34673 : 34672);
+                Row(Text.Location, name(sys));
+                Row(Text.Status, text: n == 0 ? Text.NoFacility : mm.Orders.Count == 0 ? Text.ManagerIdle : mm.Kind == ManufacturingKind.Training ? Text.InTraining : Text.InProduction);
                 if (mm.Orders.Count > 0)
                 {
-                    Row(34664, Num(mm.Orders.Count));
-                    if (mm.Owner == sys.Owner && Economy.EstimateDays(game, mm, mm.Orders[0].Type, 1, true) is { } days) Row(34661, Num(game.Day + days));
+                    Row(Text.Queue, Num(mm.Orders.Count));
+                    if (mm.Owner == sys.Owner && Economy.EstimateDays(game, mm, mm.Orders[0].Type, 1, true) is { } days) Row(Text.CompletionDay, Num(game.Day + days));
                 }
-                return new(mm.Kind switch { ManufacturingKind.Construction => 6195, ManufacturingKind.Ship => 6185, _ => 6193 }, rows, []);
+                return new(mm.Kind switch { ManufacturingKind.Construction => Titles.ConstructionManager, ManufacturingKind.Ship => Titles.ShipManager, _ => Titles.TrainingManager }, rows, []);
             }
         }
         return new(0, rows, []);
     }
 
     /// <summary>The page picture of a manager: GOKRES 263 construction, 262 shipyard, 264 training.</summary>
-    public static int ManagerPicture(ManufacturingManager m) => m.Kind switch { ManufacturingKind.Construction => 263, ManufacturingKind.Ship => 262, _ => 264 };
+    public static int ManagerPicture(ManufacturingManager m) => m.Kind switch
+    {
+        ManufacturingKind.Construction => ManagerPictures.Construction, ManufacturingKind.Ship => ManagerPictures.Ship, _ => ManagerPictures.Training,
+    };
 
-    // Galaxy Overview category lists, in call order
+    // Galaxy Overview category lists (family ranges [lo, hi)), in call order
     static readonly (uint Lo, uint Hi)[] Categories =
-        [(0x20, 0x22), (0x2A, 0x2B), (0x18, 0x1C), (0x25, 0x26), (0x1C, 0x20), (0x22, 0x23), (0x2C, 0x2D), (0x24, 0x25), (0x2D, 0x2E),
-         (0x28, 0x29), (0x3C, 0x40), (0x14, 0x18), (0x29, 0x2A), (0x10, 0x14), (0x23, 0x24)];
+        [(Families.Headquarters, Families.IonCannon), (Families.ConstructionYard, Families.ManufacturingEnd), (Families.DeathStar, Families.Fighter),
+         (Families.DeathStarShield, Families.DeathStarShieldEnd), (Families.Fighter, Families.Headquarters), (Families.IonCannon, Families.Gun),
+         (Families.Mine, Families.Refinery), (Families.PlanetaryShield, Families.DeathStarShield), (Families.Refinery, Families.RefineryEnd),
+         (Families.Shipyard, Families.TrainingFacility), (Families.SpecialForce, Families.Mission), (Families.CapitalShip, Families.DeathStar),
+         (Families.TrainingFacility, Families.ConstructionYard), (Families.Troop, Families.CapitalShip), (Families.Gun, Families.PlanetaryShield)];
 
     /// <summary>
-    /// Galaxy Overview (side key, menu 0x113): the side's real Existing objects per category list, grouped by definition:
-    /// one row per group, picture GOKRES (the string number) + 0x4000, text "count (3 digits)  maintenance sum (4 digits) name"; rows in
+    /// Galaxy Overview (side key, AdvisorMenu.GalaxyOverview): the side's real Existing objects per category list, grouped by definition:
+    /// one row per group, picture GOKRES (the string number) + 16384, text "count (3 digits)  maintenance sum (4 digits) name"; rows in
     /// ascending family (stable within a family). Inferred: definition order inside a list (first seen).
     /// </summary>
     public static StatusPage Overview(GameState game, Owner side, Func<SdCommon, string> definition)
@@ -297,28 +379,36 @@ public sealed record StatusPage(int Title, List<StatusRow> Rows, List<StatusItem
             foreach (var g in all.Where(o => Family.Of(o.Type) >= lo && Family.Of(o.Type) < hi).GroupBy(o => o.Type))
             {
                 if (game.Definitions.Resolve(g.Key) is not { } r) continue;
-                int maintenance = Family.Of(g.Key) is >= 0x10 and < 0x40 ? g.Count() * game.MaintenanceCost(g.Key) : 0;
-                items.Add(new((int)Family.Of(g.Key), r.Common.StringNumber + 0x4000, true, 0, $"{g.Count():D3}  {maintenance:D4} {definition(r.Common)}"));
+                int maintenance = Family.Of(g.Key) is >= Families.Troop and < Families.Mission ? g.Count() * game.MaintenanceCost(g.Key) : 0;
+                items.Add(new((int)Family.Of(g.Key), r.Common.StringNumber + OverviewPictureOffset, true, 0, $"{g.Count():D3}  {maintenance:D4} {definition(r.Common)}"));
             }
         return new(0, [], [.. items.OrderBy(i => i.Id)]);
     }
 
     /// <summary>
-    /// Objectives (null key, menu 0x114): six rows (standard victory) or only the Coruscant and HQ rows (headquarters
+    /// Objectives (null key, AdvisorMenu.Objectives): six rows (standard victory) or only the Coruscant and HQ rows (headquarters
     /// victory), each the "not yet" or "done" text by the victory state; pictures are STRATEGY bitmaps.
     /// </summary>
     public static StatusPage Objectives(GameState game, Owner side)
     {
         var w = game.VictoryState;
-        bool std = game.Settings.VictoryFlag == 0;
+        bool std = game.Settings.VictoryFlag == StandardVictory;
         bool coruscant = w.CoruscantAlliance || w.CoruscantDestroyed;
-        (int Id, int Picture, int Not, int Done, bool Met, bool Std)[] rows = side == Owner.Alliance
-            ? [(1, 1068, 34689, 34690, coruscant, false), (2, 11013, 34697, 34698, w.PalpatineCaptured, true),
-               (3, 11055, 34701, 34702, w.VaderCaptured, true), (4, 904, 34692, 34695, w.HqGone, false),
-               (5, 11028, 34708, 34711, w.LukeCaptured, true), (6, 11032, 34704, 34707, w.MothmaCaptured, true)]
-            : [(1, 904, 34693, 34694, w.HqGone, false), (2, 11028, 34709, 34710, w.LukeCaptured, true),
-               (3, 11032, 34705, 34706, w.MothmaCaptured, true), (4, 1068, 34688, 34691, coruscant, false),
-               (5, 11013, 34696, 34699, w.PalpatineCaptured, true), (6, 11055, 34700, 34703, w.VaderCaptured, true)];
-        return new(0, [], [.. rows.Where(r => std || !r.Std).Select(r => new StatusItem(r.Id, r.Picture, false, r.Met ? r.Done : r.Not))]);
+        // row order is the sort key (1 to 6); Standard = the objective exists only in the standard victory
+        (int Picture, int Not, int Done, bool Met, bool Standard)[] rows = side == Owner.Alliance
+            ? [(ObjectivePicture.Coruscant, ObjectiveText.AllianceCoruscantNot, ObjectiveText.AllianceCoruscantDone, coruscant, false),
+               (ObjectivePicture.Palpatine, ObjectiveText.AlliancePalpatineNot, ObjectiveText.AlliancePalpatineDone, w.PalpatineCaptured, true),
+               (ObjectivePicture.Vader, ObjectiveText.AllianceVaderNot, ObjectiveText.AllianceVaderDone, w.VaderCaptured, true),
+               (ObjectivePicture.Hq, ObjectiveText.AllianceHqNot, ObjectiveText.AllianceHqDone, w.HqGone, false),
+               (ObjectivePicture.Luke, ObjectiveText.AllianceLukeNot, ObjectiveText.AllianceLukeDone, w.LukeCaptured, true),
+               (ObjectivePicture.Mothma, ObjectiveText.AllianceMothmaNot, ObjectiveText.AllianceMothmaDone, w.MothmaCaptured, true)]
+            : [(ObjectivePicture.Hq, ObjectiveText.EmpireHqNot, ObjectiveText.EmpireHqDone, w.HqGone, false),
+               (ObjectivePicture.Luke, ObjectiveText.EmpireLukeNot, ObjectiveText.EmpireLukeDone, w.LukeCaptured, true),
+               (ObjectivePicture.Mothma, ObjectiveText.EmpireMothmaNot, ObjectiveText.EmpireMothmaDone, w.MothmaCaptured, true),
+               (ObjectivePicture.Coruscant, ObjectiveText.EmpireCoruscantNot, ObjectiveText.EmpireCoruscantDone, coruscant, false),
+               (ObjectivePicture.Palpatine, ObjectiveText.EmpirePalpatineNot, ObjectiveText.EmpirePalpatineDone, w.PalpatineCaptured, true),
+               (ObjectivePicture.Vader, ObjectiveText.EmpireVaderNot, ObjectiveText.EmpireVaderDone, w.VaderCaptured, true)];
+        return new(0, [], [.. rows.Select((r, i) => (Row: r, Order: i + 1)).Where(x => std || !x.Row.Standard)
+            .Select(x => new StatusItem(x.Order, x.Row.Picture, false, x.Row.Met ? x.Row.Done : x.Row.Not))]);
     }
 }

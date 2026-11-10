@@ -5,6 +5,7 @@ using System.Linq;
 using Godot;
 using TextFormat = OpenSWR.Data.TextFormat;
 using TextItemSize = OpenSWR.Data.TextItemSize;
+using OpenSWR.Data.Dat;
 using OpenSWR.Sim;
 using SimOwner = OpenSWR.Sim.Owner;
 
@@ -12,7 +13,7 @@ using SimOwner = OpenSWR.Sim.Owner;
 /// System sub-window base: full-size background bitmap, title = the system's name, minimise / go-to-sector buttons, and cell lists
 /// filled from the player side's view of the system (<see cref="ScreenViews"/>). Object pictures go in the cells. The title strip is
 /// drawn from the owner skin, and the fleet window also has its cover. Other per-owner decoration bitmaps are left out. A list's
-/// selection is the window's selection (objects, mode 0). Right click opens the object menu. Dragging starts a drop on another window.
+/// selection is the window's selection (objects, object mode). Right click opens the object menu. Dragging starts a drop on another window.
 /// </summary>
 public abstract partial class SystemWindow : GameWindow
 {
@@ -42,7 +43,7 @@ public abstract partial class SystemWindow : GameWindow
         DrawTextureRect(back, new Rect2(Vector2.Zero, Size), false);
         DrawLog.Bitmap(this, back, new Rect2(Vector2.Zero, Size));
         bool focused = Screen.Windows.Focused == this;
-        int strip = SkinOwner switch { SimOwner.Alliance => focused ? 10299 : 10200, SimOwner.Empire => focused ? 10201 : 10302, _ => focused ? 10303 : 10304 };
+        int strip = SkinOwner switch { SimOwner.Alliance => focused ? StrategyBitmaps.TitleStripAllianceFocused : StrategyBitmaps.TitleStripAlliance, SimOwner.Empire => focused ? StrategyBitmaps.TitleStripEmpireFocused : StrategyBitmaps.TitleStripEmpire, _ => focused ? StrategyBitmaps.TitleStripNeutralFocused : StrategyBitmaps.TitleStripNeutral };
         var stripImage = Assets.Strategy((ushort)strip);
         DrawTextureRect(stripImage, new Rect2(2, 2, 231, 16), false);
         DrawLog.Bitmap(this, stripImage, new Rect2(2, 2, 231, 16));
@@ -66,8 +67,8 @@ public abstract partial class SystemWindow : GameWindow
 
     protected virtual GameObject? ItemOf(CellList list, int i) => null;
 
-    public override List<(GameObject Object, int Mode)> Selection =>
-        Active is null ? [] : [.. Active.Selected.Select(i => ItemOf(Active, i)).Where(o => o is not null).Select(o => (o!, 0))];
+    public override List<(GameObject Object, GroupMode Mode)> Selection =>
+        Active is null ? [] : [.. Active.Selected.Select(i => ItemOf(Active, i)).Where(o => o is not null).Select(o => (o!, GroupMode.Object))];
 
     protected static Texture2D? Bitmap(bool gokres, int id)
     {
@@ -124,7 +125,7 @@ public abstract partial class SystemWindow : GameWindow
         return b;
     }
 
-    /// <summary>T_dest of the planet / manufacturing / missions windows: the cell object under the point, else the system (Inferred for 9 / 0xB).</summary>
+    /// <summary>T_dest of the planet / manufacturing / missions windows: the cell object under the point, else the system (Inferred for 9 / 11).</summary>
     public override GameObject? DestAt(Vector2 local) => CellAt(local) ?? Sys;
     public override GameObject? MoveAt(Vector2 local) => Sys;
 
@@ -137,38 +138,38 @@ public abstract partial class SystemWindow : GameWindow
 }
 
 /// <summary>
-/// System planet window (kind 10, 235 x 304, background 10577): tabs 1 Personnel / 2 Trooper Regiments / 3 Fighter
-/// Squadrons / 4 Planetary Shields / 5 Planetary Batteries; list 0xCB at (7, 81) 222 x 210, cells 70 x 70, skin 10700, large
+/// System planet window (235 x 304, background 10577): tabs 1 Personnel / 2 Trooper Regiments / 3 Fighter
+/// Squadrons / 4 Planetary Shields / 5 Planetary Batteries; list at (7, 81) 222 x 210, cells 70 x 70, skin 10700, large
 /// pictures + names; tabs 1-3 draggable. Tabs 4 and 5 use 10553 / 10550 when any exist, else 10555 / 10552. Tabs 1-3 use the triplet
 /// of the view owner: for A, id - 6 / - 5 / - 4, and for E, id - 3 / - 2 / - 1 (up has / down / up none). A neutral system uses the
 /// grey id for all three. Selected cell: frame 10578 (owner 1) or 10579 (owner 2, 3) over the picture (Inferred role), name in red / green / cyan.
 /// </summary>
 public partial class PlanetWindow : SystemWindow
 {
-    int _tab = 1;
+    int _tab = ControlIds.PlanetPersonnelTab;
     List<ViewObject> _items = [];
     readonly List<FrontButton> _tabs = [];
     CellList _list = null!;
 
-    public PlanetWindow(MainScreen screen, WindowAddress id, StarSystem s) : base(screen, id, s, 10577, new Vector2(235, 304)) { }
+    public PlanetWindow(MainScreen screen, WindowAddress id, StarSystem s) : base(screen, id, s, StrategyBitmaps.PlanetWindowBackground, new Vector2(235, 304)) { }
 
-    public override ushort Icon => 10773;
+    public override ushort Icon => StrategyBitmaps.PlanetUnitsIconAlliance;
 
     public override void _Ready()
     {
         base._Ready();
-        _list = List(new Rect2(7, 81, 222, 210), new Vector2(70, 70), 10700, i => _items.ElementAtOrDefault(i).Object,
-            (l, i, r) => DrawObjectCell(l, i, r, _items[i], small: false, 40, SkinOwner == SimOwner.Alliance ? 10578 : 10579,
+        _list = List(new Rect2(7, 81, 222, 210), new Vector2(70, 70), StrategyRcData.PlanetWindowScrollSkin, i => _items.ElementAtOrDefault(i).Object,
+            (l, i, r) => DrawObjectCell(l, i, r, _items[i], small: false, 40, SkinOwner == SimOwner.Alliance ? StrategyBitmaps.PlanetCellSelectedAlliance : StrategyBitmaps.PlanetCellSelectedEmpire,
                 SkinOwner switch { SimOwner.Alliance => new Color(1, 0, 0), SimOwner.Empire => new Color(0, 1, 0), _ => new Color(0, 1, 1) }, wrap: true), draggable: true);
         Active = _list;
         int[] xs = [28, 64, 100, 136, 172];
-        int[] tips = [5956, 5955, 5954, 5953, 5952];
-        for (int t = 1; t <= 5; t++)
+        int[] tips = [StrategyTexts.PlanetPersonnel, StrategyTexts.PlanetTrooperRegiments, StrategyTexts.PlanetFighterSquadrons, StrategyTexts.PlanetShields, StrategyTexts.PlanetBatteries];
+        for (int t = ControlIds.PlanetPersonnelTab; t <= ControlIds.PlanetBatteriesTab; t++)
         {
             int tab = t;
             _tabs.Add(Tab(xs[t - 1], 20, 36, 33, 0, 0, tips[t - 1], () => SelectTab(tab)));
         }
-        SelectTab(1);
+        SelectTab(ControlIds.PlanetPersonnelTab);
     }
 
     protected override GameObject? ItemOf(CellList list, int i) => _items.ElementAtOrDefault(i).Object;
@@ -186,14 +187,14 @@ public partial class PlanetWindow : SystemWindow
         if (Screen.Game is null || _tabs.Count == 0) return;
         _items = ScreenViews.Planet(Game, Sys, _tab, Side);
         _list.Count = _items.Count;
-        for (int t = 1; t <= 5; t++)
+        for (int t = ControlIds.PlanetPersonnelTab; t <= ControlIds.PlanetBatteriesTab; t++)
         {
             bool any = ScreenViews.Planet(Game, Sys, t, Side).Count > 0;
             var (up, down) = t switch
             {
-                4 => (any ? 10553 : 10555, 10554),
-                5 => (any ? 10550 : 10552, 10551),
-                _ => TabImages(new[] { 10576, 10569, 10562 }[t - 1], any),
+                ControlIds.PlanetShieldsTab => (any ? StrategyBitmaps.ShieldsTabUp : StrategyBitmaps.ShieldsTabNone, StrategyBitmaps.ShieldsTabDown),
+                ControlIds.PlanetBatteriesTab => (any ? StrategyBitmaps.BatteriesTabUp : StrategyBitmaps.BatteriesTabNone, StrategyBitmaps.BatteriesTabDown),
+                _ => TabImages(new[] { StrategyBitmaps.PersonnelTabNeutral, StrategyBitmaps.TrooperRegimentsTabNeutral, StrategyBitmaps.FighterSquadronsTabNeutral }[t - 1], any),
             };
             var b = _tabs[t - 1];
             (b.Up, b.Down, b.CheckedImage) = (Bitmap(false, up), Bitmap(false, down), Bitmap(false, down));
@@ -212,7 +213,7 @@ public partial class PlanetWindow : SystemWindow
 
     public override void SelectObject(GameObject o)
     {
-        for (int t = 1; t <= 5; t++)
+        for (int t = ControlIds.PlanetPersonnelTab; t <= ControlIds.PlanetBatteriesTab; t++)
             if (ScreenViews.Planet(Game, Sys, t, Side).FindIndex(v => v.Object == o) is var i && i >= 0)
             {
                 SelectTab(t);
@@ -225,13 +226,13 @@ public partial class PlanetWindow : SystemWindow
     public override void _Draw()
     {
         base._Draw();
-        Assets.DrawText(this, new Rect2(2, 51, 231, 12), Assets.Stra(new[] { 5956, 5955, 5954, 5953, 5952 }[_tab - 1]), 4, Colors.White, TextFormat.CentredRow);
+        Assets.DrawText(this, new Rect2(2, 51, 231, 12), Assets.Stra(new[] { StrategyTexts.PlanetPersonnel, StrategyTexts.PlanetTrooperRegiments, StrategyTexts.PlanetFighterSquadrons, StrategyTexts.PlanetShields, StrategyTexts.PlanetBatteries }[_tab - 1]), 4, Colors.White, TextFormat.CentredRow);
         Assets.DrawText(this, new Rect2(2, 63, 228, 14), _items.Count.ToString(), 4, Colors.White, TextFormat.CentredRow);
     }
 }
 
 /// <summary>
-/// Fleet window (kind 4, 235 x 304, background 10770): fleet list 0xC9 at (4, 29) 91 x 266, cells 91 x 50, skin 10699 (every
+/// Fleet window (235 x 304, background 10770): fleet list at (4, 29) 91 x 266, cells 91 x 50, skin 10699 (every
 /// fleet at the system, any owner; the first one is selected at open, as observed in the original; double click expands a fleet's
 /// capital ships beneath it, Inferred); info area: the single
 /// selected fleet's name and picture 10425 / 10475 with the Enroute / Damaged overlays; tab bar Ships / Fighter Squadrons / Troop
@@ -244,26 +245,26 @@ public partial class FleetWindow : SystemWindow
     List<(ViewObject Item, bool Ship)> _rows = [];
     List<ViewObject> _contents = [];
     Presence[] _masks = [], _contentMasks = []; // presence masks of the rows and contents cells
-    static readonly Presence[] TabPresence = [new(Fighters: true), new(Troops: true), new(Characters: true)]; // tabs 0x67-0x69
-    int _tab = 0x66;
+    static readonly Presence[] TabPresence = [new(Fighters: true), new(Troops: true), new(Characters: true)]; // tabs of fighters, troops and characters
+    int _tab = ControlIds.FleetShipsTab;
     CellList _fleets = null!, _list = null!;
     readonly List<FrontButton> _tabs = [];
 
-    public FleetWindow(MainScreen screen, WindowAddress id, StarSystem s) : base(screen, id, s, 10770, new Vector2(235, 304)) { }
+    public FleetWindow(MainScreen screen, WindowAddress id, StarSystem s) : base(screen, id, s, StrategyBitmaps.FleetWindowBackground, new Vector2(235, 304)) { }
 
-    public override ushort Icon => 10775;
+    public override ushort Icon => StrategyBitmaps.FleetsIconAlliance;
 
     public override void _Ready()
     {
         base._Ready();
-        _fleets = List(new Rect2(4, 29, 91, 266), new Vector2(91, 50), 10699, i => _rows.ElementAtOrDefault(i).Item.Object, DrawRow, draggable: true);
+        _fleets = List(new Rect2(4, 29, 91, 266), new Vector2(91, 50), StrategyRcData.FleetWindowScrollSkin, i => _rows.ElementAtOrDefault(i).Item.Object, DrawRow, draggable: true);
         _fleets.Activated = i => { if (!_rows[i].Ship) { if (!_expanded.Remove(_rows[i].Item.Object)) _expanded.Add(_rows[i].Item.Object); Refresh(); } };
         _fleets.SelectionChanged = () => { KeepPlayerSide(); _list.Selected.Clear(); _list.First = 0; Refresh(); };
-        _list = List(new Rect2(101, 127, 133, 164), new Vector2(125, 50), 10699, i => _contents.ElementAtOrDefault(i).Object, DrawContents, draggable: true);
+        _list = List(new Rect2(101, 127, 133, 164), new Vector2(125, 50), StrategyRcData.FleetWindowScrollSkin, i => _contents.ElementAtOrDefault(i).Object, DrawContents, draggable: true);
         for (int t = 0; t < 4; t++)
         {
-            int tab = 0x66 + t;
-            _tabs.Add(Tab(99 + 1 + 32 * t, 96, 31, 28, 0, 0, new[] { 14371, 14368, 14369, 14370 }[t], () => { _tab = tab; _list.Selected.Clear(); _list.First = 0; Refresh(); }));
+            int tab = ControlIds.FleetShipsTab + t;
+            _tabs.Add(Tab(99 + 1 + 32 * t, 96, 31, 28, 0, 0, new[] { StrategyTexts.FleetShips, StrategyTexts.FleetFighterSquadrons, StrategyTexts.FleetTroopRegiments, StrategyTexts.FleetPersonnel }[t], () => { _tab = tab; _list.Selected.Clear(); _list.First = 0; Refresh(); }));
         }
         Active = _fleets;
         Refresh();
@@ -310,24 +311,24 @@ public partial class FleetWindow : SystemWindow
             _list.Selected.Clear();
             _list.First = 0;
         }
-        // tab enabling: the OR of the selected rows' masks; a single selected ship row moves an active Ships tab to 0x67
+        // tab enabling: the OR of the selected rows' masks; a single selected ship row moves an active Ships tab to the fighters tab
         var mask = _fleets.Selected.Where(i => i < _masks.Length).Aggregate(Presence.None, (m, i) => m.Or(_masks[i]));
-        if (_tab == 0x66 && _fleets.Selected.Count == 1 && _rows[_fleets.Selected.Min].Ship) _tab = 0x67;
+        if (_tab == ControlIds.FleetShipsTab && _fleets.Selected.Count == 1 && _rows[_fleets.Selected.Min].Ship) _tab = ControlIds.FleetFightersTab;
         // Ships tab: the selected fleet's capital ships in alphabetical order of their names (observed; ties keep key order)
         _contents = ScreenViews.FleetContents(Game, SelectedRows, _tab, Side);
-        if (_tab == 0x66) _contents = [.. _contents.OrderBy(v => Screen.ObjectName(v.Object), StringComparer.OrdinalIgnoreCase)];
+        if (_tab == ControlIds.FleetShipsTab) _contents = [.. _contents.OrderBy(v => Screen.ObjectName(v.Object), StringComparer.OrdinalIgnoreCase)];
         _contentMasks = [.. _contents.Select(v => Family.IsCapitalShip(v.Object.Type) ? ScreenViews.PresenceMask(Game, v.Object, Side) : Presence.None)];
         _list.Count = _contents.Count;
-        bool one = PanelSide == SimOwner.Alliance; // the tab group of the panel side (0x6A / 0x6B, Inferred)
-        // tabs 0x67-0x69 disabled (state 0x40) without the Fighters / Troops / Characters presence flag: the greyed up image (up + 3: 10413-10415 / 10463-10465 by viewing; Inferred)
+        bool one = PanelSide == SimOwner.Alliance; // the tab group of the panel side (Inferred)
+        // tabs disabled (state 64) without the Fighters / Troops / Characters presence flag: the greyed up image (up + 3: 10413-10415 / 10463-10465 by viewing; Inferred)
         for (int t = 0; t < 4; t++)
         {
             var b = _tabs[t];
             bool off = t > 0 && !mask.Includes(TabPresence[t - 1]);
-            int up = (one ? 10409 : 10459) + t + (off ? 3 : 0), down = (one ? 10416 : 10466) + t;
+            int up = (one ? StrategyBitmaps.FleetTabAllianceUpBase : StrategyBitmaps.FleetTabEmpireUpBase) + t + (off ? 3 : 0), down = (one ? StrategyBitmaps.FleetTabAllianceDownBase : StrategyBitmaps.FleetTabEmpireDownBase) + t;
             (b.Up, b.Down, b.CheckedImage) = (Bitmap(false, up), Bitmap(false, down), Bitmap(false, down));
             b.Disabled = off;
-            b.Checked = 0x66 + t == _tab;
+            b.Checked = ControlIds.FleetShipsTab + t == _tab;
             b.Visible = _fleets.Selected.Count > 0;
         }
         _list.Visible = _fleets.Selected.Count > 0; // openswr: no detail panel without a selection (every fleet gone)
@@ -345,7 +346,7 @@ public partial class FleetWindow : SystemWindow
         _fleets.Select(_rows.FindIndex(r => r.Item.Object == fleet));
         Active = _fleets;
         if (o == fleet) return;
-        int tab = Family.IsCapitalShip(o.Type) ? 0x66 : Family.Of(o.Type) is >= 0x1C and < 0x20 ? 0x67 : Family.IsTroop(o.Type) ? 0x68 : 0x69;
+        int tab = Family.IsCapitalShip(o.Type) ? ControlIds.FleetShipsTab : Family.Of(o.Type) is >= Families.Fighter and < Families.Headquarters ? ControlIds.FleetFightersTab : Family.IsTroop(o.Type) ? ControlIds.FleetTroopsTab : ControlIds.FleetPersonnelTab;
         _tab = tab;
         Refresh();
         _list.Select(_contents.FindIndex(v => v.Object == o));
@@ -357,7 +358,7 @@ public partial class FleetWindow : SystemWindow
     public override GameObject? MoveAt(Vector2 local)
     {
         if (new Rect2(_fleets.Position, _fleets.Size).HasPoint(local) && _fleets.At(local - _fleets.Position) is var i && i >= 0) return _rows[i].Item.Object;
-        if (_tab == 0x66 && new Rect2(_list.Position, _list.Size).HasPoint(local) && _list.At(local - _list.Position) is var j && j >= 0) return _contents[j].Object;
+        if (_tab == ControlIds.FleetShipsTab && new Rect2(_list.Position, _list.Size).HasPoint(local) && _list.At(local - _list.Position) is var j && j >= 0) return _contents[j].Object;
         // openswr deviation: elsewhere in the contents list (the fighter / troop / personnel tabs) the single selected fleet, not the system
         if (new Rect2(_list.Position, _list.Size).HasPoint(local) && SelectedFleets is [var fleet]) return fleet;
         return Sys;
@@ -388,7 +389,7 @@ public partial class FleetWindow : SystemWindow
         var text = ship ? new Rect2(p.X, p.Y, r.Size.X, 15) : new Rect2(p.X, p.Y + 30, r.Size.X, 20);
         Assets.DrawCellText(l, text, name, 10, Colors.White, Assets.TextWidth(10, name) > r.Size.X - 5 ? TextFormat.Row : TextFormat.CentredRow);
         DrawPresence(l, p, _masks.ElementAtOrDefault(i), v.Owner, 33);
-        if (l.Selected.Contains(i)) DrawBitmap(l, v.Owner == SimOwner.Alliance ? 10401 : 10451, p);
+        if (l.Selected.Contains(i)) DrawBitmap(l, v.Owner == SimOwner.Alliance ? StrategyBitmaps.FleetRowSelectedAlliance : StrategyBitmaps.FleetRowSelectedEmpire, p);
     }
 
     /// <summary>Contents cell (125 x 50): picture at (28, 4), a capital ship's presence icons at y 23, the name under it; selected: 10420 / 10470 (panel side) at (1, 1).</summary>
@@ -400,7 +401,7 @@ public partial class FleetWindow : SystemWindow
         var name = Screen.ObjectName(v.Object);
         Assets.DrawCellText(l, new Rect2(p.X, p.Y + 34, r.Size.X, 16), name, 9, Colors.White, Assets.TextWidth(9, name) > r.Size.X - 5 ? TextFormat.Row : TextFormat.CentredRow);
         DrawPresence(l, p, _contentMasks.ElementAtOrDefault(i), v.Owner, 23);
-        if (l.Selected.Contains(i)) DrawBitmap(l, PanelSide == SimOwner.Alliance ? 10420 : 10470, p + new Vector2(1, 1));
+        if (l.Selected.Contains(i)) DrawBitmap(l, PanelSide == SimOwner.Alliance ? StrategyBitmaps.ContentsSelectedAlliance : StrategyBitmaps.ContentsSelectedEmpire, p + new Vector2(1, 1));
     }
 
     /// <summary>Panel side (for the cover): the player side when a player-side row is selected, else the other side.</summary>
@@ -448,7 +449,7 @@ public partial class FleetWindow : SystemWindow
     {
         if (_fleets is null || _fleets.Selected.Count == 0) return;
         bool a = PanelSide == SimOwner.Alliance;
-        int id = a ? 10407 : 10457;
+        int id = a ? StrategyBitmaps.FleetPanelAlliance : StrategyBitmaps.FleetPanelEmpire;
         if (!Panels.TryGetValue(id, out var panel))
             Panels[id] = panel = Assets.Indexed((ushort)id, "STRATEGY.DLL") is { } b ? Assets.Texture(b, -1) : null;
         if (panel is not null)
@@ -468,7 +469,7 @@ public partial class FleetWindow : SystemWindow
         var fleets = SelectedFleets;
         if (fleets.Count == 0) return;
         var v = ScreenViews.View(Game, fleets[^1], Side);
-        foreach (var (pic, on) in new[] { (a ? 10426 : 10476, v.Enroute), (a ? 10427 : 10477, v.Damaged), (a ? 10425 : 10475, true) })
+        foreach (var (pic, on) in new[] { (a ? StrategyBitmaps.FleetEnrouteOverlayAlliance : StrategyBitmaps.FleetEnrouteOverlayEmpire, v.Enroute), (a ? StrategyBitmaps.FleetDamagedOverlayAlliance : StrategyBitmaps.FleetDamagedOverlayEmpire, v.Damaged), (a ? StrategyBitmaps.FleetPictureAlliance : StrategyBitmaps.FleetPictureEmpire, true) })
             if (on) DrawBitmap(this, pic, new Vector2(100 + (125 - Assets.BitmapSize((ushort)pic, "STRATEGY.DLL").X) / 2, 42));
     }
 
@@ -482,10 +483,10 @@ public partial class FleetWindow : SystemWindow
 }
 
 /// <summary>
-/// System missions window (kind 0xB, 235 x 304, background 11165): mission list 10 at (5, 24) 94 x 275, cells 90 x 50, skin
+/// System missions window (235 x 304, background 11165): mission list 10 at (5, 24) 94 x 275, cells 90 x 50, skin
 /// 10748, first entry selected at open (both owners' missions of the agents at the system); name (109, 25) and description
 /// (109, 91) (Inferred: the mission's target and phase); tabs Agents / Decoys (11560 / 11561, 11562 / 11563) at (105, 127);
-/// member list 0xB at (107, 145) 117 x 147, cells 115 x 43, not draggable. Right click on a mission opens 0x250 Abort.
+/// member list at (107, 145) 117 x 147, cells 115 x 43, not draggable. Right click on a mission opens the Abort command.
 /// </summary>
 public partial class MissionsWindow : SystemWindow
 {
@@ -495,9 +496,9 @@ public partial class MissionsWindow : SystemWindow
     CellList _list = null!, _team = null!;
     FrontButton _agents = null!, _decoyTab = null!;
 
-    public MissionsWindow(MainScreen screen, WindowAddress id, StarSystem s) : base(screen, id, s, 11165, new Vector2(235, 304)) { }
+    public MissionsWindow(MainScreen screen, WindowAddress id, StarSystem s) : base(screen, id, s, StrategyBitmaps.MissionsWindowBackground, new Vector2(235, 304)) { }
 
-    public override ushort Icon => 10777;
+    public override ushort Icon => StrategyBitmaps.MissionsIconAlliance;
 
     /// <summary>Skin side: the side of the missions there, not the view owner.</summary>
     protected override SimOwner SkinOwner => ScreenViews.MissionSide(Game, Sys, Side);
@@ -505,7 +506,7 @@ public partial class MissionsWindow : SystemWindow
     public override void _Ready()
     {
         base._Ready();
-        _list = List(new Rect2(5, 24, 94, 275), new Vector2(90, 50), 10748, i => _missions.ElementAtOrDefault(i), (l, i, r) =>
+        _list = List(new Rect2(5, 24, 94, 275), new Vector2(90, 50), StrategyRcData.MissionListScrollSkin, i => _missions.ElementAtOrDefault(i), (l, i, r) =>
         {
             // cell = the mission picture only; the name is the text at (109, 25)
             DrawPicture(l, ScreenViews.View(Game, _missions[i], Side), r, small: false);
@@ -514,8 +515,8 @@ public partial class MissionsWindow : SystemWindow
         _list.SelectionChanged = Refresh;
         _team = List(new Rect2(107, 145, 117, 147), new Vector2(115, 43), 0, i => _members.ElementAtOrDefault(i), (l, i, r) =>
             DrawObjectCell(l, i, r, ScreenViews.View(Game, _members[i], Side), small: false, 26));
-        _agents = Tab(105, 127, 61, 16, 11560, 11561, 34048, () => { _decoys = false; Refresh(); });
-        _decoyTab = Tab(105 + 61, 127, 61, 16, 11562, 11563, 34049, () => { _decoys = true; Refresh(); });
+        _agents = Tab(105, 127, 61, 16, StrategyBitmaps.AgentsTabUp, StrategyBitmaps.AgentsTabDown, StrategyTexts.AgentsTab, () => { _decoys = false; Refresh(); });
+        _decoyTab = Tab(105 + 61, 127, 61, 16, StrategyBitmaps.DecoysTabUp, StrategyBitmaps.DecoysTabDown, StrategyTexts.DecoysTab, () => { _decoys = true; Refresh(); });
         Active = _list;
         Refresh();
         if (_missions.Count > 0) _list.Select(0);
@@ -557,23 +558,23 @@ public partial class MissionsWindow : SystemWindow
 }
 
 /// <summary>
-/// System manufacturing window (kind 9, 226 x 304, background 10297): tabs Manufacturing (three manager rows: title,
+/// System manufacturing window (226 x 304, background 10297): tabs Manufacturing (three manager rows: title,
 /// destination, queue count + product picture or "No ... being built", progress bar = points / cost of the current unit) and the
 /// facility tabs (cells 69 x 40, facility pictures by kind and state, Mines tab with empty deposit cells 9005 up to the raw-material
-/// count). A row click selects the manager (Ctrl toggles); a second click on the selected shipyard row's product renames (0x215);
-/// rows drag to a destination (0x214); right click opens the manager menu.
+/// count). A row click selects the manager (Ctrl toggles); a second click on the selected shipyard row's product renames (rename command);
+/// rows drag to a destination (the destination command); right click opens the manager menu.
 /// </summary>
 public partial class ManufacturingWindow : SystemWindow
 {
     static readonly (int Id, int X, int Tip, uint Lo, uint Hi, int Has, int None, int Down)[] Tabs =
     [
-        (0x68, 39, 6184, 0x28, 0x29, 10327, 10328, 10326),
-        (0x69, 77, 6192, 0x29, 0x2A, 10330, 10331, 10329),
-        (0x6A, 115, 6194, 0x2A, 0x2B, 10333, 10334, 10332),
-        (0x6B, 152, 6183, 0x2D, 0x2E, 10324, 10325, 10323),
-        (0x6C, 190, 6182, 0x2C, 0x2D, 10321, 10322, 10320),
+        (ControlIds.ShipyardsTab, 39, StrategyTexts.ShipyardsTab, Families.Shipyard, Families.TrainingFacility, StrategyBitmaps.ShipyardsTabUp, StrategyBitmaps.ShipyardsTabNone, StrategyBitmaps.ShipyardsTabDown),
+        (ControlIds.TrainingFacilitiesTab, 77, StrategyTexts.TrainingFacilitiesTab, Families.TrainingFacility, Families.ConstructionYard, StrategyBitmaps.TrainingFacilitiesTabUp, StrategyBitmaps.TrainingFacilitiesTabNone, StrategyBitmaps.TrainingFacilitiesTabDown),
+        (ControlIds.ConstructionYardsTab, 115, StrategyTexts.ConstructionYardsTab, Families.ConstructionYard, Families.ManufacturingEnd, StrategyBitmaps.ConstructionYardsTabUp, StrategyBitmaps.ConstructionYardsTabNone, StrategyBitmaps.ConstructionYardsTabDown),
+        (ControlIds.RefineriesTab, 152, StrategyTexts.RefineriesTab, Families.Refinery, Families.RefineryEnd, StrategyBitmaps.RefineriesTabUp, StrategyBitmaps.RefineriesTabNone, StrategyBitmaps.RefineriesTabDown),
+        (ControlIds.MinesTab, 190, StrategyTexts.MinesTab, Families.Mine, Families.Refinery, StrategyBitmaps.MinesTabUp, StrategyBitmaps.MinesTabNone, StrategyBitmaps.MinesTabDown),
     ];
-    int _tab = 0x67;
+    int _tab = ControlIds.ManufacturingTab;
     List<ManufacturingManager> _managers = [];
     readonly List<ManufacturingManager> _selected = [];
     List<ViewObject> _items = [];
@@ -584,31 +585,31 @@ public partial class ManufacturingWindow : SystemWindow
     Vector2? _press;
     bool _dragging;
 
-    public ManufacturingWindow(MainScreen screen, WindowAddress id, StarSystem s) : base(screen, id, s, 10297, new Vector2(226, 304)) { }
+    public ManufacturingWindow(MainScreen screen, WindowAddress id, StarSystem s) : base(screen, id, s, StrategyBitmaps.ManufacturingWindowBackground, new Vector2(226, 304)) { }
 
-    public override ushort Icon => 10771;
+    public override ushort Icon => StrategyBitmaps.FacilitiesIconAlliance;
 
     public override void _Ready()
     {
         base._Ready();
         _list = List(new Rect2(8, 77, 222 - 4, 225), new Vector2(69, 40), 0, i => _items.ElementAtOrDefault(i).Object, (l, i, r) =>
         {
-            if (i >= _items.Count) CellList.Centred(l, Bitmap(false, 9005), new Vector2(67, 35), r);
+            if (i >= _items.Count) CellList.Centred(l, Bitmap(false, StrategyBitmaps.EmptyDeposit), new Vector2(67, 35), r);
             else
             {
                 int pic = ScreenViews.FacilityPicture(_items[i]);
                 CellList.Centred(l, Bitmap(false, pic), new Vector2(67, 35), r);
                 // selected image: the owner-coloured frame over the centred picture (selected state, Inferred)
-                if (l.Selected.Contains(i)) CellList.Centred(l, Bitmap(false, SkinOwner switch { SimOwner.Alliance => 10262, SimOwner.Empire => 10263, _ => 10264 }), new Vector2(67, 35), r);
+                if (l.Selected.Contains(i)) CellList.Centred(l, Bitmap(false, SkinOwner switch { SimOwner.Alliance => StrategyBitmaps.FacilitySelectedAlliance, SimOwner.Empire => StrategyBitmaps.FacilitySelectedEmpire, _ => StrategyBitmaps.FacilitySelectedNeutral }), new Vector2(67, 35), r);
             }
         });
-        _manufacturing = Tab(0, 20, 36, 33, 0, 0, 6197, () => SelectTab(0x67));
+        _manufacturing = Tab(0, 20, 36, 33, 0, 0, StrategyTexts.Manufacturing, () => SelectTab(ControlIds.ManufacturingTab));
         foreach (var t in Tabs)
         {
             int id = t.Id;
             _tabs.Add(Tab(t.X, 20, 36, 33, t.Has, t.Down, t.Tip, () => SelectTab(id)));
         }
-        SelectTab(0x67);
+        SelectTab(ControlIds.ManufacturingTab);
     }
 
     protected override GameObject? ItemOf(CellList list, int i) => _items.ElementAtOrDefault(i).Object;
@@ -616,10 +617,10 @@ public partial class ManufacturingWindow : SystemWindow
     void SelectTab(int tab)
     {
         _tab = tab;
-        _list.Visible = tab != 0x67;
+        _list.Visible = tab != ControlIds.ManufacturingTab;
         _list.Selected.Clear();
         _list.First = 0;
-        Active = tab == 0x67 ? null : _list;
+        Active = tab == ControlIds.ManufacturingTab ? null : _list;
         Refresh();
     }
 
@@ -629,9 +630,9 @@ public partial class ManufacturingWindow : SystemWindow
         _managers = ScreenViews.ManagerRows(Sys);
         _selected.RemoveAll(m => !_managers.Contains(m));
         var owner = Knowledge.See(Game, Sys, Side).Owner;
-        int up = owner switch { SimOwner.Alliance => 10312, SimOwner.Empire => 10315, _ => 10318 }, down = up - 1;
+        int up = owner switch { SimOwner.Alliance => StrategyBitmaps.ManufacturingTabAllianceUp, SimOwner.Empire => StrategyBitmaps.ManufacturingTabEmpireUp, _ => StrategyBitmaps.ManufacturingTabNeutralUp }, down = up - 1;
         (_manufacturing.Up, _manufacturing.Down, _manufacturing.CheckedImage) = (Bitmap(false, up), Bitmap(false, down), Bitmap(false, down));
-        _manufacturing.Checked = _tab == 0x67;
+        _manufacturing.Checked = _tab == ControlIds.ManufacturingTab;
         for (int i = 0; i < Tabs.Length; i++)
         {
             var t = Tabs[i];
@@ -639,11 +640,11 @@ public partial class ManufacturingWindow : SystemWindow
             _tabs[i].Up = Bitmap(false, has ? t.Has : t.None);
             _tabs[i].Checked = t.Id == _tab;
         }
-        if (_tab != 0x67)
+        if (_tab != ControlIds.ManufacturingTab)
         {
             var t = Tabs.First(x => x.Id == _tab);
             _items = ScreenViews.Facilities(Game, Sys, t.Lo, t.Hi, Side);
-            _deposits = _tab == 0x6C ? Math.Max(0, Sys.RawMaterials - _items.Count) : 0; // raw material: the real value (views keep none, Inferred)
+            _deposits = _tab == ControlIds.MinesTab ? Math.Max(0, Sys.RawMaterials - _items.Count) : 0; // raw material: the real value (views keep none, Inferred)
             _list.Count = _items.Count + _deposits;
         }
         _list.QueueRedraw();
@@ -658,12 +659,12 @@ public partial class ManufacturingWindow : SystemWindow
     // product picture (61 x 25) right of the "Building" line (player screenshot; the (40, 15) spot overlaps the text; Inferred)
     static Rect2 Product(int k) => new(Panel(k) + new Vector2(95, 28), new Vector2(61, 25));
 
-    public override List<(GameObject Object, int Mode)> Selection =>
-        _tab == 0x67 ? [.. _selected.Select(m => ((GameObject)m, 0))] : base.Selection;
+    public override List<(GameObject Object, GroupMode Mode)> Selection =>
+        _tab == ControlIds.ManufacturingTab ? [.. _selected.Select(m => ((GameObject)m, GroupMode.Object))] : base.Selection;
 
     public override void SelectObject(GameObject o)
     {
-        if (o is ManufacturingManager m) { SelectTab(0x67); _selected.Clear(); _selected.Add(m); QueueRedraw(); return; }
+        if (o is ManufacturingManager m) { SelectTab(ControlIds.ManufacturingTab); _selected.Clear(); _selected.Add(m); QueueRedraw(); return; }
         foreach (var t in Tabs)
             if (ScreenViews.Facilities(Game, Sys, t.Lo, t.Hi, Side).FindIndex(v => v.Object == o) is var i && i >= 0)
             {
@@ -681,16 +682,16 @@ public partial class ManufacturingWindow : SystemWindow
 
     protected override void WindowInput(InputEvent e)
     {
-        if (_tab != 0x67) return;
+        if (_tab != ControlIds.ManufacturingTab) return;
         switch (e)
         {
             case InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left or MouseButton.Right } b when RowAt(b.Position) is { } m:
                 if (b.ButtonIndex == MouseButton.Left) (_press, _dragging) = (b.Position, false);
-                // second click on the selected shipyard row's product name renames it (0x215 entry; own dialog)
+                // second click on the selected shipyard row's product name renames it (rename entry; own dialog)
                 if (b.ButtonIndex == MouseButton.Left && !b.CtrlPressed && _selected is [var only] && only == m && m.Kind == ManufacturingKind.Ship
                     && Knowledge.IsLive(m, Side) && m.Orders.Count > 0 && Product(_managers.IndexOf(m)).HasPoint(b.Position))
                 {
-                    Screen.Dispatch(0x215, [(m, 0)]);
+                    Screen.Dispatch((int)CommandType.SetProductName, [(m, GroupMode.Object)]);
                     break;
                 }
                 if (!b.CtrlPressed && !_selected.Contains(m)) { _selected.Clear(); _selected.Add(m); }
@@ -699,8 +700,8 @@ public partial class ManufacturingWindow : SystemWindow
             case InputEventMouseMotion mm when _press is { } start && !_dragging && Input.IsMouseButtonPressed(MouseButton.Left)
                 && new Rect2(8, 57, 222, 225).HasPoint(start) && RowAt(start) is { } pressed && _selected.Contains(pressed):
                 _dragging = true;
-                // drag image for 1 / 2 / 3 selected rows (A 10305-10307, E 10308-10310). Another side's rows drag too, and their 0x214 fails the owner check.
-                int image = SkinOwner switch { SimOwner.Alliance => 10305, SimOwner.Empire => 10308, _ => 0 };
+                // drag image for 1 / 2 / 3 selected rows (A 10305-10307, E 10308-10310). Another side's rows drag too, and their destination command fails the owner check.
+                int image = SkinOwner switch { SimOwner.Alliance => StrategyBitmaps.ManagerDragAlliance, SimOwner.Empire => StrategyBitmaps.ManagerDragEmpire, _ => 0 };
                 Screen.BeginDrag(this, start + GetGlobalRect().Position, image == 0 ? null : Bitmap(false, image + Math.Min(_selected.Count, 3) - 1), new Vector2(36, 36));
                 break;
             case InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left } up:
@@ -720,15 +721,15 @@ public partial class ManufacturingWindow : SystemWindow
     public override void _Draw()
     {
         base._Draw();
-        if (_tab != 0x67) return;
-        var kinds = new[] { (6185, 6198, 6209), (6193, 6199, 6208), (6195, 6200, 6209) };
+        if (_tab != ControlIds.ManufacturingTab) return;
+        var kinds = new[] { (StrategyTexts.ShipConstruction, StrategyTexts.NoShipsBuilt, StrategyTexts.Building), (StrategyTexts.TroopsInTraining, StrategyTexts.NoTroopsTraining, StrategyTexts.Training), (StrategyTexts.FacilitiesUnderConstruction, StrategyTexts.NoFacilitiesBuilt, StrategyTexts.Building) };
         // left strip 10298 (46 x 226, colour-keyed: per kind facility picture 46 x 46 + count box 46 x 16 at y 48, kinds at y 0 / 81 / 161)
         // with "active:total" of each facility type; position from a player screenshot, Inferred
         var strip = new Vector2(6, 72);
-        if (Bitmap(false, 10298) is { } stripImage) { DrawTextureRect(stripImage, new Rect2(strip, new Vector2(46, 226)), false); DrawLog.Bitmap(this, stripImage, new Rect2(strip, new Vector2(46, 226))); }
+        if (Bitmap(false, StrategyBitmaps.FacilityCountStrip) is { } stripImage) { DrawTextureRect(stripImage, new Rect2(strip, new Vector2(46, 226)), false); DrawLog.Bitmap(this, stripImage, new Rect2(strip, new Vector2(46, 226))); }
         for (int kind = 0; kind < 3; kind++)
         {
-            var facilities = ScreenViews.Facilities(Game, Sys, 0x28u + (uint)kind, 0x29u + (uint)kind, Side).Where(f => !f.Destroyed).ToList();
+            var facilities = ScreenViews.Facilities(Game, Sys, Families.Shipyard + (uint)kind, Families.TrainingFacility + (uint)kind, Side).Where(f => !f.Destroyed).ToList();
             Assets.DrawText(this, new Rect2(strip + new Vector2(0, new[] { 0, 81, 161 }[kind] + 48), new Vector2(46, 16)), $"{facilities.Count(f => f.Usable)}:{facilities.Count}", 10, Colors.White, TextFormat.CentredRow);
         }
         for (int k = 0; k < _managers.Count; k++)
@@ -749,7 +750,7 @@ public partial class ManufacturingWindow : SystemWindow
             DrawLine(p + new Vector2(0, 13.5f), p + new Vector2(162, 13.5f), Colors.White);
             DrawLog.Segment(this, p + new Vector2(0, 13.5f), p + new Vector2(162, 13.5f), Colors.White);
             // header bar 162 x 13, the first image while the row is selected
-            int header = SkinOwner switch { SimOwner.Alliance => 10291, SimOwner.Empire => 10293, _ => 10295 } + (_selected.Contains(m) ? 0 : 1);
+            int header = SkinOwner switch { SimOwner.Alliance => StrategyBitmaps.ManagerHeaderAlliance, SimOwner.Empire => StrategyBitmaps.ManagerHeaderEmpire, _ => StrategyBitmaps.ManagerHeaderNeutral } + (_selected.Contains(m) ? 0 : 1);
             if (Bitmap(false, header) is { } bar0) { DrawTextureRect(bar0, new Rect2(p, new Vector2(162, 13)), false); DrawLog.Bitmap(this, bar0, new Rect2(p, new Vector2(162, 13))); }
             Assets.DrawText(this, new Rect2(p + new Vector2(5, 1), new Vector2(155, 14)), Assets.Stra(title), 10, Colors.White, TextFormat.Row);
             // lines (player screenshot): "No ... being built" or the product name, then "Building: n", then "Destination: ..." above the bar
@@ -769,8 +770,8 @@ public partial class ManufacturingWindow : SystemWindow
                 // product picture (large form)
                 DrawPicture(this, v, Product(k), small: false);
             }
-            Assets.DrawText(this, new Rect2(p + new Vector2(5, 59), new Vector2(155, 14)), Assets.Stra(6201) + (Knowledge.TargetKey(m, Side) is { } target ? Screen.ObjectName(target) : ""), 10, Colors.White, TextFormat.Row);
-            // progress bar 0x6D-0x6F at (56, 127 / 208 / 289), 160 x 4: black track, fill = points of the current unit / its cost
+            Assets.DrawText(this, new Rect2(p + new Vector2(5, 59), new Vector2(155, 14)), StrategyText.Destination + (Knowledge.TargetKey(m, Side) is { } target ? Screen.ObjectName(target) : ""), 10, Colors.White, TextFormat.Row);
+            // progress bar at (56, 127 / 208 / 289), 160 x 4: black track, fill = points of the current unit / its cost
             // (fill colour from the player screenshot)
             var bar = new Rect2(56, 127 + 81 * k, 160, 4);
             DrawRect(bar, Colors.Black);

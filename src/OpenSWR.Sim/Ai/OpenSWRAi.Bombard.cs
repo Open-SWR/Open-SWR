@@ -1,10 +1,11 @@
 using System.Text.Json.Nodes;
+using OpenSWR.Data.Dat;
 
 namespace OpenSWR.Sim.Ai;
 
 /// <summary>
 /// Bombard: own fleets with bombardment in an enemy-held system bombard its garrison
-/// (military-only 0x220: no support cost unless its one extra shot hits a production facility) at most once every <see cref="BombardDays"/> per system. Commands only, no draws.
+/// (military-only Bombard command: no support cost unless its one extra shot hits a production facility) at most once every <see cref="BombardDays"/> per system. Commands only, no draws.
 /// </summary>
 public sealed partial class OpenSWRController
 {
@@ -33,7 +34,7 @@ public sealed partial class OpenSWRController
             var there = Fleets(game).Where(f => f.Container == s && f.Usable && !f.Enroute && !used.Contains(f) && Combat.FleetBombard(game, f) > 0).OrderBy(f => f.Key).ToList();
             if (there.Count == 0 || !EnemyGarrisonSeen(k, s)
                 || k.Fleets(s, Enemy).Sum(f => k.Strength(f, Enemy)) > there.Sum(f => k.Strength(f, Side))) continue;
-            if (!IssueBombard(game, s, there, used, 0x220)) { if (!Room) return; continue; }
+            if (!IssueBombard(game, s, there, used, CommandType.Bombard)) { if (!Room) return; continue; }
             _bombarded[s.Ref] = game.Day;
             Bombards++;
             var carrying = there.Where(Carrying).ToList();
@@ -41,19 +42,19 @@ public sealed partial class OpenSWRController
         }
     }
 
-    /// <summary>The view shows enemy troops [0x10, 0x14) or defence facilities [0x22, 0x28) in the system.</summary>
-    bool EnemyGarrisonSeen(Known k, StarSystem s) => k.Contents(s).Any(v => v.Owner == Enemy && (v.In(0x10, 0x14) || v.In(0x22, 0x28)));
+    /// <summary>The view shows enemy troops (families 16 to 19) or defence facilities (families 34 to 39) in the system.</summary>
+    bool EnemyGarrisonSeen(Known k, StarSystem s) => k.Contents(s).Any(v => v.Owner == Enemy && (v.In(Families.Troop, Families.CapitalShip) || v.In(Families.IonCannon, Families.Shipyard)));
 
     /// <summary>
-    /// A bombardment order by these fleets: 0x220 = troops, defence, HQ, one extra shot at a production facility;
-    /// 0x222 = those, production facilities and energy / raw materials. Only production / energy / raw-material hits cost support.
+    /// A bombardment order by these fleets: Bombard = troops, defence, HQ, one extra shot at a production facility;
+    /// BombardVariant2 = those, production facilities and energy / raw materials. Only production / energy / raw-material hits cost support.
     /// </summary>
-    bool IssueBombard(GameState game, StarSystem s, List<Fleet> fleets, HashSet<GameObject> used, int type) =>
-        Issue(game, new Command(type, Side) { Targets = [.. fleets.Select(f => ((GameObject)f, 0))], ArgRef = s }, used);
+    bool IssueBombard(GameState game, StarSystem s, List<Fleet> fleets, HashSet<GameObject> used, CommandType type) =>
+        Issue(game, new Command(type, Side) { Targets = [.. fleets.Select(f => ((GameObject)f, GroupMode.Object))], ArgRef = s }, used);
 
     void SaveBombard(JsonObject j)
     {
-        if (_bombarded.Count > 0) j["bombarded"] = new JsonArray([.. _bombarded.Select(e => (JsonNode)new JsonArray(e.Key, e.Value))]);
+        if (_bombarded.Count > 0) j["bombarded"] = new JsonArray([.. _bombarded.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value))]);
     }
 
     void LoadBombard(JsonObject j)

@@ -27,7 +27,7 @@ public static class Darkening
         return best;
     }
 
-    /// <summary>Remap table: palette index -> index of its darkened colour; an entry that already is its darkened colour keeps its index.</summary>
+    /// <summary>Remap table: palette index gives index of its darkened colour; an entry that already is its darkened colour keeps its index.</summary>
     public static byte[] Table(ReadOnlySpan<byte> palette, int used = 256)
     {
         var table = new byte[256];

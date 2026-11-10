@@ -4,7 +4,7 @@ using static OpenSWR.Sim.GameMath;
 
 namespace OpenSWR.Tests;
 
-/// <summary>Manager 0xF8 story flags, story check, Dagobah, bounty hunters and palace, final battle.</summary>
+/// <summary>The manager's story flags, story check, Dagobah, bounty hunters and palace, final battle.</summary>
 public class StoryTests
 {
     static GameDefinitions? _definitions;
@@ -12,35 +12,33 @@ public class StoryTests
 
     static GameState Game() => NewGame.Create(new GameSettings(Owner.Empire, 1, 0, 0, 532947196), Definitions);
 
-    static Character C(GameState game, uint sdRef) => game.Characters.First(c => c.Ref == sdRef);
-
     static void NextChanceFails(GameState game, int p)
     {
         while (new GameRandom(game.Random.State).Percent() < p) game.Random.Percent();
     }
 
-    // Timer 0x392: LukeDagobahRequired is set and a Dagobah mission starts for the idle Luke (slot off). After the
-    // 100-day phase 8, Luke's Force becomes F + pct(F, G 0x181E), DagobahCompleted is set and LukeDagobahRequired is cleared.
+    // The Dagobah timer: LukeDagobahRequired is set and a Dagobah mission starts for the idle Luke (slot off). After the
+    // 100-day phase 8, Luke's Force becomes F + pct(F, GeneralParam.DagobahForcePercent), DagobahCompleted is set and LukeDagobahRequired is cleared.
     [GameFact]
     public void DagobahTraining()
     {
         var game = Game();
-        var luke = C(game, Refs.Luke);
+        var luke = game.Known.Luke!;
         int f = luke.Force;
         Story.DagobahTimer(game);
         var m = game.Missions[^1];
         Assert.Equal((Story.DagobahType, luke, game.Abode(Story.Dagobah)), (m.Type, m.Team[0], m.Objective));
-        Assert.False(game.Timers[(0x392, 0xF8000006)].Active);
+        Assert.False(game.Timers[(TimerType.Dagobah, Refs.MissionManager)].Active);
         Assert.True(Story.Has(game, StoryFlag.LukeDagobahRequired));
 
         game.Clock.RunUntilDay(game, game.Day + 120);
-        Assert.Equal((11, 3), (m.Phase, m.TaskStatus));
-        Assert.Equal(f + Pct(f, game.Params.General(0x181E)), luke.Force);
+        Assert.Equal((11, MissionTaskStatus.Succeeded), (m.Phase, m.TaskStatus));
+        Assert.Equal(f + Pct(f, game.Rules.DagobahForcePercent), luke.Force);
         Assert.True(luke.DagobahCompleted);
         Assert.False(Story.Has(game, StoryFlag.LukeDagobahRequired));
     }
 
-    // Timer 0x393: a hunter in Jabba's Palace starts a Bounty mission. A failed evasion captures Han (TaskStatus 3, no escape).
+    // The bounty timer: a hunter in Jabba's Palace starts a Bounty mission. A failed evasion captures Han (TaskStatus 3, no escape).
     // Bounty members return to the palace. Han held there sets HanCapturedAtPalace (bounty timer off), and Palace missions
     // start for the idle Luke and Leia.
     [GameFact]
@@ -48,7 +46,7 @@ public class StoryTests
     {
         var game = Game();
         var palace = game.Abode(Story.JabbasPalace);
-        var han = C(game, Refs.Han);
+        var han = game.Known.Han!;
         Story.BountyTimer(game);
         var hunter = palace.Contents.OfType<Agent>().Single(a => a.Type == Story.BountyHunter);
         var m = game.Missions[^1];
@@ -57,14 +55,14 @@ public class StoryTests
 
         NextChanceFails(game, Missions.Table(game, "RLEVADTB", Missions.Enhanced(game, han, SkillIndex.Combat)) ?? 0);
         Assert.True(Story.Attempt(game, m, hunter, 100));
-        Assert.Equal((true, 3, false), (han.Captured, m.TaskStatus, han.CanEscape));
+        Assert.Equal((true, MissionTaskStatus.Succeeded, false), (han.Captured, m.TaskStatus, han.CanEscape));
         Assert.True(han.CapturedByBountyHunters);
         Assert.Same(palace, Missions.Fallback(game, hunter, flag: false));
 
         // Abode legs take 1 day at any speed.
-        var luke = C(game, Refs.Luke);
+        var luke = game.Known.Luke!;
         Fleets.Travel(game, luke, luke.Container, palace);
-        Assert.Equal((true, 1, game.Day + 1, (GameObject)palace), (luke.HyperdriveActive, game.Timers[(0x387, luke.Ref)].Base, luke.Eta, luke.Destination));
+        Assert.Equal((true, 1, game.Day + 1, (GameObject)palace), (luke.HyperdriveActive, game.Timers[(TimerType.Travel, luke.Ref)].Base, luke.Eta, luke.Destination));
         Objects.SetHyperdriveActive(game, luke, false);
         Objects.SetEnrouteActive(game, luke, false);
 
@@ -75,10 +73,10 @@ public class StoryTests
         game.Clock.Flush(game);
         Assert.True(Story.Has(game, StoryFlag.HanCapturedAtPalace));
         Assert.False(Story.Has(game, StoryFlag.BountyHuntersActive));
-        Assert.False(game.Timers[(0x393, 0xF8000006)].Active);
-        Missions.Leave(game, m, hunter); // its 0x312: the hunter disbands
+        Assert.False(game.Timers[(TimerType.BountyHunters, Refs.MissionManager)].Active);
+        Missions.Leave(game, m, hunter); // its disband message: the hunter disbands
         game.Clock.Flush(game);
-        Assert.Equal((true, 0x14), (hunter.Destroyed, hunter.DestroyedReason));
+        Assert.Equal((true, DestroyedReason.Scrapped), (hunter.Destroyed, hunter.DestroyedReason));
         var palaceMissions = game.Missions.Skip(missions).Where(p => p.Type == Story.PalaceType).ToList();
         // The HanCapturedAtPalace hook refreshes the Alliance view of Han first. So the Palace missions
         // target the palace, not Han's capture location, and the flush ends.
@@ -92,31 +90,31 @@ public class StoryTests
     public void PalaceFailureCapturesTheMembers()
     {
         var game = Game();
-        var leia = C(game, Refs.Leia);
-        var m = Missions.Create(game, Story.PalaceType, Owner.Alliance, C(game, Refs.Han), [leia], [], 0, mandatory: true);
+        var leia = game.Known.Leia!;
+        var m = Missions.Create(game, Story.PalaceType, Owner.Alliance, game.Known.Han!, [leia], [], 0, mandatory: true);
         Story.PalaceFailed(game, m);
-        Assert.Equal((2, true, false), (m.TaskStatus, leia.Captured, leia.CanEscape));
+        Assert.Equal((MissionTaskStatus.Failed, true, false), (m.TaskStatus, leia.Captured, leia.CanEscape));
     }
 
     // Luke held with the heritage and Force >= 60, Vader and Palpatine idle: Vader elsewhere gets a Move mission to Luke.
-    // All three together give FinalBattle: Luke's Force >= G 0x1807 wins (Vader and Palpatine captured without escape),
+    // All three together give FinalBattle: Luke's Force >= GeneralParam.FinalBattleWinForce wins (Vader and Palpatine captured without escape),
     // and FinalBattleReady is cleared.
     [GameFact]
     public void FinalBattle()
     {
         var game = Game();
-        var (luke, vader, pal) = (C(game, Refs.Luke), C(game, Refs.Vader), C(game, Refs.Palpatine));
-        var coruscant = game.System(Refs.Coruscant);
-        var yavin = game.System(Refs.Yavin);
+        var (luke, vader, pal) = (game.Known.Luke!, game.Known.Vader!, game.Known.Palpatine!);
+        var coruscant = game.Known.Coruscant!;
+        var yavin = game.Known.Yavin!;
         yavin.Add(vader); // placed directly (a set-parent across systems would start a travel)
         coruscant.Add(pal);
-        Jedi.SetForceRank(game, luke, game.Params.General(0x1807));
+        Jedi.SetForceRank(game, luke, game.Rules.FinalBattleWinForce);
         Story.SetLukeKnowsHeritage(game, luke);
         coruscant.Add(luke);
         Prisoners.Capture(game, luke, null);
         game.Clock.Flush(game);
         Assert.Equal((true, coruscant), (luke.Captured, luke.Container));
-        var move = game.Missions.LastOrDefault(m => m.Type == 0x41000001 && m.Team.Contains(vader));
+        var move = game.Missions.LastOrDefault(m => m.Type == Refs.MoveMission && m.Team.Contains(vader));
         Assert.NotNull(move);
         Assert.Same(coruscant, move.Objective);
 
@@ -139,7 +137,7 @@ public class StoryTests
         var game = Game();
         var palace = game.Abode(Story.JabbasPalace);
         var dagobah = game.Abode(Story.Dagobah);
-        var (han, luke) = (C(game, Refs.Han), C(game, Refs.Luke));
+        var (han, luke) = (game.Known.Han!, game.Known.Luke!);
         dagobah.Add(luke);
         Fleets.DeploymentCheck(game, luke); // before Han is held (that sends Luke to the palace)
         Assert.Equal((dagobah, true), (luke.Container, luke.Autorouting));
@@ -152,8 +150,8 @@ public class StoryTests
         Assert.Equal((Owner.Empire, palace, false, false), (han.Owner, han.Container, han.Destroyed, han.Autorouting));
         Assert.Equal((palace, false, false), (hunter.Container, hunter.Destroyed, hunter.Autorouting));
 
-        Assert.False(Fleets.CanPlace(game, palace, 0x10000002, Owner.Empire, 0x3F0));
-        Assert.False(Fleets.CanPlace(game, dagobah, luke.Type, Owner.Alliance, 0x241));
-        Assert.True(Fleets.CanPlace(game, dagobah, luke.Type, Owner.Alliance, 0x240));
+        Assert.False(Fleets.CanPlace(game, palace, Refs.AllianceArmy, Owner.Empire, CommandType.DestroyedParentPlacement));
+        Assert.False(Fleets.CanPlace(game, dagobah, luke.Type, Owner.Alliance, CommandType.CreateMoveMission));
+        Assert.True(Fleets.CanPlace(game, dagobah, luke.Type, Owner.Alliance, CommandType.CreateMission));
     }
 }

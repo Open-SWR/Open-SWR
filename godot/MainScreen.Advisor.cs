@@ -16,14 +16,14 @@ using SimOwner = OpenSWR.Sim.Owner;
 /// </summary>
 public partial class MainScreen
 {
-    // Hotspot rects per side (main 0xDEAD, secondary 0xBEEF), see AdvisorRect
-    const ushort MainIdle = 403, SecondaryEnd = 11575;
+    // Hotspot rects per side (main and secondary hotspot ids), see AdvisorRect
+    const ushort MainIdle = AdvisorRcData.MainIdle, SecondaryEnd = AdvisorRcData.SecondaryEnd;
 
     Advisor? _advisor;
     AdvisorSprites? _sprites, _briefing;
     Dictionary<uint, SptAction> _script = [];
     AdvisorDisplay? _advMain, _advSecondary;
-    bool _hooks; // briefing input hooks (briefing action start ... step 0xD; original: from step 0xC)
+    bool _hooks; // briefing input hooks (briefing action start ... step 13; original: from step 12)
 
     /// <summary>
     /// The human controller's advisor for this screen: kept when the game brings one (a save), else a new one: a new game
@@ -70,7 +70,7 @@ public partial class MainScreen
         hud.MoveChild(_advMain, 0); // under the windows
         hud.MoveChild(_advSecondary, 0);
         var main = sprites.Bitmap(sprites.Dll.Words(MainIdle)[1]);
-        var second = sprites.Bitmap(sprites.Dll.Words(_side == 0 ? (ushort)402 : (ushort)401)[1]);
+        var second = sprites.Bitmap(sprites.Dll.Words(_side == 0 ? (ushort)AdvisorRcData.SecondaryIdleAlliance : (ushort)AdvisorRcData.SecondaryIdleEmpire)[1]);
         _advMain.Idle = () => new StillCommand(main, 15, () => _advisor?.GateOpen()); // type 18 hold, callback = the gate
         _advSecondary.Idle = () => new StillCommand(second, 15, () => { if (_advisor is not null) _advisor.SecondaryIdle = 1; }); // type 5 hold
         _advMain.Enqueue(new StillCommand(main, 5));
@@ -159,9 +159,9 @@ public partial class MainScreen
     }
 
     /// <summary>A system sub-window opened from a sector window: the tip trigger of its group (manufacturing, fleet, planet, missions).</summary>
-    internal void SubWindowTip(int mode)
+    internal void SubWindowTip(GroupMode mode)
     {
-        AdvisorTip? tip = mode switch { 4 => AdvisorTip.Manufacturing, 0x10 => AdvisorTip.Fleet, 8 => AdvisorTip.Planet, 0x40 => AdvisorTip.Missions, _ => null };
+        AdvisorTip? tip = mode switch { GroupMode.Facilities => AdvisorTip.Manufacturing, GroupMode.Fleets => AdvisorTip.Fleet, GroupMode.Ground => AdvisorTip.Planet, GroupMode.Missions => AdvisorTip.Missions, _ => null };
         if (tip is { } t && _game is not null && _advisor is not null) MessagesArrived(_advisor.TipTrigger(_game, t));
     }
 
@@ -176,7 +176,7 @@ public partial class MainScreen
     void PlayAction(int id)
     {
         if (!_script.TryGetValue((uint)id, out var action) || action.Enabled == 0 || _advMain is null) return;
-        // openswr deviation: the hooks go on with the briefing itself, not at its step 0xC, so Esc skips the opening clip too
+        // openswr deviation: the hooks go on with the briefing itself, not at its step 12, so Esc skips the opening clip too
         if (id is 41 or 74 && _briefing is not null) _hooks = true;
         foreach (var step in action.Steps)
         {
@@ -223,7 +223,7 @@ public partial class MainScreen
 
     /// <summary>
     /// Post type 3: end state from the victory word
-    /// and the player side; 0 gives nothing (the stopped screen stays, options locked). Else (0x482, application state 0x10-0x13) every
+    /// and the player side; 0 gives nothing (the stopped screen stays, options locked). Else (main-screen message, application states 16-19) every
     /// window and pop-up closes, the end movie plays, then the main menu (front end); no save prompt. A playing kind-6 event movie is
     /// not cut: the end waits for its end or skip, then the queued event movies are dropped.
     /// </summary>
@@ -239,7 +239,7 @@ public partial class MainScreen
     }
 
     /// <summary>
-    /// Options request (command 0x15E): Esc, Game Controls 0x133 and the tactical Game Options page;
+    /// Options request (command): Esc, Game Controls button and the tactical Game Options page;
     /// dropped once the game-over lock is set (with the advisor's request of actions 84-87; Inferred for Esc).
     /// </summary>
     void RequestOptions()
@@ -249,44 +249,58 @@ public partial class MainScreen
     }
 
     /// <summary>
-    /// Guided-UI step (2, n) (C-3PO / IMP-22): map display filters, one-system lists 0x92 / 0x93
-    /// with a custom title (list = SD indexes: Coruscant 0x109, Yavin 0x121, or "X's system" = the first system up the player's
-    /// view of X: the HQ 0x20000005, Mothma, Luke, Palpatine, Vader), the input hooks (0xC) and the Advice step (0xD).
+    /// Guided-UI step (2, n) (C-3PO / IMP-22): map display filters, one-system lists
+    /// with a custom title (list = SD indexes: Coruscant 265, Yavin 289, or "X's system" = the first system up the player's
+    /// view of X: the HQ, Mothma, Luke, Palpatine, Vader), the input hooks (step 12) and the Advice step (step 13).
     /// </summary>
     void Guided(int n)
     {
         bool imp = _side != 0;
-        const uint Coruscant = 0x109, Yavin = 0x121, Hq = 0x20000005, Mothma = 0x30000240;
-        (int Mode, int Title, uint Of) step = (n, imp) switch
+        const uint Coruscant = Refs.CoruscantIndex, Yavin = Refs.YavinIndex, Hq = Refs.Headquarters, Mothma = Refs.Mothma;
+        // the steps both sides share; the rest are per side, the same number meaning another filter on the other side
+        (int Mode, int Title, uint Of)? shared = n switch
         {
-            (1 or 0xB, _) => (0x11, 0, 0),
-            (2, false) or (0xE, _) => (0x13, 0, 0),
-            (2, true) or (0x12, true) => (0x92, 0x1624, Coruscant),
-            (3, false) => (0x93, 0x1623, Hq),
-            (3, true) or (8 or 0x14, true) or (0x12, false) => (0x93, 0x1622, Yavin),
-            (4, false) or (8 or 0x14, false) => (0x92, 0x1624, Coruscant),
-            (4, true) => (0x17, 0, 0),
-            (5, _) => (0x20, 0, 0),
-            (6, _) => (0x91, 0, 0),
-            (7, false) => (0x93, 0x1625, Mothma),
-            (7, true) => (0x92, 0x1627, Refs.Palpatine),
-            (9, _) => (MapFilter.Off, 0, 0),
-            (0xF, _) => (0x15, 0, 0),
-            (0x10, false) => (0x16, 0, 0),
-            (0x10, true) => (0x14, 0, 0),
-            (0x11, _) => (0x17, 0, 0),
-            (0x13, false) => (0x93, 0x1626, Refs.Luke),
-            (0x13, true) => (0x92, 0x1628, Refs.Vader),
+            1 or 11 => (FilterModes.PopularSupportVariant, 0, 0),
+            14 => (FilterModes.AdvisorOwnControlled, 0, 0),
+            5 => (FilterModes.IdleFleets, 0, 0),
+            6 => (FilterModes.AdvisorDefenses, 0, 0),
+            9 => (MapFilter.Off, 0, 0),
+            15 => (FilterModes.AdvisorEnemyControlled, 0, 0),
+            17 => (FilterModes.AdvisorUnexplored, 0, 0),
+            _ => null,
+        };
+        (int Mode, int Title, uint Of) AllianceStep(AllianceGuidedStep s) => s switch
+        {
+            AllianceGuidedStep.OwnControlled => (FilterModes.AdvisorOwnControlled, 0, 0),
+            AllianceGuidedStep.HeadquartersList => (FilterModes.AdvisorListAlliance, StrategyTexts.GuidedHeadquarters, Hq),
+            AllianceGuidedStep.EmpireCoruscantList or AllianceGuidedStep.EmpireCoruscantListAt8 or AllianceGuidedStep.EmpireCoruscantListAt14 =>
+                (FilterModes.AdvisorListEmpire, StrategyTexts.GuidedCoruscant, Coruscant),
+            AllianceGuidedStep.MothmaList => (FilterModes.AdvisorListAlliance, StrategyTexts.GuidedMothma, Mothma),
+            AllianceGuidedStep.EnemyUncontrolled => (FilterModes.AdvisorEnemyUncontrolled, 0, 0),
+            AllianceGuidedStep.YavinList => (FilterModes.AdvisorListAlliance, StrategyTexts.GuidedYavin, Yavin),
+            AllianceGuidedStep.LukeList => (FilterModes.AdvisorListAlliance, StrategyTexts.GuidedLuke, Refs.Luke),
             _ => (0, 0, 0),
         };
-        if (n == 0xC) _hooks = true;
-        else if (n == 0xD) AdviceStep();
+        (int Mode, int Title, uint Of) EmpireStep(EmpireGuidedStep s) => s switch
+        {
+            EmpireGuidedStep.CoruscantList or EmpireGuidedStep.CoruscantListAt12 => (FilterModes.AdvisorListEmpire, StrategyTexts.GuidedCoruscant, Coruscant),
+            EmpireGuidedStep.YavinList or EmpireGuidedStep.YavinListAt8 or EmpireGuidedStep.YavinListAt14 =>
+                (FilterModes.AdvisorListAlliance, StrategyTexts.GuidedYavin, Yavin),
+            EmpireGuidedStep.Unexplored => (FilterModes.AdvisorUnexplored, 0, 0),
+            EmpireGuidedStep.PalpatineList => (FilterModes.AdvisorListEmpire, StrategyTexts.GuidedPalpatine, Refs.Palpatine),
+            EmpireGuidedStep.OwnUncontrolled => (FilterModes.AdvisorOwnUncontrolled, 0, 0),
+            EmpireGuidedStep.VaderList => (FilterModes.AdvisorListEmpire, StrategyTexts.GuidedVader, Refs.Vader),
+            _ => (0, 0, 0),
+        };
+        var step = shared ?? (imp ? EmpireStep((EmpireGuidedStep)n) : AllianceStep((AllianceGuidedStep)n));
+        if (n == GuidedStep.InstallInputHooks) _hooks = true;
+        else if (n == GuidedStep.OpenAdvice) AdviceStep();
         else if (step.Mode != 0)
         {
             int[]? list = step.Of switch
             {
                 0 => null,
-                <= 0xFFFFFF => [(int)step.Of],
+                _ when SdRef.FamilyOf(step.Of) == 0 => [(int)step.Of], // a bare SD index, no family byte
                 _ => _game!.Created.Concat(_game.Characters).FirstOrDefault(o => o.Ref == step.Of) is { } x
                     && Knowledge.Location(_game, x, _map.Side) is StarSystem at ? [(int)new OpenSWR.Data.Dat.SdRef(at.Type).Index] : [],
             };
@@ -295,14 +309,14 @@ public partial class MainScreen
         }
     }
 
-    /// <summary>Step 0xD: the message window closes; tips on, topic list built (kind-7 burst) and the Advice tab opened; hooks removed.</summary>
+    /// <summary>Step 13: the message window closes; tips on, topic list built (kind-7 burst) and the Advice tab opened; hooks removed.</summary>
     void AdviceStep()
     {
-        if (Windows.Find(0xD) is { } open) Windows.Close(open, sound: false);
+        if (Windows.Find(WindowKind.Messages) is { } open) Windows.Close(open, sound: false);
         _hooks = false;
         if (_advisor!.TipsOff) return;
         MessagesArrived(_advisor.BuildTopics(_game!));
-        OpenMessages(0x82);
+        OpenMessages(MessageTab.Advice);
     }
 
     /// <summary>Briefing hooks: keys swallowed (Esc up skips), mouse button down skips, ups swallowed, moves pass.</summary>
@@ -333,16 +347,16 @@ public partial class MainScreen
         if (_advisor is null) return;
         if (!valid.Success)
         {
-            _advisor.Refused(valid.Category, valid.Code, command, _game);
+            _advisor.Refused(valid, command, _game);
             return;
         }
-        int wave = Messages.DagobahFirst(command) ? VoicePick(0x131) : 0;
+        int wave = Messages.DagobahFirst(command) ? VoicePick(AdvisorRcData.DagobahFirstVoices) : 0;
         if (wave == 0 && Messages.Acknowledgement(command) is var list and > 0) wave = VoicePick(list);
         PlayVoice(wave);
         _advisor.Accepted(command);
     }
 
-    /// <summary>Voice variant list of the side's sprite DLL, drawn through the advisor's UI-generator source; a missing list (e.g. 0x136) is silent without a draw.</summary>
+    /// <summary>Voice variant list of the side's sprite DLL, drawn through the advisor's UI-generator source; a missing list (e.g. 310) is silent without a draw.</summary>
     int VoicePick(int list) =>
         _sprites is null || !_sprites.Dll.Has((ushort)list) ? 0 : Advisor.Voice(_sprites.Dll.Words((ushort)list), _advisor?.Rand ?? (n => UiRandom.Shared.Rand(n)));
 
@@ -352,17 +366,17 @@ public partial class MainScreen
     AudioStream? Voice(int wave) => wave == 0 ? null : _sprites?.Wave((ushort)wave);
 
     /// <summary>
-    /// Uprising alarm: 621 when the player's controller got view message 0x14B with the
+    /// Uprising alarm: 621 when the player's controller got view message 331 with the
     /// new value set (a live system entering Uprising, any core system, a view refreshed to Uprising); 620 when it
-    /// got 0x14C with the new value set (a never-controlled system newly seen). Each played once after
+    /// got 332 with the new value set (a never-controlled system newly seen). Each played once after
     /// each run of ticks (openswr adaptation of "at once"), on the same player pool.
     /// </summary>
     void UprisingAlarm(GameState game)
     {
         if (game.Controllers.GetValueOrDefault(_map.Side) is not OpenSWR.Sim.Ai.HumanController human) return;
-        if (human.UprisingAlarms > 0) Assets.PlayStrategy(621);
+        if (human.UprisingAlarms > 0) Assets.PlaySound(StrategySfx.UprisingAlarm);
         // openswr deviation: 620 on a planetary assault by or against the player, not on first sight of a never-controlled system
-        if (human.AssaultAlarms > 0) Assets.PlayStrategy(620);
+        if (human.AssaultAlarms > 0) Assets.PlaySound(StrategySfx.AssaultAlarm);
         (human.UprisingAlarms, human.NeverControlledAlarms, human.AssaultAlarms) = (0, 0, 0);
     }
 
@@ -391,7 +405,7 @@ public partial class MainScreen
     }
 
     /// <summary>
-    /// Build helper target: the 0x214 Destination is validated and sent like a delegated order (dispatched at once like
+    /// Build helper target: the Destination order is validated and sent like a delegated order (dispatched at once like
     /// openswr's player orders, Inferred; a refusal goes to the pair event); then the production window opens with the prepared
     /// Build command, watched until the player confirms it (action 35 or 28).
     /// </summary>
@@ -407,8 +421,8 @@ public partial class MainScreen
         var valid = Orders.Validate(game, destination);
         if (!valid.Success)
         {
-            _advisor.Refused(valid.Category, valid.Code, destination, game);
-            _message = $"{RowLabel(destination.Type)}: refused ({valid.Category:X}, {valid.Code:X})";
+            _advisor.Refused(valid, destination, game);
+            _message = $"{RowLabel((int)destination.Type)}: refused ({(int)valid.Category}, {(int)valid.Code})";
             UpdateStatus();
             return;
         }
@@ -432,14 +446,14 @@ public partial class MainScreen
         if (_advisor is null || _game is null || System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_DELEGATE") is not { Length: > 0 } d) return;
         if (start)
         {
-            if (d is "115" or "both") _advisor.Toggle(0x115);
-            if (d is "116" or "both") _advisor.Toggle(0x116);
+            if (d is "115" or "both") _advisor.Toggle(AdvisorMenu.ManageGarrisons);
+            if (d is "116" or "both") _advisor.Toggle(AdvisorMenu.ManageProduction);
             _game.Clock.CommandTrace = [];
             return;
         }
-        var sent = _game.Clock.CommandTrace!.Where(c => c.Side == _map.Side && c.Sequence != 0 && c.Type is 0x214 or 0x210 or 0x212).ToList();
-        _message = $"delegated {sent.Count}: " + string.Join(", ", sent.TakeLast(6).Select(c => $"{c.Type:X} {c.Targets[0].Target.Ref:X8}"
-            + (c.ArgRef is { } r ? $">{r.Ref:X8}" : $" {c.Fields[0]:X8}")));
+        var sent = _game.Clock.CommandTrace!.Where(c => c.Side == _map.Side && c.Sequence != 0 && c.Type is CommandType.SetProductionTarget or CommandType.ProduceFacility or CommandType.ProduceTroop).ToList();
+        _message = $"delegated {sent.Count}: " + string.Join(", ", sent.TakeLast(6).Select(c => $"{(int)c.Type} {Family.Of(c.Targets[0].Target.Ref)}:{SdRef.IndexOf(c.Targets[0].Target.Ref)}"
+            + (c.ArgRef is { } r ? $">{Family.Of(r.Ref)}:{SdRef.IndexOf(r.Ref)}" : $" {c.Fields[0]}")));
         UpdateStatus();
         if (sent.LastOrDefault()?.Targets[0].Target is ManufacturingManager m) GoTo(m);
     }
@@ -451,21 +465,21 @@ public partial class MainScreen
         switch (mode)
         {
             case "refuse":
-                var c = new Command(0x240, _map.Side) { Fields = [0, 0, 0] }; // a mission without a team
+                var c = new Command(CommandType.CreateMission, _map.Side) { Fields = [0, 0, 0] }; // a mission without a team
                 Submit(c);
-                Submit(new Command(0x240, _map.Side) { Fields = [0, 0, 0] });
+                Submit(new Command(CommandType.CreateMission, _map.Side) { Fields = [0, 0, 0] });
                 break;
             case "idle":
-                _advisor.MessageCode(4); // research complete: the droid relay and the comment
+                _advisor.MessageCode(AdvisorCode.ResearchComplete); // research complete: the droid relay and the comment
                 break;
             case "tips": // Agent Advice on (as at Novice): the briefing's Advice step opens the Advice tab with the kind-7 topics
-                if (_advisor.TipsOff) _advisor.Toggle(0x11E);
+                if (_advisor.TipsOff) _advisor.Toggle(AdvisorMenu.Tips);
                 break;
             case "menu":
                 OpenAdvisorMenu(AdvisorRect(0).GetCenter(), window: true);
                 break;
             case "build": // Build Ships aimed at the first own fleet's system: the production window with the helper's shipyard
-                AdvisorCommand(0x110);
+                AdvisorCommand(AdvisorMenu.BuildShips);
                 if (_game.Systems.SelectMany(OwnFleets).FirstOrDefault()?.System is { } at)
                 {
                     EndTargeting();

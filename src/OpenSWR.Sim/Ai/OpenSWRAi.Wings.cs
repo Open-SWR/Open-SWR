@@ -29,9 +29,9 @@ public sealed partial class OpenSWRController
         foreach (var s in Own(game).Where(s => !s.Blockade))
         {
             var units = places.Where(e => Orders.TravelDays(game, e, s, 100) <= ReachDays).SelectMany(e => k.Fleets(e, Enemy)).SelectMany(f => k.Contents(f)).ToList();
-            int enemy = units.Count(v => Family.IsCapitalShip(v.Object.Type) || v.In(0x1C, 0x20)) + units.Sum(v => k.Contents(v.Object).Count(c => c.In(0x1C, 0x20)));
+            int enemy = units.Count(v => Family.IsCapitalShip(v.Object.Type) || v.In(Families.Fighter, Families.Headquarters)) + units.Sum(v => k.Contents(v.Object).Count(c => c.In(Families.Fighter, Families.Headquarters)));
             if (enemy == 0) continue;
-            int have = s.Contents.Count(x => x.Owner == Side && Family.Of(x.Type) is >= 0x1C and < 0x20);
+            int have = s.Contents.Count(x => x.Owner == Side && Family.Of(x.Type) is >= Families.Fighter and < Families.Headquarters);
             if (WingTarget(enemy) > have) needs.Add((s, WingTarget(enemy) - have, enemy));
         }
         return [.. needs.OrderByDescending(x => _values.GetValueOrDefault(x.System.Ref) * (1 + x.Enemy)).ThenBy(x => x.System.Key).Select(x => (x.System, x.Want))];
@@ -66,19 +66,19 @@ public sealed partial class OpenSWRController
     bool WingOrder(GameState game, Known k, ManufacturingManager m, StarSystem s, (StarSystem System, int Want) wing, SdRecord? ship, ref int free, HashSet<GameObject> used)
     {
         bool here = wing.System == s;
-        if ((DoctrineFighter(game, k, free, jumping: !here) ?? (here ? Pick(game, 0x28, 0x1C, cheapest: true) : null)) is not { } fighter) return false;
+        if ((DoctrineFighter(game, k, free, jumping: !here) ?? (here ? Pick(game, Families.Shipyard, Families.Fighter, cheapest: true) : null)) is not { } fighter) return false;
         if (ship is not null && game.MaintenanceCost(fighter.Common.Ref) * wing.Want + game.MaintenanceCost(ship.Common.Ref) > free)
         {
             var units = game.Created.Where(o => o.Owner == Side && o.Existing).ToList();
-            if (units.Count(o => Family.Of(o.Type) is >= 0x1C and < 0x20) >= 2 * units.Count(o => Family.IsCapitalShip(o.Type))) return false;
+            if (units.Count(o => Family.Of(o.Type) is >= Families.Fighter and < Families.Headquarters) >= 2 * units.Count(o => Family.IsCapitalShip(o.Type))) return false;
         }
         if (m.TargetKey != wing.System)
         {
-            bool retargeted = Issue(game, new Command(0x214, Side) { Targets = [(m, 0)], ArgRef = wing.System }, used);
+            bool retargeted = Issue(game, new Command(CommandType.SetProductionTarget, Side) { Targets = [(m, GroupMode.Object)], ArgRef = wing.System }, used);
             Why(m, retargeted ? "retarget" : Room ? "refused" : "budget");
             return retargeted;
         }
-        int n = Build(game, 0x211, m, fighter, wing.Want, ref free, used);
+        int n = Build(game, CommandType.ProduceShip, m, fighter, wing.Want, ref free, used);
         Why(m, n > 0 ? "ordered" : _buildFail);
         return n > 0;
     }

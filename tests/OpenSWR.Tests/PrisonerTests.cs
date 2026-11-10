@@ -3,7 +3,7 @@ using OpenSWR.Sim;
 
 namespace OpenSWR.Tests;
 
-/// <summary>State / Captured polarity and hooks, capture paths, holding (0x30A), escape check, release paths, jails.</summary>
+/// <summary>State / Captured polarity and hooks, capture paths, holding (the holding hook), escape check, release paths, jails.</summary>
 public class PrisonerTests
 {
     static GameDefinitions? _definitions;
@@ -14,7 +14,7 @@ public class PrisonerTests
     /// <summary>A placed, Usable major character of the side, off mission, with Combat 100 (injury check q = 1).</summary>
     static Character Major(GameState game, Owner side, int skip = 0)
     {
-        var c = game.Characters.Where(c => c.Owner == side && c.Placed && c.Usable && !c.OnMission && Family.Of(c.Type) < 0x38).Skip(skip).First();
+        var c = game.Characters.Where(c => c.Owner == side && c.Placed && c.Usable && !c.OnMission && Family.Of(c.Type) < Families.MinorCharacter).Skip(skip).First();
         c.Skills[SkillIndex.Combat] = 100;
         return c;
     }
@@ -27,42 +27,42 @@ public class PrisonerTests
         while (new GameRandom(game.Random.State).Percent() >= p) game.Random.Percent();
     }
 
-    // Captured = (State = 0). The state hook runs only on change.
+    // Captured = (State = Captured). The state hook runs only on change.
     [GameFact]
     public void StatePolarityAndHooks()
     {
         var game = Game();
         var c = Major(game, Owner.Alliance);
-        Assert.Equal((Prisoners.Free, false), (c.State, c.Captured));
+        Assert.Equal((PrisonerState.Free, false), (c.State, c.Captured));
         Assert.Equal(Owner.Alliance, Prisoners.NaturalSide(game, c));
 
-        Prisoners.Release(game, c); // 4 -> 2: a change, still not captured
-        Assert.Equal((Prisoners.Released, false, Owner.Alliance), (c.State, c.Captured, c.Owner));
+        Prisoners.Release(game, c); // Free gives Released: a change, still not captured
+        Assert.Equal((PrisonerState.Released, false, Owner.Alliance), (c.State, c.Captured, c.Owner));
         Assert.True(c.Autorouting);
 
         var draws = Trace(game);
         Prisoners.Capture(game, c, null);
-        Assert.Equal((Prisoners.Captured, true, Owner.Empire, true), (c.State, c.Captured, c.Owner, c.CanEscape));
+        Assert.Equal((PrisonerState.Captured, true, Owner.Empire, true), (c.State, c.Captured, c.Owner, c.CanEscape));
         Assert.Equal(DrawSite.Injury, draws[0].Site);
-        Assert.Equal((DrawSite.Timer, 1001), (draws[^1].Site, draws[^1].N)); // 0x38A start roll(1000)
-        var slot = game.Timers[(0x38A, c.Ref)];
+        Assert.Equal((DrawSite.Timer, 1001), (draws[^1].Site, draws[^1].N)); // timer start roll(1000)
+        var slot = game.Timers[(TimerType.Escape, c.Ref)];
         Assert.Equal((true, 100, 1000), (slot.Active, slot.Base, slot.Variance));
 
         Prisoners.Escape(game, c);
-        Assert.Equal((Prisoners.Escaped, false, Owner.Alliance, false, false), (c.State, c.Captured, c.Owner, c.CanEscape, slot.Active));
+        Assert.Equal((PrisonerState.Escaped, false, Owner.Alliance, false, false), (c.State, c.Captured, c.Owner, c.CanEscape, slot.Active));
         Objects.ClearAutorouting(game, c);
-        Prisoners.Escape(game, c); // 1 -> 1: no hook
+        Prisoners.Escape(game, c); // Escaped gives Escaped: no hook
         Assert.False(c.Autorouting);
     }
 
-    // A capture by a capital ship: injury check, State 0, Captor. The 0x30A hook moves the prisoner aboard and clears
-    // Autorouting and the Captor. Freed aboard the enemy ship, it autoroutes: the 0x307 grouping sends it home with an
-    // Autorouting mission 0x43.
+    // A capture by a capital ship: injury check, State Captured, Captor. The holding hook moves the prisoner aboard and clears
+    // Autorouting and the Captor. Freed aboard the enemy ship, it autoroutes: the grouping sends it home with an
+    // Autorouting mission kind (MissionKind.Autorouting).
     [GameFact]
     public void HeldAboardTheCapturingShip()
     {
         var game = Game();
-        var coruscant = game.System(Refs.Coruscant);
+        var coruscant = game.Known.Coruscant!;
         var ship = coruscant.Contents.OfType<Fleet>().Where(f => f.Owner == Owner.Empire && f.Usable)
             .SelectMany(f => f.Contents).First(x => Family.IsCapitalShip(x.Type));
         var c = Major(game, Owner.Alliance);
@@ -80,19 +80,19 @@ public class PrisonerTests
         game.Clock.Flush(game);
         var m = c.Mission!; // the enemy ship, its fleet and Coruscant refuse the freed agent, so its destination is a system of its side
         Assert.Equal((Owner.Alliance, false), (c.Owner, c.Autorouting));
-        Assert.Equal((coruscant, Owner.Alliance, 0, c), (m.Origin, m.Objective!.Owner, m.CompletionStatus, m.Leader));
-        Assert.Equal((0x43000003u, Owner.Alliance, true, false, EncounterCodes.Standard), (m.Type, m.Owner, m.Mandatory, m.ImpliedTeam, m.Encounters));
+        Assert.Equal((coruscant, Owner.Alliance, MissionCompletion.None, c), (m.Origin, m.Objective!.Owner, m.CompletionStatus, m.Leader));
+        Assert.Equal((Refs.AutoroutingMission, Owner.Alliance, true, false, EncounterCodes.Standard), (m.Type, m.Owner, m.Mandatory, m.ImpliedTeam, m.Encounters));
         Assert.True(game.Clock.Serial > serial);
     }
 
-    // A prisoner aboard a ship destroyed in battle is released and goes adrift. The 0x30E / 0x307 grouping re-parents it
-    // into the ship's system (enemy-owned) and creates an Adrift mission 0x44 (Adrift encounter codes). Aboard a scrapped ship
-    // (DestroyedReason 0x14) it only autoroutes and stays Captured.
+    // A prisoner aboard a ship destroyed in battle is released and goes adrift. The grouping re-parents it
+    // into the ship's system (enemy-owned) and creates an Adrift mission (MissionKind.Adrift) (Adrift encounter codes). Aboard a scrapped ship
+    // (DestroyedReason Scrapped) it only autoroutes and stays Captured.
     [GameFact]
     public void PrisonerAboardDestroyedShipGoesAdrift()
     {
         var game = Game();
-        var coruscant = game.System(Refs.Coruscant);
+        var coruscant = game.Known.Coruscant!;
         var ships = coruscant.Contents.OfType<Fleet>().Where(f => f.Owner == Owner.Empire && f.Usable)
             .SelectMany(f => f.Contents).Where(x => Family.IsCapitalShip(x.Type)).ToList();
         var c = Major(game, Owner.Alliance);
@@ -102,20 +102,20 @@ public class PrisonerTests
         Assert.Equal((ships[0], true), (c.Container, c.Captured));
 
         var fleet = ships[0].Container;
-        Objects.Destroy(game, ships[0], 0xC);
-        Assert.Equal((true, Prisoners.Released, Owner.Alliance), (c.Adrift, c.State, c.Owner));
-        Assert.Equal(fleet, ships[0].Container); // stays in its fleet until its final move 0x372 (priority 0x998)
+        Objects.Destroy(game, ships[0], DestroyedReason.Battle);
+        Assert.Equal((true, PrisonerState.Released, Owner.Alliance), (c.Adrift, c.State, c.Owner));
+        Assert.Equal(fleet, ships[0].Container); // stays in its fleet until its final move (priority 2456)
         game.Clock.Flush(game);
-        Assert.Same(game.Staging, ships[0].Container); // 0x372 once the prisoner left
+        Assert.Same(game.Staging, ships[0].Container); // the final move once the prisoner left
         var m = game.Missions[^1]; // origin = Coruscant: re-parented there; its encounters there are not checked here
         Assert.Equal((false, false), (c.Adrift, c.Autorouting));
-        Assert.Equal((0x44000004u, Owner.Alliance, EncounterCodes.Adrift, coruscant, true), (m.Type, m.Owner, m.Encounters, m.Origin, m.Mandatory));
+        Assert.Equal((Refs.AdriftMission, Owner.Alliance, EncounterCodes.Adrift, coruscant, true), (m.Type, m.Owner, m.Encounters, m.Origin, m.Mandatory));
 
         var d = Major(game, Owner.Alliance);
         ships[1].Add(d);
         Prisoners.Capture(game, d, ships[1]);
         game.Clock.Flush(game);
-        Objects.Destroy(game, ships[1], 0x14);
+        Objects.Destroy(game, ships[1], DestroyedReason.Scrapped);
         Assert.Equal((false, true, true), (d.Adrift, d.Captured, d.Autorouting));
     }
 
@@ -125,7 +125,7 @@ public class PrisonerTests
     {
         var game = Game();
         var c = Major(game, Owner.Alliance);
-        Objects.SetParent(game, c, game.System(Refs.Yavin));
+        Objects.SetParent(game, c, game.Known.Yavin!);
         game.Clock.Flush(game);
         int missions = game.Missions.Count;
         Objects.SetAutorouting(game, c);
@@ -133,36 +133,36 @@ public class PrisonerTests
         Assert.Equal((false, null, missions), (c.Autorouting, c.Mission, game.Missions.Count));
     }
 
-    // A killed member leaves its mission through 0x30B (remove request), then the phase check (status 5).
+    // A killed member leaves its mission through the remove request, then the phase check (status 5).
     [GameFact]
     public void KilledMemberLeavesThroughRemoveRequest()
     {
         var game = Game();
         var c = Major(game, Owner.Alliance);
-        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x52).Common.Ref;
-        var m = Missions.Create(game, type, Owner.Alliance, game.System(Refs.Coruscant), [c], [], 0, mandatory: false);
+        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Espionage).Common.Ref;
+        var m = Missions.Create(game, type, Owner.Alliance, game.Known.Coruscant!, [c], [], 0, mandatory: false);
         c.ResignRequest = true;
-        Objects.Destroy(game, c, 10);
+        Objects.Destroy(game, c, DestroyedReason.Killed);
         Assert.Equal((true, false, m), (c.RemoveRequest, c.ResignRequest, c.Mission));
         game.Clock.Flush(game);
-        Assert.Equal((null, false, 5), (c.Mission, m.Team.Contains(c), m.CompletionStatus));
+        Assert.Equal((null, false, MissionCompletion.NoTeam), (c.Mission, m.Team.Contains(c), m.CompletionStatus));
     }
 
-    // Injury hook -> Healing in own territory. A parent change into enemy territory clears CanHeal ( -> Healing).
-    // FastHeal = Force >= G 0xA00 from the Force hook, and a drop to 0 does not change it.
+    // Injury hook gives Healing in own territory. A parent change into enemy territory clears CanHeal ( gives Healing).
+    // FastHeal = Force >= the Force general parameter from the Force hook, and a drop to 0 does not change it.
     [GameFact]
     public void HealTriggers()
     {
         var game = Game();
         var c = Major(game, Owner.Alliance);
-        Objects.SetParent(game, c, game.System(Refs.Yavin));
+        Objects.SetParent(game, c, game.Known.Yavin!);
         Prisoners.SetInjury(game, c, 3);
         Assert.Equal((true, true), (c.CanHeal, c.Healing));
-        Assert.True(game.Timers[(0x388, c.Ref)].Active);
-        Objects.SetParent(game, c, game.System(Refs.Coruscant));
-        Assert.Equal((false, false, false), (c.CanHeal, c.Healing, game.Timers[(0x388, c.Ref)].Active));
+        Assert.True(game.Timers[(TimerType.Heal, c.Ref)].Active);
+        Objects.SetParent(game, c, game.Known.Coruscant!);
+        Assert.Equal((false, false, false), (c.CanHeal, c.Healing, game.Timers[(TimerType.Heal, c.Ref)].Active));
 
-        (c.ForceRank, c.ForceBonus) = (game.Params.General(0xA00), 0);
+        (c.ForceRank, c.ForceBonus) = (game.Rules.FastHealForce, 0);
         Prisoners.ForceChanged(game, c);
         Assert.True(c.FastHeal);
         (c.ForceRank, c.ForceBonus) = (0, 0);
@@ -175,7 +175,7 @@ public class PrisonerTests
     public void KilledMinorIsNotCaptured()
     {
         var game = Game();
-        var c = game.Characters.First(c => Family.Of(c.Type) is >= 0x38 and < 0x3C);
+        var c = game.Characters.First(c => Family.Of(c.Type) is >= Families.MinorCharacter and < Families.SpecialForce);
         c.Skills[SkillIndex.Combat] = 0; // q = 100
         while (true)
         {
@@ -184,7 +184,7 @@ public class PrisonerTests
             game.Random.Percent();
         }
         Prisoners.Capture(game, c, null);
-        Assert.Equal((true, 10, Prisoners.Free, false), (c.Destroyed, c.DestroyedReason, c.State, c.Captured));
+        Assert.Equal((true, DestroyedReason.Killed, PrisonerState.Free, false), (c.Destroyed, c.DestroyedReason, c.State, c.Captured));
     }
 
     // A special force's DestroyedReason is 9.
@@ -192,40 +192,40 @@ public class PrisonerTests
     public void CapturedSpecialForceIsDestroyed()
     {
         var game = Game();
-        var force = (Agent)Objects.Create(game, Definitions.SpecialForces[0].Common.Ref, Owner.Alliance, game.System(Refs.Yavin), completed: true);
+        var force = (Agent)Objects.Create(game, Definitions.SpecialForces[0].Common.Ref, Owner.Alliance, game.Known.Yavin!, completed: true);
         Prisoners.Capture(game, force, null);
-        Assert.Equal(9, force.DestroyedReason);
+        Assert.Equal(DestroyedReason.SpecialForceCaptured, force.DestroyedReason);
     }
 
-    // Abduction success captures the target for the abductor. The 0x30A hook puts it with the abductor (joining the
+    // Abduction success captures the target for the abductor. The holding hook puts it with the abductor (joining the
     // abduction's Captured list). The abduction then ends with status 6 (its target is Captured).
     [GameFact]
     public void AbductionCapturesTheTarget()
     {
         var game = Game();
-        var vader = (Character)game.Characters.First(c => c.Ref == Refs.Vader);
+        var vader = (Character)game.Known.Vader!;
         vader.Skills[SkillIndex.Combat] = 1000;
         var target = Major(game, Owner.Alliance);
         target.Skills[SkillIndex.Combat] = 0;
         vader.System!.Add(target);
         game.Clock.Flush(game);
-        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x62).Common.Ref;
+        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Abduction).Common.Ref;
         var m = Missions.Create(game, type, Owner.Empire, target, [vader], [], 0, mandatory: false);
         NextChanceSucceeds(game, Missions.Probability(game, m, vader)!.Value);
 
         Missions.Execute(game, m);
-        Assert.Equal((3, Prisoners.Captured, vader, Owner.Empire), (m.TaskStatus, target.State, target.Captor, target.Owner));
+        Assert.Equal((MissionTaskStatus.Succeeded, PrisonerState.Captured, vader, Owner.Empire), (m.TaskStatus, target.State, target.Captor, target.Owner));
         game.Clock.Flush(game);
         Assert.Equal((vader.Container, null, true), (target.Container, target.Captor, target.Captured));
-        Assert.Equal(6, m.CompletionStatus);
+        Assert.Equal(MissionCompletion.ObjectiveInvalid, m.CompletionStatus);
     }
 
-    // Rescue success: State 3, owner back to the natural side.
+    // Rescue success: State Rescued, owner back to the natural side.
     [GameFact]
     public void RescueFreesTheTarget()
     {
         var game = Game();
-        var coruscant = game.System(Refs.Coruscant);
+        var coruscant = game.Known.Coruscant!;
         var prisoner = Major(game, Owner.Alliance);
         var rescuer = Major(game, Owner.Alliance, skip: 1);
         rescuer.Skills[SkillIndex.Combat] = 1000;
@@ -233,12 +233,12 @@ public class PrisonerTests
         coruscant.Add(rescuer);
         Prisoners.Capture(game, prisoner, null);
         game.Clock.Flush(game);
-        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x61).Common.Ref;
+        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Rescue).Common.Ref;
         var m = Missions.Create(game, type, Owner.Alliance, prisoner, [rescuer], [], 0, mandatory: false);
         NextChanceSucceeds(game, Missions.Probability(game, m, rescuer)!.Value);
 
         Missions.Execute(game, m);
-        Assert.Equal((3, Prisoners.Rescued, false, Owner.Alliance), (m.TaskStatus, prisoner.State, prisoner.Captured, prisoner.Owner));
+        Assert.Equal((MissionTaskStatus.Succeeded, PrisonerState.Rescued, false, Owner.Alliance), (m.TaskStatus, prisoner.State, prisoner.Captured, prisoner.Owner));
     }
 
     // Key = EnhCombat + EnhEsp - guard average EnhancedCombat - guard troops. ESCAPETB threshold lookup.
@@ -246,12 +246,12 @@ public class PrisonerTests
     public void EscapeKeyAndChance()
     {
         var game = Game();
-        var coruscant = game.System(Refs.Coruscant);
+        var coruscant = game.Known.Coruscant!;
         var c = Major(game, Owner.Alliance);
         coruscant.Add(c);
         Prisoners.Capture(game, c, null);
         game.Clock.Flush(game);
-        var guards = coruscant.Contents.OfType<Character>().Where(g => g.Usable && g.Owner == Owner.Empire && !g.Captured && Family.Of(g.Type) < 0x3C).ToList();
+        var guards = coruscant.Contents.OfType<Character>().Where(g => g.Usable && g.Owner == Owner.Empire && !g.Captured && Family.Of(g.Type) < Families.SpecialForce).ToList();
         int a4 = guards.Count == 0 ? 0 : guards.Sum(g => Missions.Enhanced(game, g, SkillIndex.Combat)) / guards.Count;
         int a5 = coruscant.Contents.Count(x => Family.IsTroop(x.Type) && x.Usable && x.Owner == Owner.Empire);
         Assert.Equal(coruscant, c.Container);
@@ -265,7 +265,7 @@ public class PrisonerTests
     {
         var game = Game();
         var c = Major(game, Owner.Alliance);
-        game.System(Refs.Coruscant).Add(c);
+        game.Known.Coruscant!.Add(c);
         Prisoners.Capture(game, c, null);
         game.Clock.Flush(game);
         c.Skills[SkillIndex.Espionage] = 1000;
@@ -274,30 +274,30 @@ public class PrisonerTests
         var draws = Trace(game);
         Prisoners.EscapeCheck(game, c);
         Assert.Equal([DrawSite.Escape], draws.Select(d => d.Site));
-        Assert.Equal((true, Prisoners.Captured), (c.EscapeRequest, c.State));
+        Assert.Equal((true, PrisonerState.Captured), (c.EscapeRequest, c.State));
         c.OnMission = false;
         Prisoners.EscapeGate(game, c);
-        Assert.Equal((false, Prisoners.Escaped, Owner.Alliance), (c.EscapeRequest, c.State, c.Owner));
+        Assert.Equal((false, PrisonerState.Escaped, Owner.Alliance), (c.EscapeRequest, c.State, c.Owner));
     }
 
-    // Owner check: a prisoner under a parent of another side is released (State 2). A lost holding ship sets Adrift and releases.
+    // Owner check: a prisoner under a parent of another side is released (State Released). A lost holding ship sets Adrift and releases.
     [GameFact]
     public void ReleasedByOwnerCheckAndParentLoss()
     {
         var game = Game();
-        var yavin = game.System(Refs.Yavin);
+        var yavin = game.Known.Yavin!;
         var c = Major(game, Owner.Alliance);
         Prisoners.Capture(game, c, null);
         yavin.Add(c);
         Prisoners.OwnerCheck(game, c);
-        Assert.Equal((Prisoners.Released, Owner.Alliance), (c.State, c.Owner));
+        Assert.Equal((PrisonerState.Released, Owner.Alliance), (c.State, c.Owner));
 
         var ship = game.Created.First(x => Family.IsCapitalShip(x.Type) && x.Owner == Owner.Empire && x.Usable);
         Prisoners.Capture(game, c, null);
         ship.Add(c);
-        Objects.Destroy(game, ship, 0xC);
+        Objects.Destroy(game, ship, DestroyedReason.Battle);
         Fleets.DeploymentCheck(game, c);
-        Assert.Equal((true, Prisoners.Released, false), (c.Adrift, c.State, c.Captured));
+        Assert.Equal((true, PrisonerState.Released, false), (c.Adrift, c.State, c.Captured));
     }
 
     // No destination: a free member is captured, a prisoner is released. If nothing is found, the member is captured again
@@ -310,33 +310,33 @@ public class PrisonerTests
         var luke = Major(game, Owner.Alliance);
         var jail = Prisoners.NoDestination(game, luke);
         Assert.Equal(Prisoners.EmpireJail, jail.Ref);
-        Assert.Equal((Prisoners.Captured, Owner.Empire, false), (luke.State, luke.Owner, luke.Autorouting));
+        Assert.Equal((PrisonerState.Captured, Owner.Empire, false), (luke.State, luke.Owner, luke.Autorouting));
         // Autorouting mission for the member alone, owner = its current owner, ImpliedTeam = its Captured flag.
         var m = luke.Mission!;
-        Assert.Equal((0x43000003u, Owner.Empire, jail, true, true, true), (m.Type, m.Owner, m.Objective, m.ImpliedTeam, m.Mandatory, m.Captured.Contains(luke)));
-        Assert.Equal(0, m.CompletionStatus); // ImpliedTeam: no status 5 without a Team member
+        Assert.Equal((Refs.AutoroutingMission, Owner.Empire, jail, true, true, true), (m.Type, m.Owner, m.Objective, m.ImpliedTeam, m.Mandatory, m.Captured.Contains(luke)));
+        Assert.Equal(MissionCompletion.None, m.CompletionStatus); // ImpliedTeam: no status 5 without a Team member
 
         var other = Major(game, Owner.Alliance);
         Prisoners.Capture(game, other, null);
         Assert.Equal(Prisoners.EmpireJail, Prisoners.NoDestination(game, other).Ref); // released, then captured again
-        Assert.Equal(Prisoners.Captured, other.State);
-        var vader = game.Characters.First(c => c.Ref == Refs.Vader);
+        Assert.Equal(PrisonerState.Captured, other.State);
+        var vader = game.Known.Vader!;
         vader.Skills[SkillIndex.Combat] = 100;
         Assert.Equal(Prisoners.AllianceJail, Prisoners.NoDestination(game, vader).Ref);
     }
 
-    // Freed in own territory with an injury: Healing -> timer 0x388 (Base G 0xA02 = 1). The action heals 1.
+    // Freed in own territory with an injury: Healing gives timer (Base general parameter = 1). The action heals 1.
     [GameFact]
     public void HealingAfterRelease()
     {
         var game = Game();
         var c = Major(game, Owner.Alliance);
-        game.System(Refs.Yavin).Add(c);
+        game.Known.Yavin!.Add(c);
         Prisoners.Capture(game, c, null);
         c.Injury = 5;
         Prisoners.Release(game, c);
         Assert.True(c.Healing);
-        Assert.Equal((true, 1), (game.Timers[(0x388, c.Ref)].Active, game.Timers[(0x388, c.Ref)].Base));
+        Assert.Equal((true, 1), (game.Timers[(TimerType.Heal, c.Ref)].Active, game.Timers[(TimerType.Heal, c.Ref)].Base));
         Prisoners.Heal(game, c);
         Assert.Equal(4, c.Injury);
     }
@@ -348,21 +348,21 @@ public class PrisonerTests
     {
         var game = Game();
         var ship = game.Created.First(x => Family.IsCapitalShip(x.Type) && x.Owner == Owner.Empire && x.Usable);
-        var vader = game.Characters.First(c => c.Ref == Refs.Vader);
-        Assert.True(Fleets.CanPlace(game, ship, vader.Type, Owner.Empire, 0x241));
-        Assert.False(Fleets.CanPlace(game, ship, vader.Type, Owner.Alliance, 0x241));
-        Assert.False(Fleets.CanPlace(game, ship, vader.Type, Owner.Alliance, 0x240));
-        Assert.False(Fleets.CanPlace(game, ship.Container!, ship.Type, Owner.Alliance, 0x204));
-        Objects.Destroy(game, ship, 0xC);
-        Assert.False(Fleets.CanPlace(game, ship, vader.Type, Owner.Empire, 0x241));
+        var vader = game.Known.Vader!;
+        Assert.True(Fleets.CanPlace(game, ship, vader.Type, Owner.Empire, CommandType.CreateMoveMission));
+        Assert.False(Fleets.CanPlace(game, ship, vader.Type, Owner.Alliance, CommandType.CreateMoveMission));
+        Assert.False(Fleets.CanPlace(game, ship, vader.Type, Owner.Alliance, CommandType.CreateMission));
+        Assert.False(Fleets.CanPlace(game, ship.Container!, ship.Type, Owner.Alliance, CommandType.MoveObject));
+        Objects.Destroy(game, ship, DestroyedReason.Battle);
+        Assert.False(Fleets.CanPlace(game, ship, vader.Type, Owner.Empire, CommandType.CreateMoveMission));
     }
 
-    // No grouping while BattlePending. Its clear posts 0x304, which groups the system's agents.
+    // No grouping while BattlePending. Its clear posts the grouping message, which groups the system's agents.
     [GameFact]
     public void BattlePendingClearRegroups()
     {
         var game = Game();
-        var coruscant = game.System(Refs.Coruscant);
+        var coruscant = game.Known.Coruscant!;
         var c = Major(game, Owner.Alliance);
         Objects.SetParent(game, c, coruscant);
         game.Clock.Flush(game);
@@ -372,7 +372,7 @@ public class PrisonerTests
         Assert.Equal((true, null), (c.Autorouting, c.Mission));
         Combat.SetBattlePending(game, coruscant, false);
         game.Clock.Flush(game);
-        Assert.Equal((false, 0x43000003u), (c.Autorouting, c.Mission?.Type));
+        Assert.Equal((false, Refs.AutoroutingMission), (c.Autorouting, c.Mission?.Type));
     }
 
     // The resign flag is set from the mission record's ResignOnInjury at the join. An injury makes a standard-type member resign. A movement-type
@@ -383,9 +383,9 @@ public class PrisonerTests
         var game = Game();
         var a = Major(game, Owner.Alliance);
         var b = Major(game, Owner.Alliance, skip: 1);
-        var espionage = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x52).Common.Ref;
-        var m1 = Missions.Create(game, espionage, Owner.Alliance, game.System(Refs.Coruscant), [a], [], 0, mandatory: false);
-        var m2 = Missions.Create(game, 0x41000001, Owner.Alliance, game.System(Refs.Yavin), [b], [], 0, mandatory: false);
+        var espionage = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Espionage).Common.Ref;
+        var m1 = Missions.Create(game, espionage, Owner.Alliance, game.Known.Coruscant!, [a], [], 0, mandatory: false);
+        var m2 = Missions.Create(game, Refs.MoveMission, Owner.Alliance, game.Known.Yavin!, [b], [], 0, mandatory: false);
         Assert.Equal((m1.Record.ResignOnInjury, m2.Record.ResignOnInjury), (a.ResignOnInjury, b.ResignOnInjury));
         Prisoners.SetInjury(game, a, 5);
         Prisoners.SetInjury(game, b, 5);
@@ -402,22 +402,22 @@ public class PrisonerTests
         var game = Game();
         var ship = game.Created.First(x => Family.IsCapitalShip(x.Type) && x.Owner == Owner.Alliance && x.Usable);
         var force = (Agent)Objects.Create(game, Definitions.SpecialForces[0].Common.Ref, Owner.Alliance, ship, completed: false);
-        Objects.Destroy(game, ship, 0xC);
-        Assert.Equal((false, false, true, 0xC), (force.Autorouting, force.Adrift, force.Destroyed, force.DestroyedReason));
-        var other = (Agent)Objects.Create(game, Definitions.SpecialForces[0].Common.Ref, Owner.Alliance, game.System(Refs.Yavin), completed: true);
+        Objects.Destroy(game, ship, DestroyedReason.Battle);
+        Assert.Equal((false, false, true, DestroyedReason.Battle), (force.Autorouting, force.Adrift, force.Destroyed, force.DestroyedReason));
+        var other = (Agent)Objects.Create(game, Definitions.SpecialForces[0].Common.Ref, Owner.Alliance, game.Known.Yavin!, completed: true);
         ship.Add(other);
         Fleets.DeploymentCheck(game, other);
         Assert.Equal((true, false, false), (other.Autorouting, other.Adrift, other.Destroyed));
     }
 
-    // A destroyed ship's Completed, not EnrouteActive, fighters and troops inherit its reason (loss records 0xC; scrap 0x14
-    // refunds them). Characters aboard draw the ship-loss injury check (G 0xA08-0xA0A) after the content handling, only for
-    // reasons 1...0x10. The destroyed contents move out by their own 0x372, then the ship.
+    // A destroyed ship's Completed, not EnrouteActive, fighters and troops inherit its reason (loss records Battle; scrap Scrapped
+    // refunds them). Characters aboard draw the ship-loss injury check (the ship-loss general parameters) after the content handling, only for
+    // reasons Other to OwnBombardment. The destroyed contents move out by their own final move, then the ship.
     [GameFact]
     public void ContentsDestroyedWithTheShip()
     {
         var game = Game();
-        var coruscant = game.System(Refs.Coruscant);
+        var coruscant = game.Known.Coruscant!;
         var ships = coruscant.Contents.OfType<Fleet>().Where(f => f.Owner == Owner.Empire && f.Usable).SelectMany(f => f.Contents)
             .Where(x => Family.IsCapitalShip(x.Type) && x.Contents.Any(y => y.Completed)).ToList();
         var ship = ships[0];
@@ -427,12 +427,12 @@ public class PrisonerTests
         game.Clock.Flush(game);
         int loss = coruscant.BattleLoss[(int)Owner.Empire - 1];
         var draws = Trace(game);
-        Objects.Destroy(game, ship, 0xC);
-        Assert.All(units, u => Assert.Equal((true, 0xC), (u.Destroyed, u.DestroyedReason)));
-        Assert.Equal((DrawSite.ShipLossInjury, 100), (draws[0].Site, draws[0].N)); // chance(q = max(G 0xA08, 100 - 100) = 1)
+        Objects.Destroy(game, ship, DestroyedReason.Battle);
+        Assert.All(units, u => Assert.Equal((true, DestroyedReason.Battle), (u.Destroyed, u.DestroyedReason)));
+        Assert.Equal((DrawSite.ShipLossInjury, 100), (draws[0].Site, draws[0].N)); // chance(q = max(the ship-loss general parameter, 100 - 100) = 1)
         Assert.False(c.Destroyed);
         game.Clock.Flush(game);
-        Assert.Equal(loss + new[] { ship }.Concat(units).Where(x => Family.Of(x.Type) is >= 0x10 and < 0x20)
+        Assert.Equal(loss + new[] { ship }.Concat(units).Where(x => Family.Of(x.Type) is >= Families.Troop and < Families.Headquarters)
             .Sum(x => Definitions.Resolve(x.Type)!.Get(SdField.CombatValue)), coruscant.BattleLoss[(int)Owner.Empire - 1]);
         Assert.All(units, u => Assert.Same(game.Staging, u.Container));
         Assert.Same(game.Staging, ship.Container); // the adrift character was regrouped out of it first
@@ -446,7 +446,7 @@ public class PrisonerTests
         var side = game.Sides[Owner.Empire];
         int before = side.RefinedStock;
         var draws2 = Trace(game);
-        Objects.Destroy(game, scrapped, 0x14);
+        Objects.Destroy(game, scrapped, DestroyedReason.Scrapped);
         game.Clock.Flush(game);
         Assert.DoesNotContain(draws2, x => x.Site == DrawSite.ShipLossInjury);
         int expected = new[] { scrapped }.Concat(refits).Sum(x => game.RefinedMaterialCost(x.Type) / 2);
@@ -459,21 +459,21 @@ public class PrisonerTests
     public void SpecialForceEvasionResignIsGated()
     {
         var game = Game();
-        var yavin = game.System(Refs.Yavin);
+        var yavin = game.Known.Yavin!;
         Agent Force() => (Agent)Objects.Create(game, Definitions.SpecialForces[0].Common.Ref, Owner.Alliance, yavin, completed: true);
         var (a, b, c) = (Force(), Force(), Force());
-        var espionage = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x52);
+        var espionage = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Espionage);
         Assert.True(espionage.ResignOnInjury);
-        Missions.Create(game, espionage.Common.Ref, Owner.Alliance, game.System(Refs.Coruscant), [a], [], 0, mandatory: false);
-        Missions.Create(game, 0x41000001, Owner.Alliance, yavin, [b], [], 0, mandatory: false);
+        Missions.Create(game, espionage.Common.Ref, Owner.Alliance, game.Known.Coruscant!, [a], [], 0, mandatory: false);
+        Missions.Create(game, Refs.MoveMission, Owner.Alliance, yavin, [b], [], 0, mandatory: false);
         var draws = Trace(game);
         foreach (var x in new[] { a, b, c }) Missions.Evaded(game, x);
         Assert.Equal((true, false, false), (a.ResignRequest, b.ResignRequest, c.ResignRequest));
         Assert.Empty(draws);
     }
 
-    // Final move 0x372: a destroyed objective stays while a mission's ObjectiveKey locks it. A destroyed mission stays while
-    // a member's 0x321 lock holds it. Both then move to the staging container. Destroyed fleets clear Battle / Bombard /
+    // Final move: a destroyed objective stays while a mission's ObjectiveKey locks it. A destroyed mission stays while
+    // a member's lock holds it. Both then move to the staging container. Destroyed fleets clear Battle / Bombard /
     // Assault, not Blockade. Their ships are destroyed with them and leave first.
     [GameFact]
     public void FinalMoveWaitsForLocksAndContents()
@@ -482,19 +482,19 @@ public class PrisonerTests
         var a = Major(game, Owner.Alliance);
         var t = game.Characters.First(c => c.Owner == Owner.Empire && c.Placed && c.Contents.Count == 0);
         var at = t.Container;
-        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x52).Common.Ref;
-        var m1 = Missions.Create(game, type, Owner.Alliance, t, [], [], 0, mandatory: false, origin: game.System(Refs.Yavin));
-        var m2 = Missions.Create(game, type, Owner.Alliance, game.System(Refs.Coruscant), [a], [], 0, mandatory: false);
-        Assert.Equal((1, 0), (t.LockCount, m2.LockCount)); // ObjectiveKey at once, RoleMissionKey at 0x321 dispatch
+        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Espionage).Common.Ref;
+        var m1 = Missions.Create(game, type, Owner.Alliance, t, [], [], 0, mandatory: false, origin: game.Known.Yavin!);
+        var m2 = Missions.Create(game, type, Owner.Alliance, game.Known.Coruscant!, [a], [], 0, mandatory: false);
+        Assert.Equal((1, 0), (t.LockCount, m2.LockCount)); // ObjectiveKey at once, RoleMissionKey at the role-lock dispatch
         game.Clock.Flush(game);
         Assert.Equal(1, m2.LockCount);
 
-        Objects.Destroy(game, t, 7);
+        Objects.Destroy(game, t, DestroyedReason.Assassination);
         game.Clock.Flush(game);
         Assert.Same(at, t.Container); // locked by m1's ObjectiveKey
-        Objects.Destroy(game, m1, 0x14); // ObjectiveKey := none releases t
+        Objects.Destroy(game, m1, DestroyedReason.Scrapped); // ObjectiveKey := none releases t
         Assert.Equal((null, false), (m1.Objective, t.Locked));
-        Objects.Destroy(game, m2, 0x14);
+        Objects.Destroy(game, m2, DestroyedReason.Scrapped);
         game.Clock.Flush(game);
         Assert.Equal((game.Staging, game.Staging, game.MissionManager), (t.Container, m1.Container, m2.Container)); // a's lock holds m2
         Missions.Leave(game, m2, a);
@@ -505,40 +505,40 @@ public class PrisonerTests
         var fleet = game.Fleets.First(f => f.Owner == Owner.Empire && f.Usable && f.Contents.Count > 0);
         var system = fleet.Container;
         (fleet.Battle, fleet.Blockade, fleet.Bombard, fleet.Assault) = (true, true, true, true);
-        Objects.Destroy(game, fleet, 0xC);
+        Objects.Destroy(game, fleet, DestroyedReason.Battle);
         Assert.Equal((false, true, false, false), (fleet.Battle, fleet.Blockade, fleet.Bombard, fleet.Assault));
-        Assert.All(fleet.Contents.Where(x => Family.IsCapitalShip(x.Type)), x => Assert.Equal((true, 0xC), (x.Destroyed, x.DestroyedReason)));
+        Assert.All(fleet.Contents.Where(x => Family.IsCapitalShip(x.Type)), x => Assert.Equal((true, DestroyedReason.Battle), (x.Destroyed, x.DestroyedReason)));
         Assert.Same(system, fleet.Container);
         game.Clock.Flush(game);
         Assert.Same(game.Staging, fleet.Container);
     }
 
-    // Every view copy of RoleMissionKey posts 0x321. A full refresh of the frozen Empire view locks the mission too, so the
+    // Every view copy of RoleMissionKey posts the role lock message. A full refresh of the frozen Empire view locks the mission too, so the
     // destroyed mission stays after the member's leave. The character's own final move drops that view into staging (its
     // view parent is live for the Empire), so it runs the late pass: the real key is already none, and the processing
-    // view's second copy clears it (0x321 -> lock 0). Then the mission makes its final move.
+    // view's second copy clears it (the lock message gives lock 0). Then the mission makes its final move.
     [GameFact]
     public void FrozenViewHoldsTheMissionLock()
     {
         var game = Game();
         var a = Major(game, Owner.Alliance);
-        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x52).Common.Ref;
-        var m = Missions.Create(game, type, Owner.Alliance, game.System(Refs.Coruscant), [a], [], 0, mandatory: false);
+        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Espionage).Common.Ref;
+        var m = Missions.Create(game, type, Owner.Alliance, game.Known.Coruscant!, [a], [], 0, mandatory: false);
         game.Clock.Flush(game);
         Knowledge.Refresh(game, a, Owner.Empire);
         game.Clock.Flush(game);
         Assert.Equal(2, m.LockCount);
         Missions.Leave(game, m, a);
-        Objects.Destroy(game, m, 0x14);
+        Objects.Destroy(game, m, DestroyedReason.Scrapped);
         game.Clock.Flush(game);
         Assert.Equal((1, game.MissionManager), (m.LockCount, m.Container));
-        Objects.Destroy(game, a, 7);
+        Objects.Destroy(game, a, DestroyedReason.Assassination);
         game.Clock.Flush(game);
         Assert.Equal((game.Staging, 0, game.Staging), (a.Container, m.LockCount, m.Container));
     }
 
     // Moved into a travelling carrier: Enroute (not Usable) with the carrier's ETA and DepDest. A destroyed traveller leaves
-    // hyperspace (timer 0x387 inactive) and its 0x306 does nothing.
+    // hyperspace (timer inactive) and its message does nothing.
     [GameFact]
     public void ParentChangeAndDestroyRecomputeTravel()
     {
@@ -546,17 +546,17 @@ public class PrisonerTests
         var ship = game.Created.First(x => Family.IsCapitalShip(x.Type) && x.Owner == Owner.Alliance && x.Usable);
         var c = Major(game, Owner.Alliance);
         Objects.SetEnrouteActive(game, ship, true);
-        (ship.Eta, ship.Destination) = (9, game.System(Refs.Coruscant));
+        (ship.Eta, ship.Destination) = (9, game.Known.Coruscant!);
         Objects.SetParent(game, c, ship);
-        Assert.Equal((true, false, 9, game.System(Refs.Coruscant)), (c.Enroute, c.Usable, c.Eta, c.Destination));
+        Assert.Equal((true, false, 9, game.Known.Coruscant!), (c.Enroute, c.Usable, c.Eta, c.Destination));
 
         var d = Major(game, Owner.Alliance, skip: 1);
-        Fleets.Travel(game, d, d.Container, game.System(Refs.Coruscant));
+        Fleets.Travel(game, d, d.Container, game.Known.Coruscant!);
         Assert.True(d.HyperdriveActive);
         var at = d.Container;
-        Objects.Destroy(game, d, 10);
+        Objects.Destroy(game, d, DestroyedReason.Killed);
         Assert.Equal((false, false, false, 0, null), (d.HyperdriveActive, d.EnrouteActive,
-            game.Timers[(0x387, d.Ref)].Active, d.Eta, d.Destination));
+            game.Timers[(TimerType.Travel, d.Ref)].Active, d.Eta, d.Destination));
         game.Clock.Flush(game);
         Assert.Same(game.Staging, d.Container);
         Assert.NotSame(at, d.Container);
@@ -571,8 +571,8 @@ public class PrisonerTests
         var a = Major(game, Owner.Alliance);
         var b = Major(game, Owner.Alliance, skip: 1);
         (a.Skills[SkillIndex.Loyalty], b.Skills[SkillIndex.Loyalty]) = (0, 100);
-        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x52).Common.Ref;
-        var m = Missions.Create(game, type, Owner.Alliance, game.System(Refs.Coruscant), [a, b], [], 0, mandatory: false);
+        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Espionage).Common.Ref;
+        var m = Missions.Create(game, type, Owner.Alliance, game.Known.Coruscant!, [a, b], [], 0, mandatory: false);
         var draws = Trace(game);
         Assert.Same(a, Missions.Betrayal(game, m));
         Assert.Equal([DrawSite.Loyalty, DrawSite.Loyalty, DrawSite.Traitor], draws.Select(d => d.Site));

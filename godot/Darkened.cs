@@ -26,7 +26,7 @@ public partial class Darkened : Control
 
     static ShaderMaterial Build()
     {
-        var palette = Assets.Indexed(900, "STRATEGY.DLL")?.Palette ?? new byte[768];
+        var palette = Assets.Indexed(StrategyBitmaps.FrameAlliance, "STRATEGY.DLL")?.Palette ?? new byte[768];
         int n = Darkening.Levels;
         var lut = ImageTexture.CreateFromImage(Image.CreateFromData(n * n, n, false, Image.Format.Rgb8, Darkening.Lut(palette)));
         var shader = new Shader

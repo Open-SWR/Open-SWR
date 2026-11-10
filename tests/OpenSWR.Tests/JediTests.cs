@@ -4,15 +4,13 @@ using static OpenSWR.Sim.GameMath;
 
 namespace OpenSWR.Tests;
 
-/// <summary>Force fields and hooks, rank roll, Jedi training (0x58), duels, evasion gains, discovery (0x389).</summary>
+/// <summary>Force fields and hooks, rank roll, Jedi training, duels, evasion gains, discovery.</summary>
 public class JediTests
 {
     static GameDefinitions? _definitions;
     static GameDefinitions Definitions => _definitions ??= GameDefinitions.Load(GameDir.Path);
 
     static GameState Game() => NewGame.Create(new GameSettings(Owner.Empire, 1, 0, 0, 532947196), Definitions);
-
-    static Character C(GameState game, uint sdRef) => game.Characters.First(c => c.Ref == sdRef);
 
     static void NextChanceSucceeds(GameState game, int p)
     {
@@ -24,7 +22,7 @@ public class JediTests
     public void ForceAwareRollsTheRank()
     {
         var game = Game();
-        var leia = C(game, Refs.Leia);
+        var leia = game.Known.Leia!;
         (leia.JediPotential, leia.KnownJedi, leia.ForceRank) = (true, false, 0);
         var draws = game.Random.Trace = [];
         Jedi.SetForceAware(game, leia);
@@ -34,19 +32,19 @@ public class JediTests
         Assert.Equal((DrawSite.ForceRank, (int)level.Variance + 1), (draws[0].Site, draws[0].N));
     }
 
-    // At phase 2 the teacher is a Jedi trainer with Force at least G 0xA15. A student's chance is Ft - Fs, and the
+    // At phase 2 the teacher is a Jedi trainer with Force at least G JediTeacherMinForce. A student's chance is Ft - Fs, and the
     // teacher's own chance is 0. A success gains roll(pct(Ft - Fs, 50)) into ForceTraining and sets TaskStatus 3.
     // The teacher leaving a running mission sets status 11.
     [GameFact]
     public void TrainingMission()
     {
         var game = Game();
-        var g = game.Params;
-        var vader = C(game, Refs.Vader);
+        var g = game.Rules;
+        var vader = game.Known.Vader!;
         var student = game.Characters.First(c => c.Owner == Owner.Empire && c.Placed && c.Usable && !c.OnMission && c != vader && c.Ref != Refs.Palpatine);
         Jedi.SetForceRank(game, student, 20);
-        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x58).Common.Ref;
-        var m = Missions.Create(game, type, Owner.Empire, game.System(Refs.Coruscant), [vader, student], [], 0, mandatory: false);
+        var type = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.JediTraining).Common.Ref;
+        var m = Missions.Create(game, type, Owner.Empire, game.Known.Coruscant!, [vader, student], [], 0, mandatory: false);
         Jedi.TrainingPhase(game, m, 2);
         Assert.Same(vader, m.Teacher);
         int p = vader.Force - student.Force;
@@ -55,25 +53,25 @@ public class JediTests
         NextChanceSucceeds(game, p);
         var copy = new GameRandom(game.Random.State);
         copy.Percent();
-        int gain = copy.Roll(Pct(p, g.General(0x181D)));
+        int gain = copy.Roll(Pct(p, g.JediTrainingForcePercent));
         var draws = game.Random.Trace = [];
         Jedi.Attempt(game, m, student, p);
         Assert.Equal((DrawSite.JediTraining, DrawSite.JediGain), (draws[0].Site, draws[1].Site));
-        Assert.Equal((gain, 20 + gain, gain != 0 ? 3 : 0), (student.ForceBonus, student.Force, m.TaskStatus));
+        Assert.Equal((gain, 20 + gain, gain != 0 ? MissionTaskStatus.Succeeded : MissionTaskStatus.Pending), (student.ForceBonus, student.Force, m.TaskStatus));
 
         Missions.Leave(game, m, vader);
-        Assert.Equal(11, m.CompletionStatus);
+        Assert.Equal(MissionCompletion.TeacherLeft, m.CompletionStatus);
     }
 
-    // A detected pair uses one command serial. Luke with Vader: a successful evasion gains G 0xC09 rank, Luke learns
-    // his heritage, and his rank gains max(G 0xC0C, pct(F(Vader) - F(Luke), G 0xC00)). With the heritage and Force
-    // at least G 0xC06, Luke is FinalBattleReady.
+    // A detected pair uses one command serial. Luke with Vader: a successful evasion gains G LukeEvasionForceGain rank, Luke learns
+    // his heritage, and his rank gains max(G LukeVaderForceMinGain, pct(F(Vader) - F(Luke), G LukeVaderForcePercent)). With the heritage and Force
+    // at least G FinalBattleMinForce, Luke is FinalBattleReady.
     [GameFact]
     public void LukeMeetsVader()
     {
         var game = Game();
-        var g = game.Params;
-        var (luke, vader) = (C(game, Refs.Luke), C(game, Refs.Vader));
+        var g = game.Rules;
+        var (luke, vader) = (game.Known.Luke!, game.Known.Vader!);
         (luke.Skills[SkillIndex.Combat], vader.Skills[SkillIndex.Combat]) = (300, 0);
         uint serial = game.Clock.Serial;
         Jedi.Pair(game, luke, vader);
@@ -83,12 +81,12 @@ public class JediTests
         NextChanceSucceeds(game, p);
         int rank = luke.ForceRank;
         Jedi.Duel(game, luke, vader);
-        int afterEvasion = rank + g.General(0xC09);
-        int expected = afterEvasion + Math.Max(g.General(0xC0C), Pct(vader.Force - afterEvasion, g.General(0xC00)));
+        int afterEvasion = rank + g.LukeEvasionForceGain;
+        int expected = afterEvasion + Math.Max(g.LukeVaderForceMinGain, Pct(vader.Force - afterEvasion, g.LukeVaderForcePercent));
         Assert.Equal((false, expected), (luke.Captured, luke.ForceRank));
         Assert.Equal((null, null, 0u), (luke.EncounterKey, vader.EncounterKey, luke.EncounterSerial));
         Assert.True(luke.KnowsHeritage);
-        Assert.Equal(luke.Force >= g.General(0xC06), luke.FinalBattleReady);
+        Assert.Equal(luke.Force >= g.FinalBattleMinForce, luke.FinalBattleReady);
     }
 
     // Discovery by a trainer finds characters of its owner in the same parent that have ForcePotential but not
@@ -97,10 +95,10 @@ public class JediTests
     public void DiscoveryOfLeia()
     {
         var game = Game();
-        var (luke, leia) = (C(game, Refs.Luke), C(game, Refs.Leia));
+        var (luke, leia) = (game.Known.Luke!, game.Known.Leia!);
         Objects.SetParent(game, leia, luke.Container!);
         (leia.JediPotential, leia.KnownJedi, leia.ForceRank) = (true, false, 0);
-        Jedi.SetForceRank(game, luke, game.Params.General(0xA14));
+        Jedi.SetForceRank(game, luke, game.Rules.ForceDiscoveryMinForce);
         game.Clock.Flush(game);
         Assert.True(luke.ForceActive);
 
@@ -120,11 +118,11 @@ public class JediTests
     public void DiscoveredKeySavesAndOldSavesMigrate()
     {
         var game = Game();
-        var (luke, leia) = (C(game, Refs.Luke), C(game, Refs.Leia));
+        var (luke, leia) = (game.Known.Luke!, game.Known.Leia!);
         luke.DiscoveredForceUser = leia;
         var json = Save(game);
         var loaded = SaveGame.Load(new MemoryStream(json), Definitions);
-        Assert.Equal((Refs.Leia, (uint?)null), (C(loaded, Refs.Luke).DiscoveredForceUser!.Ref, C(loaded, Refs.Leia).DiscoveredForceUser?.Ref));
+        Assert.Equal((Refs.Leia, (uint?)null), (loaded.Known.Luke!.DiscoveredForceUser!.Ref, loaded.Known.Leia!.DiscoveredForceUser?.Ref));
 
         var root = System.Text.Json.Nodes.JsonNode.Parse(json)!;
         System.Text.Json.Nodes.JsonObject Character(uint type) =>
@@ -132,7 +130,7 @@ public class JediTests
         Character(Refs.Luke).Remove("discoveredForceUser");
         Character(Refs.Leia)["discoveredBy"] = Refs.Luke;
         var old = SaveGame.Load(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(root.ToJsonString())), Definitions);
-        Assert.Equal((Refs.Leia, (uint?)null), (C(old, Refs.Luke).DiscoveredForceUser!.Ref, C(old, Refs.Leia).DiscoveredForceUser?.Ref));
+        Assert.Equal((Refs.Leia, (uint?)null), (old.Known.Luke!.DiscoveredForceUser!.Ref, old.Known.Leia!.DiscoveredForceUser?.Ref));
         Assert.DoesNotContain("discoveredBy", System.Text.Encoding.UTF8.GetString(Save(old)));
     }
 

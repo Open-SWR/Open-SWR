@@ -1,3 +1,5 @@
+using OpenSWR.Data.Dat;
+
 namespace OpenSWR.Sim.Ai;
 
 /// <summary>
@@ -30,7 +32,7 @@ public sealed partial class OpenSWRController
         var enemies = game.Systems.Where(s => Knowledge.See(game, s, Side) is { Owner: var o, Destroyed: false } && o == Enemy).ToList();
         int Capacity(GameObject f) => k.Contents(f).Where(v => Family.IsCapitalShip(v.Object.Type))
             .Sum(v => (int)(game.Definitions.CapitalShips.FirstOrDefault(r => r.Common.Ref == v.Object.Type)?.TroopCapacity ?? 0))
-            + k.Contents(f).SelectMany(v => k.Contents(v.Object)).Count(v => v.In(0x10, 0x14));
+            + k.Contents(f).SelectMany(v => k.Contents(v.Object)).Count(v => v.In(Families.Troop, Families.CapitalShip));
         foreach (var s in Own(game))
         {
             var views = k.Contents(s).Where(v => v.Object is Fleet && v.Owner == Enemy && Capacity(v.Object) > 0).ToList();

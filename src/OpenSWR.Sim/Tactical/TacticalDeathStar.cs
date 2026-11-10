@@ -1,15 +1,53 @@
 namespace OpenSWR.Sim;
 
 /// <summary>
-/// The Death Star run mission object, created by the 0x0A handler.
+/// Death Star run voice request numbers (Alliance player). The start voice is per group colour; the run voice is the start
+/// voice + <see cref="RunOffset"/>, the failure voice + <see cref="FailureOffset"/>. The run's voice list holds the nine
+/// scheduled lines (at 120, 108 ... 24 s of the run timer), then the success or failure lines.
+/// </summary>
+public static class RunVoice
+{
+    public static readonly int[] StartByColour = [313, 301, 305, 309];
+    public const int RunOffset = 1, FailureOffset = 2;
+    /// <summary>Empty list slot: never played.</summary>
+    public const int NoLine = 317;
+    public const int At120 = 286, At108 = 287, At96 = 288, At84 = 296, At72 = 289, At60 = 290, At48 = 297;
+    /// <summary>Scheduled lines of a run (slot order; the last two are <see cref="NoLine"/>).</summary>
+    public static readonly int[] Scheduled = [At120, At108, At96, At84, At72, At60, At48, NoLine, NoLine];
+    /// <summary>Lines that replace the list from slot 1 when a run succeeds after a hit. Meaning in the original is unknown.</summary>
+    public static readonly int[] SuccessLines = [291, 292, 293, 298, 299, 294];
+    /// <summary>Lines that replace the list from slot 1 when a run fails: the success lines, then two more.</summary>
+    public static readonly int[] FailureLines = [.. SuccessLines, 300, 295];
+}
+
+/// <summary>
+/// Death Star run states (the run object's State). Meaning of 1 in the original is unknown: <c>SetRunState</c> tests it as an old
+/// state, nothing here sets it.
+/// </summary>
+public enum TacticalRunState
+{
+    /// <summary>Not set (the default value).</summary>
+    None,
+    NotStarted,
+    Flying,
+    Run,
+    Success,
+    Failure,
+    Abort,
+    SuccessPending,
+    FailurePending,
+}
+
+/// <summary>
+/// The Death Star run mission object, created by the set-mission handler.
 /// Fields: done (<see cref="TacticalMission.Done"/>), init done (<see cref="TacticalMission.Started"/>), run state, timer, request pending, nine voice times and ids, and the voice index.
 /// While it lives, the global run flag is set (<see cref="TacticalBattle.DeathStarRun"/>).
 /// </summary>
 public sealed class TacticalRun : TacticalMission
 {
-    internal TacticalRun() : base(6) { }
+    internal TacticalRun() : base(TacticalMissionNumber.AttackDeathStar) { }
     /// <summary>Run state: 2 flying, 5 run, 6 success, 7 failure, 8 abort, 9 success pending, 10 failure pending.</summary>
-    public int State { get; internal set; }
+    public TacticalRunState State { get; internal set; }
     /// <summary>Timer (ms).</summary>
     public double Timer { get; internal set; }
     /// <summary>Request pending.</summary>
@@ -31,27 +69,33 @@ public sealed partial class TacticalUi
 {
     /// <summary>
     /// The Death Star panel: created with the tactical main window when the local side is index 1 and a scene
-    /// exists; removed by the mode-0x11 refresh, the Empire's jump start (0x45), a run destroying the scene and command 0x7A; never
+    /// exists; removed by the superlaser-target mode refresh, the Empire's jump start (scene-withdraw message), a run destroying the scene and the withdraw command; never
     /// recreated.
     /// </summary>
     public bool DeathStarPanel { get; internal set; }
-    /// <summary>The panel's bar value: trunc(charge), passed every frame while the scene is alive; the button 0xDE02 is enabled at 100.</summary>
+    /// <summary>The panel's bar value: trunc(charge), passed every frame while the scene is alive; the fire button is enabled at 100.</summary>
     public int PanelValue { get; internal set; }
-    /// <summary>The superlaser target flag: cursor 0x2A instead of 0x2B while mode 0x11 is current.</summary>
+    /// <summary>The superlaser target flag: the superlaser cursor instead of the usual one while the superlaser-target mode is current.</summary>
     public bool TargetCursor => _mode is SuperlaserMode;
 }
 
-/// <summary>A superlaser beam (message 0x44) at the turn it ran: the beam from the Death Star scene to <paramref name="To"/>.</summary>
+/// <summary>A superlaser beam (superlaser-fire message) at the turn it ran: the beam from the Death Star scene to <paramref name="To"/>.</summary>
 public readonly record struct TacticalSuperlaser(int Turn, TacticalUnit To);
 
 /// <summary>
 /// The Death Star in tactical battles:
-/// the scene of the shared setup (alive / attackable, point (-W/2, 0, 0)), attack possible, the superlaser charge and fire (0x44,
-/// message 3), the Alliance run (mission 6: object, 0x3C requests, hide, resolver, outcomes), the computer Alliance rule with side
-/// the side flag, the scene withdraw 0x45.
+/// the scene of the shared setup (alive / attackable, point (-W/2, 0, 0)), attack possible, the superlaser charge and fire (superlaser-fire message,
+/// message 3), the Alliance run (mission 6: object, run-state requests, hide, resolver, outcomes), the computer Alliance rule with side
+/// the side flag, the scene withdraw message.
 /// </summary>
 public sealed partial class TacticalBattle
 {
+    /// <summary>Death Star run timer reset value in ms (120 s).</summary>
+    public const double RunTimerMs = 120000;
+    /// <summary>MDATA movie of a successful run (MDATA.201).</summary>
+    public const int RunSuccessMovie = 201;
+    /// <summary>MDATA movie of a failed run (MDATA.202).</summary>
+    public const int RunFailureMovie = 202;
     /// The current Death Star scene (the engine's scene): the last registered of the shared setup; none: null.
     internal BattleEngine.Unit? Scene => Sides[1].Scene;
 
@@ -64,7 +108,7 @@ public sealed partial class TacticalBattle
     /// Unfinished (the shipyard's Death Star; the display shows 5020 instead of 5010).
     public bool SceneUnfinished => Scene?.Unfinished == true;
 
-    /// Withdrawn (set by message 0x45): the decal is removed at once, with no jump animation.
+    /// Withdrawn (set by the scene-withdraw message): the decal is removed at once, with no jump animation.
     public bool SceneWithdrawn => Scene?.Withdrawn == true;
 
     /// Remaining hull (0 = destroyed).
@@ -73,7 +117,7 @@ public sealed partial class TacticalBattle
     /// The scene's gameplay position: -0.5*W*(-F1.z, 0, F1.x) = (-W/2, 0, 0).
     public V3 ScenePoint => new(-Size / 2, 0, 0);
 
-    /// <summary>Superlaser beams (message 0x44) as they ran (the front end draws them).</summary>
+    /// <summary>Superlaser beams (superlaser-fire message) as they ran (the front end draws them).</summary>
     public List<TacticalSuperlaser> Superlasers { get; } = [];
 
     /// <summary>
@@ -98,7 +142,7 @@ public sealed partial class TacticalBattle
     }
 
     /// <summary>Some group of side index 0's group list has UI mission or simulation mission 6.</summary>
-    bool RunGroup() => _groups.Any(g => g.Side == 0 && Sides[0].Groups.Contains(g.G) && (g.UiMission == 6 || g.Mission == 6));
+    bool RunGroup() => _groups.Any(g => g.Side == 0 && Sides[0].Groups.Contains(g.G) && (g.UiMission == TacticalMissionNumber.AttackDeathStar || g.Mission == TacticalMissionNumber.AttackDeathStar));
 
     /// <summary>The Death Star bonus 20000000.0 of the tactical strength: while the scene is alive, side index 1 always, side index 0 when the attack is possible or a group of it is on mission 6.</summary>
     bool SceneBonus(int side) => SceneAlive && (side == 1 || AttackPossible || RunGroup());
@@ -108,7 +152,7 @@ public sealed partial class TacticalBattle
     /// <summary>
     /// Charge (step 1000) in side index 1's turn, human or computer, any side state, when a scene exists:
     /// only with remaining hull and finished (a withdrawn or shielded scene still charges): charge becomes min(charge + f32(1000 *
-    /// 0.33333334 * 0.001), 100.0), stored in f32 (300 turns from 0 to exactly 100.0). Crossing 100 with a local Empire: request 0x113.
+    /// 0.33333334 * 0.001), 100.0), stored in f32 (300 turns from 0 to exactly 100.0). Crossing 100 with a local Empire: request the superlaser-charged voice.
     /// </summary>
     void Charge()
     {
@@ -116,28 +160,28 @@ public sealed partial class TacticalBattle
         float inc = 1000f * 0.33333334f * 0.001f, before = sc.Charge;
         sc.Charge += inc;
         if (sc.Charge >= 100f) sc.Charge = 100f;
-        if (before < 100f && sc.Charge >= 100f && Local == 1) Ui.Voices.Add(0x113);
+        if (before < 100f && sc.Charge >= 100f && Local == 1) Ui.Voices.Add(TacticalVoice.SuperlaserCharged);
     }
 
     /// <summary>
-    /// Superlaser fire on target, no test inside: charge set to 0; post 0x44 (display: the target active, so the beam, sound 0x14
-    /// and voice 0x91 for an Alliance player); insert message 3 with stamp T + 1, flag 1: the target, when still active, is
+    /// Superlaser fire on target, no test inside: charge set to 0; post the superlaser-fire message (display: the target active, so the beam, the superlaser fire sound
+    /// and the superlaser-fired voice for an Alliance player); insert message 3 with stamp T + 1, flag 1: the target, when still active, is
     /// destroyed (plain destroy: no draw, no shield or crit step; the death effect w = 4 and the explosion sound), else nothing.
     /// </summary>
     internal void FireSuperlaser(TacticalUnit target)
     {
         Scene!.Charge = 0;
-        Post(Stamp, 0x44, () =>
+        Post(Stamp, TacticalMessage.SuperlaserFire, () =>
         {
             if (!target.Active) return;
-            Sounds.Add(0x14);
+            Sounds.Add(TacticalEffectSound.SuperlaserFire);
             Superlasers.Add(new TacticalSuperlaser(Turn, target)); // the superlaser flag has no reader
-            if (Local == 0) Ui.Voices.Add(0x91);
+            if (Local == 0) Ui.Voices.Add(TacticalVoice.SuperlaserFiredAlliance);
         });
-        Insert(Stamp + 1, 3, target, () =>
+        Insert(Stamp + 1, TacticalMessage.SuperlaserHit, target, () =>
         {
             if (!target.Active) return;
-            Death(target, 4);
+            Death(target, TacticalWeapon.Superlaser);
             Destroy(target);
         });
     }
@@ -168,16 +212,16 @@ public sealed partial class TacticalBattle
             if (Sides[0].Fighters.Count == 0 && RetreatPossible(0)) Withdraw(0);
             return;
         }
-        if (Sides[0].Fighters.FirstOrDefault() is not { } u || _byUnit[u].Group is not { } g || g.UiMission == 6) return;
+        if (Sides[0].Fighters.FirstOrDefault() is not { } u || _byUnit[u].Group is not { } g || g.UiMission == TacticalMissionNumber.AttackDeathStar) return;
         _deathStarGiven[0] = true;
-        SetMission(g, 6);
+        SetMission(g, TacticalMissionNumber.AttackDeathStar);
     }
 
     // ---- scene withdraw ----
 
     /// <summary>
-    /// Side index 1 reaching state 3 with a live scene: a local Empire's UI queues drained and refreshed once (mode 0x11
-    /// left) and the Death Star panel removed; post 0x45 (handler: if the scene is alive, withdrawn is set, and the scene
+    /// Side index 1 reaching state 3 with a live scene: a local Empire's UI queues drained and refreshed once (superlaser-target mode
+    /// left) and the Death Star panel removed; post the scene-withdraw message (handler: if the scene is alive, withdrawn is set, and the scene
     /// hangar's launchable fighters not in state 3 taken along into its landed list in state 5; the Death Star decal goes at once, no jump animation).
     /// </summary>
     void SceneWithdraw()
@@ -188,7 +232,7 @@ public sealed partial class TacticalBattle
             Ui.DeathStarPanel = false;
         }
         var sc = Scene!;
-        Post(Stamp, 0x45, () =>
+        Post(Stamp, TacticalMessage.SceneWithdraw, () =>
         {
             if (!BattleEngine.Alive(sc)) return;
             sc.Withdrawn = true;
@@ -198,49 +242,47 @@ public sealed partial class TacticalBattle
 
     // ---- the Alliance run, mission 6 ----
 
-    static readonly int[] RunVoices = [0x139, 0x12D, 0x131, 0x135]; // start voice by group colour; + 1 run, + 2 failure
-
-    /// The 0x0A handler's mission-6 object (the global run flag is set while it lives; request state 2).
+    /// The set-mission handler's mission-6 object (the global run flag is set while it lives; request state 2).
     TacticalRun NewRun(TacticalGroup g)
     {
         var r = new TacticalRun();
-        Request(g, r, 2);
+        Request(g, r, TacticalRunState.Flying);
         return r;
     }
 
-    /// Request run state s: pending set; post 0x3C(group, s), flag 1 (Inferred: no dedupe, a plain post).
-    void Request(TacticalGroup g, TacticalRun r, int s)
+    /// Request run state s: pending set; post the run-state message (group, s), flag 1 (Inferred: no dedupe, a plain post).
+    void Request(TacticalGroup g, TacticalRun r, TacticalRunState s)
     {
         r.Pending = true;
         PostRun(g, s);
     }
 
-    /// Post 0x3C(group, s) at the dispatch: if the group exists, has a mission object and simulation mission 6, set the state; else dropped.
-    void PostRun(TacticalGroup g, int s) => Post(Stamp, 0x3C, () =>
+    /// Post the run-state message (group, s) at the dispatch: if the group exists, has a mission object and simulation mission 6, set the state; else dropped.
+    void PostRun(TacticalGroup g, TacticalRunState s) => Post(Stamp, TacticalMessage.RunState, () =>
     {
-        if (_groups.Contains(g) && g.Object is TacticalRun r && g.Mission == 6) SetRunState(g, r, s);
+        if (_groups.Contains(g) && g.Object is TacticalRun r && g.Mission == TacticalMissionNumber.AttackDeathStar) SetRunState(g, r, s);
     });
 
     /// Set state s: state becomes s, pending cleared; 5 run, 6 success, 7 failure, 8 abort; others nothing more.
-    void SetRunState(TacticalGroup g, TacticalRun r, int s)
+    void SetRunState(TacticalGroup g, TacticalRun r, TacticalRunState s)
     {
-        int old = r.State;
+        var old = r.State;
         (r.State, r.Pending) = (s, false);
         switch (s)
         {
-            case 5: RunStart(g, r); break;
-            case 6: RunSuccess(g); break;
-            case 7: RunFailure(g); break;
-            case 8:
-                if (old is not (2 or 1)) foreach (var m in g.Members.ToList()) Restore(m);
-                MissionMessage(g, 3); // direct handler call: object deleted, global run flag cleared, withdraw
+            case TacticalRunState.Run: RunStart(g, r); break;
+            case TacticalRunState.Success: RunSuccess(g); break;
+            case TacticalRunState.Failure: RunFailure(g); break;
+            case TacticalRunState.Abort:
+                if (old is not (TacticalRunState.Flying or TacticalRunState.NotStarted)) foreach (var m in g.Members.ToList()) Restore(m);
+                MissionMessage(g, TacticalMissionNumber.Withdraw); // direct handler call: object deleted, global run flag cleared, withdraw
                 break;
         }
     }
 
     /// <summary>
     /// Run step (called every turn by the group step, step 1000): first call init (state 2, scratch 0, voice index 0, the start
-    /// voice by colour for an Alliance player, 0x115 for an Empire player); not pending and state 9 / 10: one voice of the
+    /// voice by colour for an Alliance player, the run-started voice for an Empire player); not pending and state 9 / 10: one voice of the
     /// schedule when due, timer down by 1000, at 0 or below request 6 (from 9) or 7 (from 10) and timer set to 120000.
     /// </summary>
     void RunStep(TacticalGroup g, TacticalRun r)
@@ -248,19 +290,19 @@ public sealed partial class TacticalBattle
         if (!r.Started)
         {
             r.Started = true;
-            (r.State, r.Scratch, r.VoiceIndex) = (2, 0, 0);
-            Ui.Voices.Add(Local == 0 ? RunVoices[Math.Max(0, g.Colour) % 4] : 0x115);
+            (r.State, r.Scratch, r.VoiceIndex) = (TacticalRunState.Flying, 0, 0);
+            Ui.Voices.Add(Local == 0 ? RunVoice.StartByColour[Math.Max(0, g.Colour) % 4] : TacticalVoice.RunStarted);
         }
-        if (r.Pending || r.State is not (9 or 10)) return;
+        if (r.Pending || r.State is not (TacticalRunState.SuccessPending or TacticalRunState.FailurePending)) return;
         if (r.VoiceIndex < 9 && r.Timer <= r.Times[r.VoiceIndex])
         {
-            if (r.Ids[r.VoiceIndex] != 0x13D) Ui.Voices.Add(r.Ids[r.VoiceIndex]);
+            if (r.Ids[r.VoiceIndex] != RunVoice.NoLine) Ui.Voices.Add(r.Ids[r.VoiceIndex]);
             r.VoiceIndex++;
         }
         r.Timer -= TurnMs;
         if (r.Timer > 0) return;
-        Request(g, r, r.State == 9 ? 6 : 7);
-        r.Timer = 120000;
+        Request(g, r, r.State == TacticalRunState.SuccessPending ? TacticalRunState.Success : TacticalRunState.Failure);
+        r.Timer = RunTimerMs;
     }
 
     /// <summary>
@@ -272,10 +314,10 @@ public sealed partial class TacticalBattle
         var n = g.Nav!;
         var f = Forward(0);
         n.Heading = new V3(-f.Z, 0, f.X);
-        if (g.Object is not TacticalRun { State: 2 } r) return;
+        if (g.Object is not TacticalRun { State: TacticalRunState.Flying } r) return;
         if (FighterMove(n, n.Heading * (0.5 * Size), dt, 0.2) || r.Done) return;
         r.Done = true;
-        Request(g, r, 5);
+        Request(g, r, TacticalRunState.Run);
     }
 
     /// <summary>
@@ -287,17 +329,17 @@ public sealed partial class TacticalBattle
         foreach (var m in g.Members)
         {
             (m.SavedHull, m.SavedShield) = (m.U.Hull, m.U.Shield);
-            m.U.State = 10;
+            m.U.State = TacticalUnitState.DeathStarRun;
             m.Hidden = true;
         }
-        r.Timer = 120000;
+        r.Timer = RunTimerMs;
         if (Local == 0)
         {
             r.VoiceIndex = 0;
-            for (int i = 0; i < 9; i++) r.Times[i] = 120000 - 12000 * i;
-            Ui.Voices.Add(RunVoices[Math.Max(0, g.Colour) % 4] + 1);
+            for (int i = 0; i < 9; i++) r.Times[i] = RunTimerMs - 12000 * i;
+            Ui.Voices.Add(RunVoice.StartByColour[Math.Max(0, g.Colour) % 4] + RunVoice.RunOffset);
         }
-        else Ui.Voices.Add(0x11D); // the nine times stay uninitialised (as read; here 0)
+        else Ui.Voices.Add(TacticalVoice.RunInProgress); // the nine times stay uninitialised (as read; here 0)
         Resolve(g, r);
     }
 
@@ -309,8 +351,7 @@ public sealed partial class TacticalBattle
     /// </summary>
     void Resolve(TacticalGroup g, TacticalRun r)
     {
-        int[] ids = [0x11E, 0x11F, 0x120, 0x128, 0x121, 0x122, 0x129, 0x13D, 0x13D];
-        ids.CopyTo(r.Ids, 0);
+        RunVoice.Scheduled.CopyTo(r.Ids, 0);
         bool hit = false;
         int visits = 0;
         var q = g.Members.OrderBy(m => m.Key).ToList();
@@ -337,8 +378,8 @@ public sealed partial class TacticalBattle
                 double b = Math.Min(Commander(0), 9.0), v = u.U.Hf * u.U.Torpedo * Torpedo + b;
                 if (_between(1, 100) <= Math.Truncate(v * 0.5))
                 {
-                    if (hit) new[] { 0x123, 0x124, 0x125, 0x12A, 0x12B, 0x126 }.CopyTo(r.Ids, 1);
-                    (r.Pending, r.State, r.Timer) = (false, 9, 120000);
+                    if (hit) RunVoice.SuccessLines.CopyTo(r.Ids, 1);
+                    (r.Pending, r.State, r.Timer) = (false, TacticalRunState.SuccessPending, RunTimerMs);
                     foreach (var m in g.Members) (m.U.Hull, m.U.Shield) = (m.SavedHull, m.SavedShield);
                     return;
                 }
@@ -346,15 +387,15 @@ public sealed partial class TacticalBattle
             if (++visits > 1000) break;
             if (keep) q.Insert(0, u);
         }
-        new[] { 0x123, 0x124, 0x125, 0x12A, 0x12B, 0x126, 0x12C, 0x127 }.CopyTo(r.Ids, 1);
-        (r.Pending, r.Timer, r.State) = (false, 120000, 10);
+        RunVoice.FailureLines.CopyTo(r.Ids, 1);
+        (r.Pending, r.Timer, r.State) = (false, RunTimerMs, TacticalRunState.FailurePending);
     }
 
-    /// <summary>The 0x3C handler's set state at once (tests: without the turn latency).</summary>
-    internal void RunTo(TacticalGroup g, int s) => SetRunState(g, (TacticalRun)g.Object!, s);
+    /// <summary>The run-state handler's set state at once (tests: without the turn latency).</summary>
+    internal void RunTo(TacticalGroup g, TacticalRunState s) => SetRunState(g, (TacticalRun)g.Object!, s);
 
-    /// <summary>Posts 0x3C(group, s) (tests: a request at a chosen turn).</summary>
-    internal void RequestRun(TacticalGroup g, int s) => PostRun(g, s);
+    /// <summary>Posts the run-state message (group, s) (tests: a request at a chosen turn).</summary>
+    internal void RequestRun(TacticalGroup g, TacticalRunState s) => PostRun(g, s);
 
     /// "Takes d": hull &lt;= 0 means hull set to 0; else shield set to 0 and hull set to max(hull - d, 0). No crit, no destroy, no draw.
     static void Take(TacticalUnit t, double d)
@@ -368,8 +409,8 @@ public sealed partial class TacticalBattle
     /// Restore: hull and shield set back to the saved values, state 2, back into its tree, visible.
     static void Restore(TacticalUnit t)
     {
-        if (t.State != 10) return; // Inferred: only hidden run members (every member of a started run is)
-        (t.U.Hull, t.U.Shield, t.U.State, t.Hidden) = (t.SavedHull, t.SavedShield, 2, false);
+        if (t.State != TacticalUnitState.DeathStarRun) return; // Inferred: only hidden run members (every member of a started run is)
+        (t.U.Hull, t.U.Shield, t.U.State, t.Hidden) = (t.SavedHull, t.SavedShield, TacticalUnitState.Active, false);
     }
 
     /// <summary>
@@ -398,9 +439,9 @@ public sealed partial class TacticalBattle
                 foreach (var f in h.Launchable.Concat(h.Landed).ToList()) Destroy(f);
             if (Local == 1) Ui.DeathStarPanel = false;
         }
-        (Paused, Movie) = (true, 201);
+        (Paused, Movie) = (true, RunSuccessMovie);
         if (Local == 0 && g.Colour >= 0) Ui.Fighters[g.Colour] = g;
-        MissionMessage(g, 0);
+        MissionMessage(g, TacticalMissionNumber.None);
     }
 
     /// <summary>
@@ -410,8 +451,8 @@ public sealed partial class TacticalBattle
     /// </summary>
     void RunFailure(TacticalGroup g)
     {
-        if (Local == 0) Ui.Voices.Add(RunVoices[Math.Max(0, g.Colour) % 4] + 2);
-        (Paused, Movie) = (true, 202);
+        if (Local == 0) Ui.Voices.Add(RunVoice.StartByColour[Math.Max(0, g.Colour) % 4] + RunVoice.FailureOffset);
+        (Paused, Movie) = (true, RunFailureMovie);
         foreach (var m in g.Members.ToList())
         {
             Take(m, 100000.0);

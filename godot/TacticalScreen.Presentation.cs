@@ -137,9 +137,9 @@ public partial class TacticalScreen
     /// <summary>Length and style of a bolt by message and shot value.</summary>
     static (float Length, int Style) BoltShape(TacticalShot s) => s.Kind switch
     {
-        0x0D => (0.5f, s.Value >= 28.8 ? 2 : 1),
-        0x0E => s.Value < 34.666668 ? (0.65f, 1) : s.To.TypeIndex is 11 or 13 or 14 or 22 or 25 ? (0.75f, 2) : (1.0f, 3),
-        0x0F => s.Value >= 32.0 ? (1.0f, 3) : (0.4f, 1),
+        TacticalMessage.LaserShot => (0.5f, s.Value >= 28.8 ? 2 : 1),
+        TacticalMessage.TurbolaserShot => s.Value < 34.666668 ? (0.65f, 1) : TacticalTypeIndex.TurbolaserStyleTwo(s.To.TypeIndex) ? (0.75f, 2) : (1.0f, 3),
+        TacticalMessage.IonShot => s.Value >= 32.0 ? (1.0f, 3) : (0.4f, 1),
         _ => (0.2f, s.Value >= 12.8 ? 3 : 1),
     };
 
@@ -157,7 +157,7 @@ public partial class TacticalScreen
         {
             var shot = Battle.Shots[_shotsSeen];
             var (length, style) = BoltShape(shot);
-            var colour = shot.Kind == 0x0F ? new Color(0, 0, 1) : shot.From.Side == 0 ? new Color(1, 0, 0) : new Color(0, 1, 0);
+            var colour = shot.Kind == TacticalMessage.IonShot ? new Color(0, 0, 1) : shot.From.Side == 0 ? new Color(1, 0, 0) : new Color(0, 1, 0);
             var node = new MeshInstance3D { Mesh = BoltMesh(style, length), MaterialOverride = BoltMaterial(colour) };
             _world.AddChild(node);
             Vector3 from = Shown(shot.From), to = Shown(shot.To);
@@ -180,7 +180,7 @@ public partial class TacticalScreen
     }
 
     /// <summary>
-    /// Superlaser beam (0x44): green, from the Death Star decal's frame toward the target, its length growing with t / 1.0 s
+    /// Superlaser beam: green, from the Death Star decal's frame toward the target, its length growing with t / 1.0 s
     /// to the target's distance, deleted after 1.0 s. There is one slot: a new shot replaces the running beam, and the old
     /// one is dropped. The original leaves the old beam frozen until teardown (Inferred: still drawn). The tube's radius of 0.5 world
     /// units is an openswr design, since its cross-section was not read.
@@ -235,23 +235,23 @@ public partial class TacticalScreen
         var f = FxOf(e.Unit);
         if (!_pyro)
         {
-            if (e.Kind == 2) f.MeshGone = true;
+            if (e.Kind == TacticalEffectKind.Death) f.MeshGone = true;
             return;
         }
         if (Ui.Camera.Follow?.Subject == e.Unit) return;
         var (flag, b, frames) = (e.Kind, e.Weapon) switch
         {
-            (0, 2) => (4, 3180, 6),
-            (0, _) => (8, 3060, 6),
-            (1, 2) => (0x10, 3240, 16),
-            (1, 3) => (0x40, 3300, 7),
-            (1, _) => (0x20, 3120, 7),
-            _ => (0x80, 3360, 16),
+            (TacticalEffectKind.Spark, TacticalWeapon.Ion) => (TacticalEffectFlags.IonSpark, TacticalBitmaps.IonSparkEffect, 6),
+            (TacticalEffectKind.Spark, _) => (TacticalEffectFlags.Spark, TacticalBitmaps.SparkEffect, 6),
+            (TacticalEffectKind.HullExplosion, TacticalWeapon.Ion) => (TacticalEffectFlags.IonOverflow, TacticalBitmaps.IonOverflowEffect, 16),
+            (TacticalEffectKind.HullExplosion, TacticalWeapon.Torpedo) => (TacticalEffectFlags.TorpedoHit, TacticalBitmaps.TorpedoHitEffect, 7),
+            (TacticalEffectKind.HullExplosion, _) => (TacticalEffectFlags.HullExplosion, TacticalBitmaps.HullExplosionEffect, 7),
+            _ => (TacticalEffectFlags.Death, TacticalBitmaps.DeathEffect, 16),
         };
-        static bool Spark(int x) => x is 4 or 8;
-        static bool Hull(int x) => x is 0x10 or 0x20 or 0x40;
+        static bool Spark(int x) => x is TacticalEffectFlags.IonSpark or TacticalEffectFlags.Spark;
+        static bool Hull(int x) => x is TacticalEffectFlags.IonOverflow or TacticalEffectFlags.HullExplosion or TacticalEffectFlags.TorpedoHit;
         int cur = f.Flag;
-        if (cur != 0 && flag != 0x80 && (flag <= cur || Spark(flag) && Spark(cur) || Hull(flag) && Hull(cur))) return;
+        if (cur != 0 && flag != TacticalEffectFlags.Death && (flag <= cur || Spark(flag) && Spark(cur) || Hull(flag) && Hull(cur))) return;
         (f.Flag, f.Base, f.Frames, f.Time) = (flag, b, frames, 0);
     }
 
@@ -267,7 +267,7 @@ public partial class TacticalScreen
         foreach (var u in Battle.Units)
         {
             var f = _fx.GetValueOrDefault(u);
-            int loop = !_pyro || f?.LoopsOff == true || !_nodes[u].Visible && f?.Flag != 0x80 ? 0 : Battle.GravityLoop(u) ? 2 : u.HeldBy.Count > 0 ? 1 : 0;
+            int loop = !_pyro || f?.LoopsOff == true || !_nodes[u].Visible && f?.Flag != TacticalEffectFlags.Death ? 0 : Battle.GravityLoop(u) ? 2 : u.HeldBy.Count > 0 ? 1 : 0;
             if (f is null && loop == 0) continue;
             f ??= FxOf(u);
             var p = Shown(u);
@@ -277,14 +277,14 @@ public partial class TacticalScreen
             {
                 f.Time += delta;
                 int frame = (int)(f.Time / 0.1);
-                if (f.Flag == 0x80 && frame >= 11) (f.MeshGone, f.LoopsOff) = (true, true);
+                if (f.Flag == TacticalEffectFlags.Death && frame >= 11) (f.MeshGone, f.LoopsOff) = (true, true);
                 if (frame >= f.Frames) f.Flag = 0;
                 else Show(f.Hit, f.Base + frame, at);
             }
             if (f.Flag == 0) f.Hit.Visible = false;
             if (loop == 0) { f.Loop.Visible = false; continue; }
             f.LoopTime += delta;
-            Show(f.Loop, (loop == 2 ? 3520 : 3620) + (int)(f.LoopTime / 0.1) % 8, at);
+            Show(f.Loop, (loop == 2 ? TacticalBitmaps.GravityWellLoop : TacticalBitmaps.TractorLoop) + (int)(f.LoopTime / 0.1) % 8, at);
         }
 
         static void Show(Sprite3D s, int image, Vector3 at)
@@ -305,15 +305,15 @@ public partial class TacticalScreen
     /// <summary>Decal size s and origin (ox, oy) per image range (preload, verified).</summary>
     static (float Size, int Ox, int Oy) DecalShape(int image) => image switch
     {
-        >= 3360 and <= 3375 => (7.5f, 64, 64), // death
-        >= 3060 and <= 3065 or >= 3180 and <= 3185 => (2.5f, 32, 32), // spark / ion spark: origin off-centre on purpose
-        >= 3120 and <= 3126 => (5.0f, 32, 32), // hull explosion
-        >= 3240 and <= 3255 => (5.0f, 64, 32), // ion overflow
+        >= TacticalBitmaps.DeathEffect and <= TacticalBitmaps.DeathEffect + 15 => (7.5f, 64, 64), // death
+        >= TacticalBitmaps.SparkEffect and <= TacticalBitmaps.SparkEffect + 5 or >= TacticalBitmaps.IonSparkEffect and <= TacticalBitmaps.IonSparkEffect + 5 => (2.5f, 32, 32), // spark / ion spark: origin off-centre on purpose
+        >= TacticalBitmaps.HullExplosionEffect and <= TacticalBitmaps.HullExplosionEffect + 6 => (5.0f, 32, 32), // hull explosion
+        >= TacticalBitmaps.IonOverflowEffect and <= TacticalBitmaps.IonOverflowEffect + 15 => (5.0f, 64, 32), // ion overflow
         _ => (5.0f, 64, 64), // torpedo hull hit 3300-3306, tractor 3620-3627, gravity well 3520-3527
     };
 
     /// <summary>A capital ship in state 11 stays drawn until its death effect hides it (frame 11, or at once without pyrotechnics).</summary>
-    bool DeadShown(TacticalUnit u) => !u.Fighter && u.State == 11 && _fx.TryGetValue(u, out var f) && !f.MeshGone && f.Flag == 0x80;
+    bool DeadShown(TacticalUnit u) => !u.Fighter && u.State == TacticalUnitState.Destroyed && _fx.TryGetValue(u, out var f) && !f.MeshGone && f.Flag == TacticalEffectFlags.Death;
 
     // ---- background ----
 
@@ -337,10 +337,10 @@ public partial class TacticalScreen
         var sun = new DirectionalLight3D { LightColor = new Color(0.8f, 0.8f, 0.8f), LightEnergy = 1 };
         world.AddChild(sun);
         sun.LookAtFromPosition(G(new V3(5, 5, -1)), Vector3.Zero, Vector3.Up);
-        int picture = (int)Battle.System.Definition.Unk1C; // the reader's name for the system's picture number (Inferred)
+        int picture = (int)Battle.System.Definition.Picture; // the system's picture number (Inferred)
         // An unmodded install has no 14000 range: its p is 1-26 over images 5501-5526, palettes 5531-5556 (Inferred: same order as the sector pictures).
         if (_planet && picture is >= 1 and <= 200
-            && (TacticalModels.Image(14000 + picture, 15000 + picture) ?? (picture <= 26 ? TacticalModels.Image(5500 + picture, 5530 + picture) : null)) is { } planet)
+            && (TacticalModels.Image(TacticalBitmaps.PlanetImageBase + picture, TacticalBitmaps.PlanetPaletteBase + picture) ?? (picture <= 26 ? TacticalModels.Image(TacticalBitmaps.PlainPlanetImageBase + picture, TacticalBitmaps.PlainPlanetPaletteBase + picture) : null)) is { } planet)
         {
             int r1 = _present.Rand((int)(0.2 * w)), r2 = _present.Rand((int)(0.2 * w));
             world.AddChild(new Sprite3D
@@ -352,7 +352,7 @@ public partial class TacticalScreen
         if (Battle.HasScene)
         {
             int r1 = _present.Rand((int)(0.4 * w)), r2 = _present.Rand((int)(0.4 * w));
-            var tex = TacticalModels.Image(Battle.SceneUnfinished ? 5020 : 5010);
+            var tex = TacticalModels.Image(Battle.SceneUnfinished ? TacticalBitmaps.DeathStarUnfinishedImage : TacticalBitmaps.DeathStarImage);
             var s = new Sprite3D { Texture = tex, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, Shaded = false, AlphaCut = SpriteBase3D.AlphaCutMode.Discard };
             if (tex is not null) s.PixelSize = (float)(0.5 * w / tex.GetWidth());
             world.AddChild(_dsFrame = s);
@@ -377,7 +377,7 @@ public partial class TacticalScreen
     Control Backdrop()
     {
         var black = new ColorRect { Color = Colors.Black, MouseFilter = MouseFilterEnum.Ignore, Position = View.Position, Size = View.Size };
-        if (_starfield && TacticalModels.Image(5030) is { } stars)
+        if (_starfield && TacticalModels.Image(TacticalBitmaps.StarfieldImage) is { } stars)
             black.AddChild(new TextureRect { Texture = stars, ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale, MouseFilter = MouseFilterEnum.Ignore, Size = View.Size });
         return black;
     }

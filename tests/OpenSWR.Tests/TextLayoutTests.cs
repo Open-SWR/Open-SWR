@@ -319,7 +319,7 @@ public class TextLayoutTests(ITestOutputHelper output)
         const int font = TextLayout.SystemFont;
         string text = "Coruscant";
         int c = TextLayout.TextWidth(font, "Co"), r = TextLayout.Advance(font, 'r');
-        Assert.Equal(2, TextLayout.FieldHit(font, text, c + r / 2f)); // middle of 'r' -> before it
+        Assert.Equal(2, TextLayout.FieldHit(font, text, c + r / 2f)); // middle of 'r' gives before it
         Assert.Equal(2, TextLayout.FieldHit(font, text, c + r)); // its right edge still before it
         Assert.Equal(3, TextLayout.FieldHit(font, text, c + r + 1));
         Assert.Equal(text.Length, TextLayout.FieldHit(font, text, 500));
@@ -377,7 +377,7 @@ public class TextLayoutTests(ITestOutputHelper output)
         Assert.Equal(249, f.CaretX); // a set text scrolls to its end
     }
 
-    // The edit model as coded: caret -1 after a set text. Shift rules without an anchor. The 0x408 post follows the tests below.
+    // The edit model as coded: caret -1 after a set text. Shift rules without an anchor. The text-edit message follows the tests below.
     // Double click uses isspace union ispunct separators and the trailing separator. Overwrite applies only for 0 < caret < length.
     [Fact]
     public void NameBoxEditModel()
@@ -392,10 +392,10 @@ public class TextLayoutTests(ITestOutputHelper output)
         Assert.Equal((0, 1, 0), (f.SelectionBegin, f.SelectionEnd, f.Caret));
         f.Key(StringField.Keys.End, false);
         Assert.False(f.HasSelection);
-        Assert.True(f.Key(StringField.Keys.Delete, false)); // caret = length: posts 0x408, deletes nothing
+        Assert.True(f.Key(StringField.Keys.Delete, false)); // caret = length: posts the text-edit message, deletes nothing
         Assert.Equal("Kuat", f.Text);
         f.Key(StringField.Keys.Home, false);
-        Assert.False(f.Key(StringField.Keys.Backspace, false)); // caret 0: nothing, no 0x408
+        Assert.False(f.Key(StringField.Keys.Backspace, false)); // caret 0: nothing, no message
         f.Key(StringField.Keys.Insert, false);
         f.Type('X'); // overwrite at caret 0 inserts
         Assert.Equal("XKuat", f.Text);
@@ -419,7 +419,7 @@ public class TextLayoutTests(ITestOutputHelper output)
         limited.SetText("Kuat");
         Assert.Equal("Ku", limited.Text); // >= L characters: the first L - 1
         Assert.True(limited.Type('a'));
-        Assert.True(limited.Type('b')); // refused by the limit (caret 3), 0x408 still posted
+        Assert.True(limited.Type('b')); // refused by the limit (caret 3), the message still posted
         Assert.Equal("Kua", limited.Text);
 
         // a set text narrower than s: s := its width (only the caret at x 0 shows)

@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 using System.Text.Json.Nodes;
 
 namespace OpenSWR.Sim.Ai;
@@ -10,14 +11,14 @@ public sealed partial class OpenSWRController
 {
     /// <summary>The home sector of a side: the Empire's is Coruscant's sector, the Alliance's its HQ system's (else its first own system's).</summary>
     public static Sector? HomeSector(GameState game, Owner side) =>
-        side == Owner.Empire ? game.Systems.FirstOrDefault(s => s.Type == Refs.Coruscant)?.Sector
+        side == Owner.Empire ? game.Known.Coruscant?.Sector
         : game.HeadquartersSystem is { Owner: var o } hq && o == side ? hq.Sector
         : game.Systems.Where(s => s.Owner == side && !s.Destroyed).OrderBy(s => s.Key).FirstOrDefault()?.Sector;
 
     /// <summary>
     /// The value of an own system: HQ (Alliance: a system holding an own headquarters
     /// facility) or Coruscant (Empire) 100; each own shipyard, training facility, construction yard 20; each Mine and Refinery 5; each
-    /// defence facility (families 0x22-0x27) 5; each free energy or raw-material slot 1, at most 10 in all; in the home sector + 10; + 10 when losing it
+    /// defence facility (families 34 to 39) 5; each free energy or raw-material slot 1, at most 10 in all; in the home sector + 10; + 10 when losing it
     /// costs the side its majority of the populated systems in its sector. <paramref name="see"/> gives the side's knowledge of another
     /// system (owner, populated): the side's views for the AI, the real state for an observer.
     /// </summary>
@@ -25,10 +26,10 @@ public sealed partial class OpenSWRController
     {
         int v = 0;
         var mine = s.Contents.Where(x => x.Owner == side && x.Existing).ToList();
-        bool hq = side == Owner.Empire ? s.Type == Refs.Coruscant : mine.Any(x => Family.Of(x.Type) is 0x20 or 0x21);
+        bool hq = side == Owner.Empire ? s.Type == Refs.Coruscant : mine.Any(x => Family.Of(x.Type) is Families.Headquarters or Families.SecondHeadquarters);
         if (hq) v += 100;
         foreach (var x in mine)
-            v += Family.Of(x.Type) switch { 0x28 or 0x29 or 0x2A => 20, 0x2C or 0x2D => 5, >= 0x22 and < 0x28 => 5, _ => 0 };
+            v += Family.Of(x.Type) switch { Families.Shipyard or Families.TrainingFacility or Families.ConstructionYard => 20, Families.Mine or Families.Refinery => 5, >= Families.IonCannon and < Families.Shipyard => 5, _ => 0 };
         v += Math.Min(10, Math.Max(0, s.Energy - s.UsedEnergy) + Math.Max(0, s.RawMaterials - s.UsedRaw)); // free slots: 1 each, at most 10
         if (s.Sector == home) v += 10;
         var sector = game.Systems.Where(x => x.Sector == s.Sector).Select(x => x == s ? (Owner: side, s.Populated) : see(x)).Where(x => x.Populated).ToList();
@@ -84,7 +85,7 @@ public sealed partial class OpenSWRController
             {
                 var ships = k.Contents(f).Where(v => Family.IsCapitalShip(v.Object.Type)).ToList();
                 int capacity = ships.Sum(v => (int)(game.Definitions.CapitalShips.FirstOrDefault(r => r.Common.Ref == v.Object.Type)?.TroopCapacity ?? 0));
-                bool aboard = ships.Any(v => k.Contents(v.Object).Any(x => x.In(0x10, 0x14)));
+                bool aboard = ships.Any(v => k.Contents(v.Object).Any(x => x.In(Families.Troop, Families.CapitalShip)));
                 threat += capacity * (aboard ? 1 : near);
             }
         }
@@ -164,17 +165,17 @@ public sealed partial class OpenSWRController
 
     /// <summary>
     /// The systems that want a shield or battery: of the top 3 own systems by priority with
-    /// threat &gt; 0, each without an own shield (family 0x24) gets one, else each without an own battery (family 0x23) one, when the
+    /// threat &gt; 0, each without an own shield (family 36) gets one, else each without an own battery (family 35) one, when the
     /// construction yards can build it. In priority order.
     /// </summary>
     internal List<(StarSystem? Site, Data.Dat.SdRecord? Product)> DefenceSites(GameState game, Known k)
     {
         var places = EnemyPlaces(game, k);
-        var buildable = Research.Buildable(game, Side, 0x2A);
+        var buildable = Research.Buildable(game, Side, Families.ConstructionYard);
         var result = new List<(StarSystem?, Data.Dat.SdRecord?)>();
         foreach (var (s, _) in Own(game).Select(s => (s, threat: Threat(game, k, s, places))).Where(x => x.threat > 0)
                      .OrderByDescending(x => _values.GetValueOrDefault(x.s.Ref) * (1 + x.threat)).ThenBy(x => x.s.Key).Take(3))
-            foreach (uint family in new uint[] { 0x24, 0x23 })
+            foreach (uint family in new uint[] { Families.PlanetaryShield, Families.Gun })
             {
                 if (s.Contents.Any(x => x.Owner == Side && x.Existing && Family.Of(x.Type) == family)) continue;
                 if (buildable.FirstOrDefault(r => Family.Of(r.Common.Ref) == family) is { } product && s.Energy > s.UsedEnergy) result.Add((s, product));

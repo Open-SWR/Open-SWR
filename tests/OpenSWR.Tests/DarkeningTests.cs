@@ -2,7 +2,7 @@ using OpenSWR.Data;
 
 namespace OpenSWR.Tests;
 
-/// <summary>Background darkening: c -> c / 6 + 50 per channel, then the nearest palette entry (squared distance, first strict minimum).</summary>
+/// <summary>Background darkening: c gives c / 6 + 50 per channel, then the nearest palette entry (squared distance, first strict minimum).</summary>
 public class DarkeningTests
 {
     [Fact]
@@ -19,9 +19,9 @@ public class DarkeningTests
     {
         byte[] palette =
         [
-            0, 0, 0,        // 0 -> (50, 50, 50): entries 1 and 2 both at distance 100, the first wins
-            40, 50, 50,     // 1 -> (56, 58, 58): nearest 3 (distance 24; 4 ties, not strict)
-            60, 50, 50,     // 2 -> (60, 58, 58): nearest 3
+            0, 0, 0,        // 0 gives (50, 50, 50): entries 1 and 2 both at distance 100, the first wins
+            40, 50, 50,     // 1 gives (56, 58, 58): nearest 3 (distance 24; 4 ties, not strict)
+            60, 50, 50,     // 2 gives (60, 58, 58): nearest 3
             60, 60, 60,     // 3 c = 60 is its own darkened value: itself
             60, 60, 60,     // 4 the same colour: keeps its own index, not the earlier 3
         ];

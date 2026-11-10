@@ -26,8 +26,8 @@ public partial class LegendWindow : Control
         Position = at;
         MouseFilter = MouseFilterEnum.Stop;
         ClipContents = true; // the 210-wide divider 10182 ends at the window edge
-        var size = (Vector2)Assets.BitmapSize(10108, "STRATEGY.DLL");
-        _close = new FrontButton { Up = Assets.Strategy(10108), Down = Assets.Strategy(10109), Command = close };
+        var size = (Vector2)Assets.BitmapSize(StrategyBitmaps.WindowCloseUp, "STRATEGY.DLL");
+        _close = new FrontButton { Up = StrategyArt.WindowCloseUp, Down = StrategyArt.WindowCloseDown, Command = close };
         _close.Place((int)(Size.X - size.X - 3), 3, (int)size.X, (int)size.Y);
         AddChild(_close);
         AddChild(new Darkened()); // the main-screen picture under the window, darkened

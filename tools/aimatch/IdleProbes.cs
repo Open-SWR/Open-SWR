@@ -38,8 +38,8 @@ public sealed class IdleProbeRecorder
     {
         var f = d.SpecialForces.FirstOrDefault(x => x.Common.Ref == type);
         if (f is null || f.MissionMask == 0) return "other";
-        bool Serves(uint kind) => d.Missions.Any(r => r.Unk34 == 0 && Family.Of(r.Common.Ref) == kind && r.AllowsSpecialForce(f.MissionMask));
-        return Serves(0x52) ? "espionage" : Serves(0x54) ? "recon" : "other";
+        bool Serves(uint kind) => d.Missions.Any(r => !r.Unlisted && Family.Of(r.Common.Ref) == kind && r.AllowsSpecialForce(f.MissionMask));
+        return Serves(82) ? "espionage" : Serves(84) ? "recon" : "other";
     }
 
     public static string Table(IReadOnlyList<(GameResult Result, IdleProbeRecorder Recorder)> runs, GameDefinitions d)

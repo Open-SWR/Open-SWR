@@ -26,9 +26,9 @@ public static class UiRcData
     }
 
     /// <summary>
-    /// Menu builder (VA 0x442590): per requested (id, enabled, checked) in the caller's order: no
-    /// entry -> skipped; Parent != 0 -> the parent group row first (enabled, unchecked), this row into its submenu; a key already in
-    /// the target list -> nothing added; else a row is inserted by ascending key. Alternate is 0 in every shipped entry: not built.
+    /// Menu builder (VA 4466064): per requested (id, enabled, checked) in the caller's order: no
+    /// entry gives skipped; Parent != 0 gives the parent group row first (enabled, unchecked), this row into its submenu; a key already in
+    /// the target list gives nothing added; else a row is inserted by ascending key. Alternate is 0 in every shipped entry: not built.
     /// </summary>
     public static List<MenuRow> BuildMenu(IEnumerable<(int Id, bool Enabled, bool Checked)> ids, Func<int, MenuItem?> entry)
     {

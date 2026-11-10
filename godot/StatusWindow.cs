@@ -9,23 +9,23 @@ using OpenSWR.Sim;
 using SimOwner = OpenSWR.Sim.Owner;
 
 /// <summary>
-/// Status window (window id 0x1A, 379 x 272, centred in the map rect, fixed): a snapshot built at open
+/// Status window (379 x 272, centred in the map rect, fixed): a snapshot built at open
 /// (<see cref="StatusPage"/>; no refresh). Background by player side and view owner, page title (15, 18), name (242, 137), picture
 /// centred on (307, 64), list (18, 47) 208 x 204 with skin 10650: object pages = one tall cell of label / value rows (label x 0, value
-/// x 103, font 10, word break), Galaxy Overview / Objectives = picture rows 40 high (picture column 36). Encyclopedia 0x66 (greyed for
-/// the side and null keys; closes the window first) and Close 0x65; Esc closes. Inferred: the scroll step (one 14-px line), picture
+/// x 103, font 10, word break), Galaxy Overview / Objectives = picture rows 40 high (picture column 36). Encyclopedia button (greyed for
+/// the side and null keys; closes the window first) and Close button; Esc closes. Inferred: the scroll step (one 14-px line), picture
 /// rows scaled into the 36 x 40 column.
 /// </summary>
 public partial class StatusWindow : GameWindow
 {
-    public const int WindowId = 0x1A;
+    public const WindowKind WindowId = WindowKind.Status;
     readonly GameObject? _object;
     readonly bool _overview;
     readonly StatusPage _page;
     RowList? _rows;
     CellList? _items;
 
-    /// <summary><paramref name="o"/> null with <paramref name="overview"/> = the Galaxy Overview (side key 0xF1), null alone = Objectives.</summary>
+    /// <summary><paramref name="o"/> null with <paramref name="overview"/> = the Galaxy Overview (side key), null alone = Objectives.</summary>
     public StatusWindow(MainScreen screen, GameObject? o, bool overview) : base(screen, WindowId, new Vector2(379, 272))
     {
         (_object, _overview) = (o, overview);
@@ -41,19 +41,19 @@ public partial class StatusWindow : GameWindow
 
     static Texture2D? Bmp(int id, string module = "STRATEGY.DLL")
     {
-        return id is <= 0 or > 0xFFFF ? null : Assets.TryBitmap((ushort)id, module);
+        return id is <= 0 or > 65535 ? null : Assets.TryBitmap((ushort)id, module);
     }
 
     static Vector2 Dim(int id, string module = "STRATEGY.DLL") => Assets.BitmapSize((ushort)id, module);
 
     public override void _Ready()
     {
-        var enc = new FrontButton { Up = Bmp(11552), Down = Bmp(11553), DisabledImage = Bmp(11612), TooltipText = Assets.Tip(Assets.Stra(5381)), Disabled = _object is null,
+        var enc = new FrontButton { Up = Bmp(StrategyBitmaps.EncyclopediaAllianceUp), Down = Bmp(StrategyBitmaps.EncyclopediaAllianceDown), DisabledImage = Bmp(StrategyBitmaps.EncyclopediaDisabled), TooltipText = Assets.Tip(StrategyText.Encyclopedia), Disabled = _object is null,
             Command = () => { var o = _object!; Screen.Windows.Close(this); Screen.OpenEncyclopedia(o, 0); } };
         enc.Place(258, 218, 32, 31);
         AddChild(enc);
-        var close = new FrontButton { Up = Bmp(10370), Down = Bmp(10371), TooltipText = Assets.Tip(Assets.Stra(6484)), Command = () => Screen.Windows.Close(this) };
-        close.Place(324, 218, (int)Dim(10370).X, (int)Dim(10370).Y);
+        var close = new FrontButton { Up = Bmp(StrategyBitmaps.PanelCloseAllianceUp), Down = Bmp(StrategyBitmaps.PanelCloseAllianceDown), TooltipText = Assets.Tip(StrategyText.Close), Command = () => Screen.Windows.Close(this) };
+        close.Place(324, 218, (int)Dim(StrategyBitmaps.PanelCloseAllianceUp).X, (int)Dim(StrategyBitmaps.PanelCloseAllianceUp).Y);
         AddChild(close);
         var area = new Rect2(18, 47, 208, 204);
         if (_object is not null)
@@ -63,7 +63,7 @@ public partial class StatusWindow : GameWindow
             AddChild(_rows);
             return;
         }
-        _items = new CellList(10650) { Cell = new Vector2(208 - (Assets.Skin(10650)?.Thickness ?? 0), 40), Position = area.Position, Size = area.Size, Count = _page.Items.Count };
+        _items = new CellList(StrategyRcData.DefaultScrollSkin) { Cell = new Vector2(208 - (Assets.Skin(StrategyRcData.DefaultScrollSkin)?.Thickness ?? 0), 40), Position = area.Position, Size = area.Size, Count = _page.Items.Count };
         _items.DrawCell = DrawItem;
         _items.Pressed = () => Screen.Windows.Focus(this);
         _items.SelectionChanged = () => _items.Selected.Clear(); // not selectable
@@ -87,17 +87,17 @@ public partial class StatusWindow : GameWindow
     /// <summary>Background: null / side key 11554 (A) / 11558 (E); else by view owner O: A 11554 / 11555 / 11556, E 11557 / 11558 / 11559.</summary>
     int Background()
     {
-        if (_object is null) return A ? 11554 : 11558;
+        if (_object is null) return A ? StrategyBitmaps.StatusAllianceAllianceObject : StrategyBitmaps.StatusEmpireEmpireObject;
         var owner = ScreenViews.View(Game, _object, Side).Owner;
         if (_object is StarSystem s) owner = Knowledge.See(Game, s, Side).Owner;
         return (A, owner) switch
         {
-            (true, SimOwner.Alliance) => 11554, (true, SimOwner.Empire) => 11555, (true, _) => 11556,
-            (false, SimOwner.Alliance) => 11557, (false, SimOwner.Empire) => 11558, _ => 11559,
+            (true, SimOwner.Alliance) => StrategyBitmaps.StatusAllianceAllianceObject, (true, SimOwner.Empire) => StrategyBitmaps.StatusAllianceEmpireObject, (true, _) => StrategyBitmaps.StatusAllianceNeutralObject,
+            (false, SimOwner.Alliance) => StrategyBitmaps.StatusEmpireAllianceObject, (false, SimOwner.Empire) => StrategyBitmaps.StatusEmpireEmpireObject, _ => StrategyBitmaps.StatusEmpireNeutralObject,
         };
     }
 
-    string NameText => _object is null ? Assets.Stra(_overview ? 12563 : 12564) : Screen.ObjectName(_object);
+    string NameText => _object is null ? Assets.Stra(_overview ? StrategyTexts.GalaxyOverview : StrategyTexts.Objectives) : Screen.ObjectName(_object);
 
     public override void _Draw()
     {
@@ -116,13 +116,13 @@ public partial class StatusWindow : GameWindow
         }
     }
 
-    /// <summary>Picture: null / side key 11590; missions GOKRES p (owner 1) / p + 0x1000; managers GOKRES 263 / 262 / 264; else the object picture with overlays in the small = 1 form (GOKRES p, no 11500 frame).</summary>
+    /// <summary>Picture: null / side key 11590; missions GOKRES p (owner 1) / p + 4096; managers GOKRES 263 / 262 / 264; else the object picture with overlays in the small = 1 form (GOKRES p, no 11500 frame).</summary>
     List<(Texture2D Texture, Vector2 Size)> Picture()
     {
         (Texture2D, Vector2)? one = _object switch
         {
-            null => ModArt.Install(false, 11590),
-            Mission m when (ScreenViews.View(Game, m, Side).Owner == SimOwner.Alliance ? 0 : 0x1000) is var form =>
+            null => ModArt.Install(false, StrategyBitmaps.StatusSidePicture),
+            Mission m when (ScreenViews.View(Game, m, Side).Owner == SimOwner.Alliance ? 0 : PictureIds.GokresEmpireForm) is var form =>
                 ModArt.Picture(Game.Definitions, m.Record.Common.Ref, form) ?? ModArt.Install(true, ModArt.PictureNumber(m.Record.Common.StringId) + form),
             ManufacturingManager mm => ModArt.Install(true, StatusPage.ManagerPicture(mm)),
             _ => null,
@@ -135,7 +135,7 @@ public partial class StatusWindow : GameWindow
     partial class RowList : Control
     {
         readonly List<(string Label, string Value)> _rows;
-        readonly OpenSWR.Data.ScrollSkin? _skin = Assets.Skin(10650);
+        readonly OpenSWR.Data.ScrollSkin? _skin = Assets.Skin(StrategyRcData.DefaultScrollSkin);
         float _offset, _height;
         float? _grab; // thumb drag: mouse y minus thumb top
         int _pressed;

@@ -2,12 +2,12 @@ namespace OpenSWR.Sim;
 
 /// <summary>
 /// A mission object of a tactical group: the mission number, a scratch value, a done flag, a started flag and a hook flag. Status is
-/// 1 when started, else 2 when done, else 0. Created by the 0x0A message handler for missions 1-11, every field 0.
+/// 1 when started, else 2 when done, else 0. Created by the set-mission message handler for missions 1-11, every field 0.
 /// </summary>
 public class TacticalMission
 {
-    internal TacticalMission(int number) => Number = number;
-    public int Number { get; }
+    internal TacticalMission(TacticalMissionNumber number) => Number = number;
+    public TacticalMissionNumber Number { get; }
     internal int Scratch;
     /// <summary>
     /// Started: the Death Star run's init is done; recovery: its voice ("no carrier" or "group recovered") played. Hooked: the
@@ -15,13 +15,13 @@ public class TacticalMission
     /// </summary>
     internal bool Done, Started, Hooked;
     /// <summary>Status code, see the summary above.</summary>
-    public int Status => Started ? 1 : Done ? 2 : 0;
+    public TacticalMissionStatus Status => Started ? TacticalMissionStatus.Started : Done ? TacticalMissionStatus.Done : TacticalMissionStatus.NotStarted;
 }
 
 public sealed partial class TacticalUnit
 {
     /// <summary>Recovery state: 0 none, 1 hangar place reserved, 2 carrier assigned, 3 docking, 4 docked.</summary>
-    public int Recovery { get; internal set; }
+    public TacticalRecovery Recovery { get; internal set; }
 }
 
 public sealed partial class TacticalGroup
@@ -35,7 +35,7 @@ public sealed partial class TacticalGroup
 
 /// <summary>
 /// Tactical missions and the computer side's tactical AI:
-/// the 0x0A handler with the mission objects, the per-turn group step (mission step, target refresh), missions 2 / 4 / 5 / 7-10, the
+/// the set-mission handler with the mission objects, the per-turn group step (mission step, target refresh), missions 2 / 4 / 5 / 7-10, the
 /// side centroids, the tactical candidate build, scorer and evaluator kind 2, and the computer side's rebuild and targeting.
 /// </summary>
 public sealed partial class TacticalBattle
@@ -50,7 +50,7 @@ public sealed partial class TacticalBattle
     public V3 Centroid(int side) => _centroid[side];
 
     /// <summary>True while a Death Star run is in progress (a mission-6 object lives; set and cleared by its constructor and destructor).</summary>
-    public bool DeathStarRun => _groups.Any(g => g.Object is { Number: 6 });
+    public bool DeathStarRun => _groups.Any(g => g.Object is { Number: TacticalMissionNumber.AttackDeathStar });
 
     /// <summary>The side's candidate list, rebuilt in each of its side turns.</summary>
     internal IReadOnlyList<TacticalUnit> Candidates(int side) => [.. _candidates[side].Select(u => _byUnit[u])];
@@ -58,7 +58,7 @@ public sealed partial class TacticalBattle
     /// <summary>
     /// Computer-flag setter: stores the flag. When it is on (Inferred throughout), the group rebuild is due again at the side's
     /// next targeting and the Death Star run flag is taken from the current run. Called with true for the non-local side at
-    /// world init and by the Observe toggle (command 0x7B) for the local side.
+    /// world init and by the Observe toggle (computer-control command) for the local side.
     /// </summary>
     public void SetComputer(int side, bool on)
     {
@@ -68,43 +68,43 @@ public sealed partial class TacticalBattle
         _deathStarGiven[side] = DeathStarRun;
     }
 
-    // ---- 0x0A ----
+    // ---- set mission ----
 
     /// <summary>
-    /// Message 0x0A: the old mission object is deleted, and old mission 1 clears the simulation target list. The group's
+    /// Set-mission message: the old mission object is deleted, and old mission 1 clears the simulation target list. The group's
     /// mission number becomes m. Then, per m (nav and targets are the group's two lists): 1 clears nav, and a task force
     /// switches to the sphere formation; 2 applies only to a fighter group (else the old number stays, with no object), and
     /// the local side's group leaves its fighter button and clears nav and targets; 3, 4 and 5 clear nav and targets; 6 applies
     /// only to a fighter group of side index 0 (else the old number stays), clears nav and targets, and sets side index 0's
     /// Death Star flag to false; 7-11 clear nav. Missions 1-11 get their object; other numbers get none.
     /// </summary>
-    internal void MissionMessage(TacticalGroup g, int m)
+    internal void MissionMessage(TacticalGroup g, TacticalMissionNumber m)
     {
         if (!_groups.Contains(g)) return;
-        int old = g.Mission;
+        TacticalMissionNumber old = g.Mission;
         g.Object = null;
-        if (old == 1) ClearTargets(g);
+        if (old == TacticalMissionNumber.Escort) ClearTargets(g);
         g.Mission = m;
         switch (m)
         {
-            case 1:
+            case TacticalMissionNumber.Escort:
                 g.NavPoints.Clear();
-                if (!g.Fighters) ChangeFormation(g, 1);
+                if (!g.Fighters) ChangeFormation(g, TacticalFormation.Sphere);
                 break;
-            case 2 when !g.Fighters:
-            case 6 when !(g.Fighters && g.Side == 0):
+            case TacticalMissionNumber.Recover when !g.Fighters:
+            case TacticalMissionNumber.AttackDeathStar when !(g.Fighters && g.Side == 0):
                 g.Mission = old;
                 return;
-            case 2 or 3 or 4 or 5 or 6:
-                if (m == 2 && g.Side == Local) Ui.Free(g);
-                if (m == 6) _deathStarGiven[0] = false;
+            case TacticalMissionNumber.Recover or TacticalMissionNumber.Withdraw or TacticalMissionNumber.AttackFighters or TacticalMissionNumber.AttackCapitalShips or TacticalMissionNumber.AttackDeathStar:
+                if (m == TacticalMissionNumber.Recover && g.Side == Local) Ui.Free(g);
+                if (m == TacticalMissionNumber.AttackDeathStar) _deathStarGiven[0] = false;
                 g.NavPoints.Clear();
                 ClearTargets(g);
                 break;
-            case >= 7 and <= 11: g.NavPoints.Clear(); break;
+            case TacticalMissionNumber.LeftHook or TacticalMissionNumber.RightHook or TacticalMissionNumber.Hammer or TacticalMissionNumber.Anvil or TacticalMissionNumber.Stop: g.NavPoints.Clear(); break;
             default: return;
         }
-        g.Object = m == 6 ? NewRun(g) : new TacticalMission(m); // mission 3's object is initialised at once (scratch value 0)
+        g.Object = m == TacticalMissionNumber.AttackDeathStar ? NewRun(g) : new TacticalMission(m); // mission 3's object is initialised at once (scratch value 0)
     }
 
     void ClearTargets(TacticalGroup g)
@@ -120,10 +120,10 @@ public sealed partial class TacticalBattle
     {
         switch (g.Object?.Number)
         {
-            case 2: Recover(g); break;
-            case 4 or 5: AttackStep(g); break;
-            case >= 7 and <= 10 when !g.Object.Hooked: Hook(g); break;
-            case 6: RunStep(g, (TacticalRun)g.Object); break;
+            case TacticalMissionNumber.Recover: Recover(g); break;
+            case TacticalMissionNumber.AttackFighters or TacticalMissionNumber.AttackCapitalShips: AttackStep(g); break;
+            case TacticalMissionNumber.LeftHook or TacticalMissionNumber.RightHook or TacticalMissionNumber.Hammer or TacticalMissionNumber.Anvil when !g.Object.Hooked: Hook(g); break;
+            case TacticalMissionNumber.AttackDeathStar: RunStep(g, (TacticalRun)g.Object); break;
         }
         RefreshTargets(g);
     }
@@ -152,17 +152,17 @@ public sealed partial class TacticalBattle
 
     /// <summary>
     /// Missions 4 / 5 step: nothing when done or when the scorer's skip test holds; else the first wanted unit of the side's
-    /// candidate list of type 1 (mission 4) or 0 (mission 5) becomes the sole UI target, done is set, and message 0x36 is sent
+    /// candidate list of type 1 (mission 4) or 0 (mission 5) becomes the sole UI target, done is set, and the replace-targets message is sent
     /// (which clears done when it runs).
     /// </summary>
     void AttackStep(TacticalGroup g)
     {
         var o = g.Object!;
         if (o.Done || Skip(g)) return;
-        int type = o.Number == 4 ? 1 : 0;
+        var type = o.Number == TacticalMissionNumber.AttackFighters ? TacticalUnitType.Fighter : TacticalUnitType.CapitalShip;
         if (_candidates[g.Side].FirstOrDefault(u => u.Type == type && Wanted(u)) is not { } t) return;
         o.Done = true;
-        Order(g, ReplaceTargets, _byUnit[t]);
+        Order(g, TacticalMessage.ReplaceTargets, _byUnit[t]);
     }
 
     // ---- hooks ----
@@ -177,8 +177,8 @@ public sealed partial class TacticalBattle
         {
             _centroid[s] = _fresh[s];
             var sum = V3.Zero;
-            foreach (var u in _units.Where(u => u.Side == s && u.State == 2)) sum += u.Position;
-            int n = _units.Count(u => u.Side == s && u.State is 2 or 4 or 6 or 7 or 8 or 10);
+            foreach (var u in _units.Where(u => u.Side == s && u.State == TacticalUnitState.Active)) sum += u.Position;
+            int n = _units.Count(u => u.Side == s && u.State is TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered or TacticalUnitState.Accelerating or TacticalUnitState.InHyperspace or TacticalUnitState.DeathStarRun);
             _fresh[s] = n == 0 ? V3.Zero : sum * (1.0 / n);
         }
     }
@@ -193,16 +193,17 @@ public sealed partial class TacticalBattle
     /// scanning the capital-ship tree then the fighter tree in tree order (Inferred: one running maximum, strictly larger wins).
     /// No T gives mission 0. Q = N + 0.75 * R(T - N), with Left plus pi/8 and Right minus pi/8 about y, and Hammer minus pi/8
     /// and Anvil plus pi/8 about x. The nearest of the 105 nav points to Q (strictly smaller wins) becomes the sole UI nav
-    /// list entry, message 0x3A is sent, and both flags are set.
+    /// list entry, the replace-nav-points message is sent, and both flags are set.
+    /// Called only with LeftHook, RightHook, Hammer or Anvil.
     /// </summary>
     internal void Hook(TacticalGroup g, V3 c)
     {
         var o = g.Object!;
-        int m = o.Number;
+        TacticalMissionNumber m = o.Number;
         o.Scratch = 0;
         var n = g.NavPoint;
         var d = c - n;
-        V3 dir = m switch { 7 => (-d.Z, d.Y, d.X), 8 => (d.Z, d.Y, -d.X), 9 => (d.X, d.Z, -d.Y), _ => (d.X, d.Z, d.Y) };
+        V3 dir = m switch { TacticalMissionNumber.LeftHook => (-d.Z, d.Y, d.X), TacticalMissionNumber.RightHook => (d.Z, d.Y, -d.X), TacticalMissionNumber.Hammer => (d.X, d.Z, -d.Y), _ => (d.X, d.Z, d.Y) };
         // Inferred: with no target, use the enemy side's forward
         if (dir.IsZero) dir = -Forward(TargetList(g).FirstOrDefault()?.Side ?? 1 - g.Side);
         dir = dir.Normalised();
@@ -213,20 +214,20 @@ public sealed partial class TacticalBattle
         if (t is null)
         {
             best = double.NegativeInfinity;
-            foreach (var u in TreeOrder(false).Concat(TreeOrder(true)).Where(u => u.Side != g.Side && u.Active && u.State != 6))
+            foreach (var u in TreeOrder(false).Concat(TreeOrder(true)).Where(u => u.Side != g.Side && u.Active && u.State != TacticalUnitState.JumpOrdered))
                 if (u.Position.Dot(dir) > best) (t, best) = (u, u.Position.Dot(dir));
         }
         if (t is null)
         {
-            SetMission(g, 0);
+            SetMission(g, TacticalMissionNumber.None);
             return;
         }
         var v = t.Position - n;
-        double th = m is 7 or 10 ? Math.PI / 8 : -Math.PI / 8;
-        var r = m <= 8 ? v.RotateY(th) : new V3(v.X, v.Y * Math.Cos(th) + v.Z * Math.Sin(th), v.Z * Math.Cos(th) - v.Y * Math.Sin(th));
+        double th = m is TacticalMissionNumber.LeftHook or TacticalMissionNumber.Anvil ? Math.PI / 8 : -Math.PI / 8;
+        var r = m is TacticalMissionNumber.LeftHook or TacticalMissionNumber.RightHook ? v.RotateY(th) : new V3(v.X, v.Y * Math.Cos(th) + v.Z * Math.Sin(th), v.Z * Math.Cos(th) - v.Y * Math.Sin(th));
         var q = n + r * 0.75;
         var p = _navPoints.MinBy(x => (x.Position - q).LengthSquared)!;
-        OrderNav(g, ReplaceNavPoints, p);
+        OrderNav(g, TacticalMessage.ReplaceNavPoints, p);
         o.Started = o.Hooked = true;
     }
 
@@ -239,8 +240,8 @@ public sealed partial class TacticalBattle
     /// Recover step: per active member without a reservation, its own carrier; else the first active ship of the side's
     /// ship list with a free place; else (side index 1) a live Death Star scene. When none is found, the "no carrier" voice
     /// plays once. When every hangar is full and empty, once: if not withdrawing, the local side's fighter button comes back
-    /// and the mission becomes 0; if withdrawing, the members without a reservation scuttle (message 0x2F). Members with a
-    /// carrier within 2.0 of its hangar's launch point (in 3-D) dock (message 0x1A); when all are docked, the recovered voice
+    /// and the mission becomes 0; if withdrawing, the members without a reservation scuttle (the scuttle message). Members with a
+    /// carrier within 2.0 of its hangar's launch point (in 3-D) dock (the fighter-dock message); when all are docked, the recovered voice
     /// plays. Orphans (carrier none after its death) never dock (as read).
     /// </summary>
     void Recover(TacticalGroup g)
@@ -250,10 +251,10 @@ public sealed partial class TacticalBattle
         foreach (var f in g.Members.ToList())
         {
             if (!f.Active) continue;
-            bool r = f.Recovery != 0, allFull = true;
+            bool r = f.Recovery != TacticalRecovery.None, allFull = true;
             if (!r && f.U.Carrier is { } c)
-                r = c.Type == 2 ? BattleEngine.Alive(scene) && Reserve(BattleEngine.Resolve(c, Sides)!, f) : IsActive(c) && Reserve(c, f);
-            if (f.Recovery == 0)
+                r = c.Type == TacticalUnitType.DeathStarScene ? BattleEngine.Alive(scene) && Reserve(BattleEngine.Resolve(c, Sides)!, f) : IsActive(c) && Reserve(c, f);
+            if (f.Recovery == TacticalRecovery.None)
             {
                 foreach (var s in Sides[f.Side].Ships.Where(IsActive).ToList())
                 {
@@ -269,30 +270,30 @@ public sealed partial class TacticalBattle
             if (!r && !o.Started)
             {
                 o.Started = true;
-                Ui.Voices.Add((g.Side == 0 ? 0x8B : 0x109) + g.Colour); // "no carrier" voice
+                Ui.Voices.Add((g.Side == 0 ? TacticalVoice.FighterGroupNoCarrier : TacticalVoice.FighterGroupNoCarrierEmpire) + g.Colour); // "no carrier" voice
             }
             if (!r && allFull && o.Scratch == 0)
             {
                 o.Scratch = 1;
-                if (_state[g.Side] == 0)
+                if (_state[g.Side] == TacticalSideState.Fighting)
                 {
                     if (g.Side == Local && g.Colour >= 0) Ui.Fighters[g.Colour] = g;
-                    SetMission(g, 0);
+                    SetMission(g, TacticalMissionNumber.None);
                 }
                 else
-                    foreach (var x in g.Members.Where(x => x.Recovery == 0)) Post(Stamp, 0x2F, () => Scuttle(x));
+                    foreach (var x in g.Members.Where(x => x.Recovery == TacticalRecovery.None)) Post(Stamp, TacticalMessage.Scuttle, () => Scuttle(x));
             }
         }
-        foreach (var f in g.Members.Where(f => f.Recovery == 2).ToList())
+        foreach (var f in g.Members.Where(f => f.Recovery == TacticalRecovery.CarrierAssigned).ToList())
         {
             if (BattleEngine.Resolve(f.U.Carrier, Sides) is not { } h || (f.Position - LaunchPoint(HangarOf(h))).Length >= 2.0) continue; // the Death Star scene's point is (-W/2, 0, 0)
-            f.Recovery = 3;
-            Post(Stamp, 0x1A, () => DockMessage(f, h));
+            f.Recovery = TacticalRecovery.Docking;
+            Post(Stamp, TacticalMessage.FighterDock, () => DockMessage(f, h));
         }
-        if (g.Members.Count > 0 && g.Members.All(f => f.Recovery == 4) && !o.Started)
+        if (g.Members.Count > 0 && g.Members.All(f => f.Recovery == TacticalRecovery.Docked) && !o.Started)
         {
             o.Started = true;
-            Ui.Voices.Add((g.Side == 0 ? 0x87 : 0x105) + g.Colour); // "group recovered" voice
+            Ui.Voices.Add((g.Side == 0 ? TacticalVoice.FighterGroupRecovered : TacticalVoice.FighterGroupRecoveredEmpire) + g.Colour); // "group recovered" voice
         }
     }
 
@@ -307,9 +308,9 @@ public sealed partial class TacticalBattle
     {
         var other = Sides[1 - i];
         List<BattleEngine.Unit> Sort(IEnumerable<BattleEngine.Unit> units) => [.. units.OrderBy(u => -Threat(u)).ThenBy(u => u.Key)];
-        var listed = other.Ships.Concat(other.Fighters.Where(u => u.State is 2 or 4 or 6)).ToList();
-        var c = Sort(listed.Where(Wanted).Concat(Sides[0].Pending.Where(u => u.Side == other.Index && u.State is 1 or 3)));
-        c.AddRange(Sort(listed.Where(u => !Wanted(u) && u.State is 2 or 4 or 6)));
+        var listed = other.Ships.Concat(other.Fighters.Where(u => u.State is TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered)).ToList();
+        var c = Sort(listed.Where(Wanted).Concat(Sides[0].Pending.Where(u => u.Side == other.Index && u.State is TacticalUnitState.Docked or TacticalUnitState.Launching)));
+        c.AddRange(Sort(listed.Where(u => !Wanted(u) && u.State is TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered)));
         _candidates[i] = c;
     }
 
@@ -325,8 +326,8 @@ public sealed partial class TacticalBattle
     /// </summary>
     bool Wanted(BattleEngine.Unit u)
     {
-        if (u.State is not (2 or 4 or 6)) return false;
-        if (_state[1 - u.Side] == 0) return BattleEngine.WeaponRate(u) != 0;
+        if (u.State is not (TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered)) return false;
+        if (_state[1 - u.Side] == TacticalSideState.Fighting) return BattleEngine.WeaponRate(u) != 0;
         return CanJump(_byUnit[u]) || u.Hyperdrives - u.HyperCh != 0 && !(u.SpeedCh >= 4 || u.EngineDown >= 10000.0);
     }
 
@@ -351,30 +352,30 @@ public sealed partial class TacticalBattle
     }
 
     /// <summary>Skip test: mission 2, 3 or 6; else the automatic rule over the side's group list.</summary>
-    bool Skip(TacticalGroup g) => g.Mission is 2 or 3 or 6 || BattleEngine.SkipRule(g.G, Sides[g.Side].Groups, Wanted, TimeToKill);
+    bool Skip(TacticalGroup g) => g.Mission is TacticalMissionNumber.Recover or TacticalMissionNumber.Withdraw or TacticalMissionNumber.AttackDeathStar || BattleEngine.SkipRule(g.G, Sides[g.Side].Groups, Wanted, TimeToKill);
 
     /// <summary>
     /// Targeting with the tactical objects: the shared skeleton over the side's candidate list and group list. Evaluator kind 2
-    /// is the automatic evaluator, whose assignment sets the UI target list at once and posts 0x36 (applied four turns later).
+    /// is the automatic evaluator, whose assignment sets the UI target list at once and posts the replace-targets message (applied four turns later).
     /// </summary>
     internal void Targeting(int i) =>
         BattleEngine.Targeting(_candidates[i], Sides[i].Groups, new BattleEngine.Scorer(g => Skip(_byGroup[g]), Wanted, TimeToKill,
-            (g, t) => Order(_byGroup[g], ReplaceTargets, _byUnit[t])), Sides);
+            (g, t) => Order(_byGroup[g], TacticalMessage.ReplaceTargets, _byUnit[t])), Sides);
 
     // ---- the computer side ----
 
     /// <summary>
-    /// Group rebuild on the first targeting after a switch to computer control: message 0x32 for every task force of the side's
+    /// Group rebuild on the first targeting after a switch to computer control: group-delete message for every task force of the side's
     /// group list (local side: its HUD slot freed at once); then the builder on the setup-time lists (not re-sorted; lo / hi and
-    /// g / stride as in the setup): a leader creates a task force (0x37, 0x30; local side: HUD slot lo + i), a member joins it
-    /// (0x37, 0x33). Nobody is moved; fighter groups stay.
+    /// g / stride as in the setup): a leader creates a task force (task-force leave and create messages; local side: HUD slot lo + i), a member joins it
+    /// (task-force leave and join messages). Nobody is moved; fighter groups stay.
     /// </summary>
     void Rebuild(int i)
     {
         foreach (var g in _groups.Where(g => g.Side == i && !g.Fighters && Sides[i].Groups.Contains(g.G)).ToList())
         {
             if (i == Local) Ui.Free(g);
-            Post(Stamp, 0x32, () => DeleteGroup(g));
+            Post(Stamp, TacticalMessage.GroupDelete, () => DeleteGroup(g));
         }
         var (heavy, laser, unarmed) = _setupLists[i];
         int n1 = Build(heavy, 0, 3), n2 = Build(laser, n1, n1 + 3);
@@ -402,7 +403,7 @@ public sealed partial class TacticalBattle
     }
 
     /// <summary>
-    /// Message 0x32 (delete a group): its members leave it, it leaves the side's group list and the world (its mission object
+    /// Group-delete message (delete a group): its members leave it, it leaves the side's group list and the world (its mission object
     /// with it); a HUD slot still holding it is freed. Units still in its UI list keep a stale group field.
     /// </summary>
     void DeleteGroup(TacticalGroup g)

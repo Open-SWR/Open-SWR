@@ -32,12 +32,12 @@ public sealed class PeResources
     public PeResources(byte[] file)
     {
         _file = file;
-        if (U16(0) != 0x5A4D) throw new InvalidDataException("No MZ header.");
-        int pe = (int)U32(0x3C);
-        if (U32(pe) != 0x4550) throw new InvalidDataException("No PE header.");
+        if (U16(0) != 23117) throw new InvalidDataException("No MZ header.");
+        int pe = (int)U32(60);
+        if (U32(pe) != 17744) throw new InvalidDataException("No PE header.");
         int sectionCount = U16(pe + 6);
         int opt = pe + 24;
-        int dataDirs = opt + (U16(opt) == 0x20B ? 112 : 96);
+        int dataDirs = opt + (U16(opt) == 523 ? 112 : 96);
         uint rsrcRva = U32(dataDirs + 2 * 8);
 
         int sec = opt + U16(pe + 20);
@@ -69,10 +69,10 @@ public sealed class PeResources
         for (int i = 0, e = dir + 16; i < count; i++, e += 8)
         {
             uint name = U32(e);
-            ResId key = (name & 0x80000000) == 0
+            ResId key = (name & 2147483648u) == 0
                 ? new ResId((ushort)name)
-                : new ResId(0, ReadName(root + (int)(name & 0x7FFFFFFF)));
-            int child = root + (int)(U32(e + 4) & 0x7FFFFFFF);
+                : new ResId(0, ReadName(root + (int)(name & 2147483647)));
+            int child = root + (int)(U32(e + 4) & 2147483647);
             if (child <= dir) throw new InvalidDataException($"Resource directory at {dir} points back to {child}."); // children lie after their parent: no loops
             yield return (key, child);
         }

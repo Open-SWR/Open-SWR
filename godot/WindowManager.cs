@@ -8,8 +8,8 @@ using SimOwner = OpenSWR.Sim.Owner;
 
 /// <summary>
 /// The strategy screen's object windows: one window per id (opening an open id raises it, restoring it
-/// from its slot first), close (message 0x405: sound 605 for kind 1, 607 for kinds 4, 9, 10, 0xB; focus to the next window),
-/// focus / raise (0x467), the 12 minimise slots (first free slot, else the oldest minimised window is closed for good), slot image
+/// from its slot first), close (main-screen message: sound 605 for the sector window, 607 for the system sub-windows; focus to the next window),
+/// focus / raise (main-screen message), the 12 minimise slots (first free slot, else the oldest minimised window is closed for good), slot image
 /// (icon + the object's location name in font 10, RGB (240, 240, 0), observed in the original), double-click restore, Alt+W (close every window not in a slot),
 /// Ctrl+Tab (focus cycling skipping slotted windows), hide / show for the filter picker (slotted windows stay hidden). Zoom
 /// animations are left out.
@@ -51,13 +51,13 @@ public sealed class WindowManager(MainScreen screen, Control layer)
         return window;
     }
 
-    /// <summary>Message 0x405: sound by kind, window destroyed, record removed, focus to the next open window.</summary>
+    /// <summary>Close message: sound by kind, window destroyed, record removed, focus to the next open window.</summary>
     public void Close(GameWindow w, bool sound = true)
     {
         if (!_open.ContainsKey(w.Id)) return;
         if (w is MessageWindow m) m.Closing();
         _open.Remove(w.Id);
-        if (sound) Assets.PlayStrategy(w.Kind == 1 ? 605 : w.Kind is 4 or 9 or 10 or 0xB ? 607 : 0);
+        if (sound) Assets.PlayStrategy(w.Kind == WindowKind.Sector ? StrategySounds.SectorWindowClose : w.Kind is WindowKind.SystemFleet or WindowKind.SystemManufacturing or WindowKind.SystemPlanet or WindowKind.SystemMissions ? StrategySounds.SubWindowClose : 0);
         int slot = Array.IndexOf(_slots, w.Id);
         if (slot >= 0) FreeSlot(slot);
         _hidden.Remove(w);
@@ -67,7 +67,7 @@ public sealed class WindowManager(MainScreen screen, Control layer)
         if (w is MessageWindow) screen.MessageWindowClosed();
     }
 
-    /// <summary>0x467: shown, raised, focused.</summary>
+    /// <summary>Focus / raise message: shown, raised, focused.</summary>
     public void Focus(GameWindow w)
     {
         if (IsMinimised(w)) return;
@@ -94,7 +94,7 @@ public sealed class WindowManager(MainScreen screen, Control layer)
     /// </summary>
     public void Minimise(GameWindow w)
     {
-        Assets.PlayStrategy(screen.Side == SimOwner.Alliance ? 611 : 610);
+        Assets.PlayStrategy(screen.Side == SimOwner.Alliance ? StrategySounds.MinimiseAlliance : StrategySounds.MinimiseEmpire);
         int slot = Array.IndexOf(_slots, w.Id);
         if (slot < 0) slot = Array.IndexOf(_slots, default);
         if (slot < 0)
@@ -133,7 +133,7 @@ public sealed class WindowManager(MainScreen screen, Control layer)
     public void Restore(int slot)
     {
         if (!_open.TryGetValue(_slots[slot], out var w)) return;
-        Assets.PlayStrategy(screen.Side == SimOwner.Alliance ? 613 : 612);
+        Assets.PlayStrategy(screen.Side == SimOwner.Alliance ? StrategySounds.RestoreAlliance : StrategySounds.RestoreEmpire);
         var r = SlotRect(slot);
         FreeSlot(slot);
         // the zoom slot: the window's last rect, then shown, raised, focused
@@ -148,7 +148,7 @@ public sealed class WindowManager(MainScreen screen, Control layer)
         _slotViews[slot] = null;
     }
 
-    /// <summary>Alt+W (0xBB9): close every open window that is not minimised in a slot.</summary>
+    /// <summary>Alt+W: close every open window that is not minimised in a slot.</summary>
     public void CloseUnminimised()
     {
         foreach (var w in _open.Values.Where(w => !IsMinimised(w)).ToList()) Close(w);
@@ -167,7 +167,7 @@ public sealed class WindowManager(MainScreen screen, Control layer)
         else Focus(stack[0]);
     }
 
-    /// <summary>Command 0x132: every open window hidden; <see cref="ShowHidden"/> (0x140) shows those not in a slot again.</summary>
+    /// <summary>Galactic Information Display command: every open window hidden; <see cref="ShowHidden"/> (filter command) shows those not in a slot again.</summary>
     public void HideAll()
     {
         _hidden = [.. _open.Values.Where(w => w.Visible)];
@@ -240,16 +240,16 @@ public sealed class WindowManager(MainScreen screen, Control layer)
     /// </summary>
     public SectorWindow OpenSector(Sector sector)
     {
-        var id = new WindowAddress(1, (int)sector.Definition.Common.Index);
+        var id = new WindowAddress(WindowKind.Sector, (int)sector.Definition.Common.Index);
         if (_open.TryGetValue(id, out var open)) return Open(id, () => (SectorWindow)open);
         var sectors = _open.Values.OfType<SectorWindow>().ToList();
         var used = sectors.Select(w => w.Position == SectorSlot(0) ? 0 : 1).ToList();
         int slot = ScreenViews.SectorSlot(sector, used);
         if (sectors.Count >= 2 && sectors.FirstOrDefault(w => w.Position == SectorSlot(slot)) is { } replaced) Close(replaced, sound: false);
-        return Open(id, () => new SectorWindow(screen, id, sector) { Position = SectorSlot(slot) }, 604);
+        return Open(id, () => new SectorWindow(screen, id, sector) { Position = SectorSlot(slot) }, StrategySounds.SectorWindowOpen);
     }
 
-    /// <summary>Button 0x139: the window moves to the other half (slot); a sector window already there closes (observed in the original).</summary>
+    /// <summary>Swap button: the window moves to the other half (slot); a sector window already there closes (observed in the original).</summary>
     public void SwapSector(SectorWindow w)
     {
         int other = w.Position == SectorSlot(0) ? 1 : 0;

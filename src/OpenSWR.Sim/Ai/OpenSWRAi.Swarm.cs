@@ -159,7 +159,7 @@ public sealed partial class OpenSWRController
 
     void SaveSwarm(JsonObject j)
     {
-        if (_idleSince.Count > 0) j["idleSince"] = new JsonArray([.. _idleSince.Select(e => (JsonNode)new JsonArray(e.Key, e.Value))]);
+        if (_idleSince.Count > 0) j["idleSince"] = new JsonArray([.. _idleSince.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value))]);
         if (_enemyStrengths.Count > 0) j["enemyStrengths"] = new JsonArray([.. _enemyStrengths.Select(e => (JsonNode)new JsonArray([e.Key, .. e.Value.Select(v => (JsonNode)v)]))]);
     }
 

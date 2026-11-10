@@ -36,7 +36,7 @@ public static class Cursors
 
     /// <summary>
     /// Cursor image: hotspot, BITMAPINFOHEADER (height doubled), colour table, bottom-up XOR plane (1 / 8 bpp), bottom-up 1-bpp AND
-    /// plane. AND 0 -> opaque colour; AND 1 with black -> transparent; AND 1 with another colour (screen inversion) -> opaque black (Inferred).
+    /// plane. AND 0 gives opaque colour; AND 1 with black gives transparent; AND 1 with another colour (screen inversion) gives opaque black (Inferred).
     /// </summary>
     public static CursorImage Decode(ushort id, ReadOnlySpan<byte> data)
     {

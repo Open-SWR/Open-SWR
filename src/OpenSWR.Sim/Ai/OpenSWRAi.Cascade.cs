@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 namespace OpenSWR.Sim.Ai;
 
 /// <summary>
-/// Step 36 (`Cascade`): incite runs at most <see cref="CascadeIncite"/> instead of
+/// Cascade: incite runs at most <see cref="CascadeIncite"/> instead of
 /// <see cref="MaxIncite"/> when the target lies in a sector where the side took a system from the enemy without its own troops in
 /// control in the last <see cref="CascadeDays"/> days, or in a sector with another enemy system the views show in uprising.
 /// Views and own data only; no draws.
@@ -12,7 +12,7 @@ public sealed partial class OpenSWRController
 {
     public const int CascadeIncite = 3, CascadeDays = 100;
 
-    /// <summary>Sector ref -> last day the side gained a system there by support. Saved.</summary>
+    /// <summary>Sector ref gives last day the side gained a system there by support. Saved.</summary>
     readonly SortedDictionary<uint, int> _supportGains = [];
 
     /// <summary>
@@ -40,7 +40,7 @@ public sealed partial class OpenSWRController
 
     void SaveCascade(JsonObject j)
     {
-        if (_supportGains.Count > 0) j["supportGains"] = new JsonArray([.. _supportGains.Select(e => (JsonNode)new JsonArray(e.Key, e.Value))]);
+        if (_supportGains.Count > 0) j["supportGains"] = new JsonArray([.. _supportGains.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value))]);
     }
 
     void LoadCascade(JsonObject j)

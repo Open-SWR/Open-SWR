@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 using System.Text.Json.Nodes;
 
 namespace OpenSWR.Sim.Ai;
@@ -6,7 +7,7 @@ namespace OpenSWR.Sim.Ai;
 /// Guard (own objective characters stay in own
 /// systems), Hunt (find and abduct the enemy objective characters; the Empire's HQ search) and Siege (the known enemy HQ or
 /// Coruscant open to every swarm group, bombardment before the landing). Views and own data only; the existing order paths
-/// (0x240 missions, 0x201 moves, 0x222 bombardment, 0x234 assault); no draws.
+/// (CreateMission missions, Move commands, BombardVariant2 bombardment, Assault commands); no draws.
 /// </summary>
 public sealed partial class OpenSWRController
 {
@@ -14,7 +15,7 @@ public sealed partial class OpenSWRController
     public const int HuntAgeDays = 30, MaxHuntSpies = 3, MaxHunts = 2, MaxHqSearch = 3;
     /// <summary>Hunt: a hunt espionage target counts as running for this many days after its order (Inferred: a mission's length).</summary>
     const int HuntSpyDays = 60;
-    const uint MonMothma = 0x30000240;
+    const uint MonMothma = Refs.Mothma;
 
     bool Guarding => On(V7.Guard);
     bool Hunting => On(V7.Hunt);
@@ -26,18 +27,18 @@ public sealed partial class OpenSWRController
     bool OwnObjective(GameObject o) => o is Character c && ObjectiveRefs(Side).Contains(c.Ref);
     bool EnemyObjective(GameObject o) => o is Character c && ObjectiveRefs(Enemy).Contains(c.Ref);
 
-    /// <summary>The Alliance HQ: the first object of families [0x20, 0x22) by key (as Victory.Recompute; the real registry, its view is read through Knowledge).</summary>
-    static GameObject? HqObject(GameState game) => game.Created.Where(o => Family.Of(o.Type) is >= 0x20 and < 0x22).MinBy(o => o.Key);
+    /// <summary>The Alliance HQ: the first object of families 32 and 33 by key (as Victory.Recompute; the real registry, its view is read through Knowledge).</summary>
+    static GameObject? HqObject(GameState game) => game.Created.Where(o => Family.Of(o.Type) is >= Families.Headquarters and < Families.IonCannon).MinBy(o => o.Key);
 
     // ---- Guard ----
 
     /// <summary>
-    /// Guard: a mission (0x240) or move (0x201) with an own objective character among its team or decoys whose destination is not
+    /// Guard: a mission (CreateMission command) or move (Move command) with an own objective character among its team or decoys whose destination is not
     /// an own system is refused (the destination: the ArgRef system, else the system the side's view places the ArgRef in).
     /// </summary>
     internal bool GuardRefuses(GameState game, Command c)
     {
-        if (!Guarding || c.Type is not (0x240 or 0x201) || !c.Targets.Select(t => t.Target).Concat(c.Decoys).Any(OwnObjective)) return false;
+        if (!Guarding || c.Type is not (CommandType.CreateMission or CommandType.Move) || !c.Targets.Select(t => t.Target).Concat(c.Decoys).Any(OwnObjective)) return false;
         var to = c.ArgRef as StarSystem ?? (c.ArgRef is { } a ? Knowledge.Location(game, a, Side) as StarSystem ?? a.System : null);
         return to is null || to.Owner != Side;
     }
@@ -48,7 +49,7 @@ public sealed partial class OpenSWRController
     /// </summary>
     StarSystem? GuardHome(GameState game, Character c)
     {
-        var home = Side == Owner.Alliance ? HqObject(game) is { Destroyed: false } hq ? hq.System : null : game.Systems.FirstOrDefault(s => s.Type == Refs.Coruscant);
+        var home = Side == Owner.Alliance ? HqObject(game) is { Destroyed: false } hq ? hq.System : null : game.Known.Coruscant;
         if (home is { Destroyed: false } && home.Owner == Side) return home;
         var at = Missions.Location(c) as StarSystem;
         return Own(game).OrderByDescending(s => s.Contents.Count(x => OwnTroop(x, Side)))
@@ -83,7 +84,7 @@ public sealed partial class OpenSWRController
     /// <summary>Test hook: the HQ candidates.</summary>
     internal IReadOnlyCollection<uint> HqCandidates => _hqCandidates.Keys;
 
-    static bool Rim(StarSystem s) => Family.Of(s.Type) is >= 0x92 and < 0x94;
+    static bool Rim(StarSystem s) => Family.Of(s.Type) is >= Families.RimSystem and < Families.RimSystemEnd;
 
     /// <summary>
     /// The HQ candidate set: at the first decision every rim system the view has not explored
@@ -123,7 +124,7 @@ public sealed partial class OpenSWRController
         if (at is not null) HqFoundDay ??= game.Day;
         // a candidate leaves once a view written since it joined (live, or a mission's refresh) shows it explored without an HQ
         foreach (var s in game.Systems.Where(s => _hqCandidates.TryGetValue(s.Ref, out int added) && (views[s].Destroyed
-                     || views[s].Explored && s != at && Knowledge.UpdatedDay(game, s, Side) >= Math.Max(1, added) && !k.Contents(s).Any(v => v.In(0x20, 0x22)))).ToList())
+                     || views[s].Explored && s != at && Knowledge.UpdatedDay(game, s, Side) >= Math.Max(1, added) && !k.Contents(s).Any(v => v.In(Families.Headquarters, Families.IonCannon)))).ToList())
             _hqCandidates.Remove(s.Ref);
     }
 
@@ -155,11 +156,11 @@ public sealed partial class OpenSWRController
         if (last is not null && game.Day - Knowledge.UpdatedDay(game, c, Side) <= HuntAgeDays) return [];
         var list = new List<StarSystem>();
         if (last is not null) list.Add(last);
-        var home = c.Ref is Refs.Vader or Refs.Palpatine ? game.Systems.FirstOrDefault(s => s.Type == Refs.Coruscant)
+        var home = c.Ref is Refs.Vader or Refs.Palpatine ? game.Known.Coruscant
             : HqObject(game) is { } hq && !Knowledge.See(game, hq, Side).Destroyed ? Knowledge.Location(game, hq, Side) as StarSystem : null;
         if (home is not null) list.Add(home);
         var enemy = game.Systems.Where(s => Knowledge.See(game, s, Side) is { Owner: var o, Destroyed: false } && o == Enemy).ToList();
-        list.AddRange(enemy.Select(s => (s, n: k.Contents(s).Count(v => v.Owner == Enemy && v.In(0x30, 0x3C)))).Where(x => x.n > 0)
+        list.AddRange(enemy.Select(s => (s, n: k.Contents(s).Count(v => v.Owner == Enemy && v.In(Families.MajorCharacter, Families.SpecialForce)))).Where(x => x.n > 0)
             .OrderByDescending(x => x.n).ThenBy(x => x.s.Key).Select(x => x.s));
         if (last is not null) list.AddRange(enemy.Where(s => s != last).OrderBy(s => Orders.Distance(last, s)).ThenBy(s => s.Key));
         return [.. list.Distinct()];
@@ -176,17 +177,17 @@ public sealed partial class OpenSWRController
         }
     }
 
-    /// <summary>One espionage (0x52) at a system: a free special force the list offers first, else the best free character (by espionage).</summary>
+    /// <summary>One espionage mission at a system: a free special force the list offers first, else the best free character (by espionage).</summary>
     bool SpyAt(GameState game, Known k, StarSystem target, List<Character> free, HashSet<GameObject> used)
     {
-        if (TypeOf(game, 0x52) is not { } type) return false;
+        if (TypeOf(game, MissionKind.Espionage) is not { } type) return false;
         foreach (var a in FreeSpecialForces(game, used).OrderByDescending(a => Missions.Enhanced(game, a, SkillIndex.Espionage)).ThenBy(a => a.Key).Cast<Agent>()
                      .Concat(free.OrderByDescending(c => Missions.Enhanced(game, c, SkillIndex.Espionage)).ThenBy(c => c.Key)))
         {
             if (!Room) return false;
-            if (MissionEligibility.Validate(game, 0x240, Side, type.Common.Ref, [a], [], target) is not null) continue;
-            if (!Issue(game, new Command(0x240, Side) { Targets = [(a, 0)], ArgRef = target, Fields = [0, 0, type.Common.Ref] }, used)) continue;
-            RecordEstimate(game, k, 0x52, target, [a], -1, -1);
+            if (MissionEligibility.Validate(game, CommandType.CreateMission, Side, type.Common.Ref, [a], [], target) is not null) continue;
+            if (!Issue(game, new Command(CommandType.CreateMission, Side) { Targets = [(a, GroupMode.Object)], ArgRef = target, Fields = [0, 0, type.Common.Ref] }, used)) continue;
+            RecordEstimate(game, k, MissionKind.Espionage, target, [a], -1, -1);
             if (a is Character ch) free.Remove(ch);
             return true;
         }
@@ -202,7 +203,7 @@ public sealed partial class OpenSWRController
     void Hunt(GameState game, Known k, SectorMap map, List<Character> free, List<Agent> scoutUnits, List<Mission> running, ISet<GameObject?> targeted,
         HashSet<GameObject> used, Action<IEnumerable<Covert>> sendCovert)
     {
-        int hunts = running.Count(m => m.Kind == 0x62 && m.Objective is { } o && EnemyObjective(o));
+        int hunts = running.Count(m => m.Kind == MissionKind.Abduction && m.Objective is { } o && EnemyObjective(o));
         if (hunts < MaxHunts)
         {
             var abductions = HuntAbductions(game, k, free, targeted, used).Take(MaxHunts - hunts).ToList();
@@ -211,7 +212,7 @@ public sealed partial class OpenSWRController
             foreach (var x in abductions.Where(x => targeted.Contains(x.Target))) HuntEstimates.Add((game.Day, x.Target.Ref, x.Success, assumed[x.Target].Combat, assumed[x.Target].Seen)); // measurement
         }
         foreach (var r in _huntSpies.Where(e => game.Day - e.Value >= HuntSpyDays).Select(e => e.Key).ToList()) _huntSpies.Remove(r);
-        int spies = running.Count(m => m.Kind == 0x52 && m.Objective is StarSystem s && _huntSpies.ContainsKey(s.Ref));
+        int spies = running.Count(m => m.Kind == MissionKind.Espionage && m.Objective is StarSystem s && _huntSpies.ContainsKey(s.Ref));
         foreach (var c in game.Characters.Where(EnemyObjective).OrderBy(c => c.Key))
             foreach (var s in HuntSearch(game, k, c))
             {
@@ -225,8 +226,8 @@ public sealed partial class OpenSWRController
                 break; // one search per character per decision
             }
         if (Side != Owner.Empire) return;
-        int searching = running.Count(m => m.Kind is 0x52 or 0x54 && m.Objective is StarSystem s && _hqCandidates.ContainsKey(s.Ref));
-        var recon = TypeOf(game, 0x54);
+        int searching = running.Count(m => m.Kind is MissionKind.Espionage or MissionKind.Reconnaissance && m.Objective is StarSystem s && _hqCandidates.ContainsKey(s.Ref));
+        var recon = TypeOf(game, MissionKind.Reconnaissance);
         foreach (var s in HqSearchOrder(game))
         {
             if (searching >= MaxHqSearch || !Room) break;
@@ -234,8 +235,8 @@ public sealed partial class OpenSWRController
             bool sent = false;
             if (!Knowledge.See(game, s, Side).Explored)
             {
-                if (recon is not null && scoutUnits.FirstOrDefault(a => MissionEligibility.Validate(game, 0x240, Side, recon.Common.Ref, [a], [], s) is null) is { } unit
-                    && Issue(game, new Command(0x240, Side) { Targets = [(unit, 0)], ArgRef = s, Fields = [0, 0, recon.Common.Ref] }, used))
+                if (recon is not null && scoutUnits.FirstOrDefault(a => MissionEligibility.Validate(game, CommandType.CreateMission, Side, recon.Common.Ref, [a], [], s) is null) is { } unit
+                    && Issue(game, new Command(CommandType.CreateMission, Side) { Targets = [(unit, GroupMode.Object)], ArgRef = s, Fields = [0, 0, recon.Common.Ref] }, used))
                 {
                     scoutUnits.Remove(unit);
                     sent = true;
@@ -302,7 +303,7 @@ public sealed partial class OpenSWRController
     internal List<Covert> HuntAbductions(GameState game, Known k, List<Character> free, ISet<GameObject?> targeted, HashSet<GameObject> used)
     {
         var result = new List<Covert>();
-        if (TypeOf(game, 0x62) is not { } type) return result;
+        if (TypeOf(game, MissionKind.Abduction) is not { } type) return result;
         var median = MedianSystem(game, k);
         var forces = FreeSpecialForces(game, used);
         foreach (var c in game.Characters.Where(EnemyObjective).OrderBy(c => c.Key))
@@ -318,9 +319,9 @@ public sealed partial class OpenSWRController
             if (still && Knowledge.ViewParent(game, c, Side) != at) continue; // only a target the view places directly in the system
             var known = Assume(game, k, at, KnownAt(game, k, at, Knowledge.ViewParent(game, c, Side) is StarSystem, median), median);
             var pool = free.Cast<Agent>().Concat(forces).Where(a => !used.Contains(a) && result.All(x => !x.Team.Contains(a) && !(x.Decoys ?? []).Contains(a))).ToList();
-            bool Valid(List<Agent> team, List<Agent> decoys) => MissionEligibility.Validate(game, 0x240, Side, type.Common.Ref, team, [.. decoys], c) is null;
+            bool Valid(List<Agent> team, List<Agent> decoys) => MissionEligibility.Validate(game, CommandType.CreateMission, Side, type.Common.Ref, team, [.. decoys], c) is null;
             (List<Agent> Team, List<Agent> Decoys) Plan(Agent a) =>
-                On(V7.Agents) && AgentDecoys(game, 0x62, c, known, [a], [], pool.Where(x => x != a), Valid, out _, k) is { } p ? p : ([a], []);
+                On(V7.Agents) && AgentDecoys(game, MissionKind.Abduction, c, known, [a], [], pool.Where(x => x != a), Valid, out _, k) is { } p ? p : ([a], []);
             if (still)
             {
                 // HuntStill: among the candidates whose planned estimate reaches the gate, the fewest travel days, then the higher estimate
@@ -333,26 +334,26 @@ public sealed partial class OpenSWRController
                     continue;
                 }
                 if (best[0].Days > MaxHuntDays) continue;
-                result.Add(new(0x62, c, best[0].Plan.Team, 0, best[0].Estimate, best[0].Plan.Decoys));
+                result.Add(new(MissionKind.Abduction, c, best[0].Plan.Team, 0, best[0].Estimate, best[0].Plan.Decoys));
                 continue;
             }
             var agent = pool.Where(a => Valid([a], [])).OrderByDescending(a => Missions.Enhanced(game, a, SkillIndex.Combat)).ThenBy(a => a.Key).FirstOrDefault();
             if (agent is null) continue;
             List<Agent> team = [agent], decoys = [];
-            if (On(V7.Agents) && AgentDecoys(game, 0x62, c, known, team, [], pool.Where(a => a != agent), Valid, out _, k) is { } planned) (team, decoys) = planned;
+            if (On(V7.Agents) && AgentDecoys(game, MissionKind.Abduction, c, known, team, [], pool.Where(a => a != agent), Valid, out _, k) is { } planned) (team, decoys) = planned;
             double estimate = HuntEstimate(game, k, team, decoys, c, known);
             if (estimate < HuntGate)
             {
                 _huntWait[c.Ref] = at.Ref;
                 continue;
             }
-            result.Add(new(0x62, c, team, 0, estimate, decoys));
+            result.Add(new(MissionKind.Abduction, c, team, 0, estimate, decoys));
         }
         return [.. result.OrderByDescending(x => x.Success).ThenBy(x => x.Target.Key)];
     }
 
     /// <summary>Hunt rule 1: the objective abductions first in a ranked covert list.</summary>
-    internal List<Covert> HuntFirst(IEnumerable<Covert> ranked) => [.. ranked.OrderBy(x => x.Kind == 0x62 && EnemyObjective(x.Target) ? 0 : 1)];
+    internal List<Covert> HuntFirst(IEnumerable<Covert> ranked) => [.. ranked.OrderBy(x => x.Kind == MissionKind.Abduction && EnemyObjective(x.Target) ? 0 : 1)];
 
     // ---- Siege ----
 
@@ -364,7 +365,7 @@ public sealed partial class OpenSWRController
     {
         StarSystem? s = Side == Owner.Empire
             ? HqObject(game) is { } hq && !Knowledge.See(game, hq, Side).Destroyed ? Knowledge.Location(game, hq, Side) as StarSystem : null
-            : game.Systems.FirstOrDefault(x => x.Type == Refs.Coruscant);
+            : game.Known.Coruscant;
         if (s is null || Knowledge.See(game, s, Side) is not { Owner: var o, Destroyed: false } || o != Enemy) return null;
         if (Side == Owner.Alliance && Own(game).Count <= game.Systems.Count(x => Knowledge.See(game, x, Side) is { Owner: var e, Destroyed: false } && e == Enemy)) return null;
         return s;
@@ -416,7 +417,7 @@ public sealed partial class OpenSWRController
 
     /// <summary>
     /// Siege at the target: while own fleets hold the orbit with no known enemy fleet and the view shows enemy troops or defence
-    /// facilities [0x22, 0x28) there, they bombard.
+    /// facilities (families 34 to 39) there, they bombard.
     /// True when a bombardment went out (no landing this decision).
     /// </summary>
     bool SiegeBombard(GameState game, Known k, StarSystem target, HashSet<GameObject> used)
@@ -424,7 +425,7 @@ public sealed partial class OpenSWRController
         var there = Fleets(game).Where(f => f.Container == target && f.Usable && !f.Enroute && !used.Contains(f)).OrderBy(f => f.Key).ToList();
         if (there.Count == 0 || k.Fleets(target, Enemy).Count > 0 || !EnemyGarrisonSeen(k, target)) return false;
         SiegeBombardTries++;
-        bool ok = IssueBombard(game, target, there, used, 0x222);
+        bool ok = IssueBombard(game, target, there, used, CommandType.BombardVariant2);
         if (ok) SiegeBombards++;
         return ok;
     }
@@ -432,10 +433,10 @@ public sealed partial class OpenSWRController
     void SaveObjectives(JsonObject j)
     {
         if (_hqInit) j["hqInit"] = true;
-        if (_hqCandidates.Count > 0) j["hqCandidates"] = new JsonArray([.. _hqCandidates.Select(e => (JsonNode)new JsonArray(e.Key, e.Value))]);
+        if (_hqCandidates.Count > 0) j["hqCandidates"] = new JsonArray([.. _hqCandidates.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value))]);
         if (_hqKnownAt is { } at) j["hqKnownAt"] = at;
-        if (_huntSpies.Count > 0) j["huntSpies"] = new JsonArray([.. _huntSpies.Select(e => (JsonNode)new JsonArray(e.Key, e.Value))]);
-        if (_huntWait.Count > 0) j["huntWait"] = new JsonArray([.. _huntWait.Select(e => (JsonNode)new JsonArray(e.Key, e.Value))]);
+        if (_huntSpies.Count > 0) j["huntSpies"] = new JsonArray([.. _huntSpies.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value))]);
+        if (_huntWait.Count > 0) j["huntWait"] = new JsonArray([.. _huntWait.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value))]);
         if (_lastSiege is { } siege) j["lastSiege"] = siege;
     }
 

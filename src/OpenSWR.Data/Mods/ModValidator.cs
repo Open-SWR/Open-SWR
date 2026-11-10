@@ -11,41 +11,45 @@ public static class ModValidator
 {
     /// <summary>
     /// SdRefs in moddable SD files that the game code names directly: they must exist (stats may change).
-    /// The HQ type 0x20000001 is the record behind the fixed HQ object 0x20000005 (setup FACLHQTB).
+    /// The HQ type 536870913 is the record behind the fixed HQ object 536870917 (setup FACLHQTB).
     /// </summary>
     public static readonly HashSet<uint> Protected =
     [
-        0x10000001, 0x10000002, 0x10000003, 0x10000004, 0x10000005, 0x10000006, 0x10000007, 0x10000008, 0x10000009, 0x1000000A,
-        0x1400004A, 0x14000082, 0x20000001, 0x25000004, 0x2C000001, 0x2D000002,
-        0x30000240, 0x31000241, 0x32000242, 0x33000243, 0x34000280, 0x35000281,
-        0x38000341, 0x38000343, 0x38000344, 0x38000380, 0x38000381, 0x38000382, 0x38000383, 0x3800038C,
-        0x3C000001, 0x3C000002, 0x3C000003, 0x3C000004, 0x3C000005, 0x3C000006, 0x3C000007, 0x3C000008, 0x3C000009,
-        0x90000109, 0x92000121,
+        Refs.AllianceFleetRegiment, Refs.AllianceArmy, Refs.SullustanRegiment, Refs.WookieeRegiment,
+        Refs.MonCalamariRegiment, Refs.Stormtroopers, Refs.ImperialFleetRegiment, Refs.EmpireArmy,
+        Refs.WarDroidRegiment, Refs.DarkTrooperRegiment,
+        Refs.CC7700Frigate, Refs.ImmobilizerCruiser, Refs.HeadquartersType, Refs.DeathStarShieldType, Refs.Mine,
+        Refs.Refinery,
+        Refs.Mothma, Refs.Leia, Refs.Luke, Refs.Han, Refs.Palpatine, Refs.Vader,
+        Refs.Wedge, Refs.Chewbacca, Refs.Dodonna, Refs.Jerjerrod, Refs.Ozzel, Refs.Piett, Refs.Veers, Refs.Needa,
+        Refs.Guerrillas, Refs.Infiltrators, Refs.LongprobeRecon, Refs.BothanSpies, Refs.ProbeDroids,
+        Refs.EspionageDroids, Refs.ImperialCommandos, Refs.NoghriCommandos, Refs.BountyHunter,
+        Refs.Coruscant, Refs.Yavin,
     ];
-
-    const uint Coruscant = 0x90000109, Yavin = 0x92000121;
 
     /// <summary>Characters placed by fixed setup rules and the side they must belong to (1 Alliance, 2 Empire).</summary>
     static readonly (uint Ref, int Side)[] FixedCharacters =
     [
-        (0x30000240, 1), (0x31000241, 1), (0x32000242, 1), (0x33000243, 1), (0x38000341, 1), (0x38000343, 1), (0x38000344, 1),
-        (0x34000280, 2), (0x35000281, 2), (0x38000380, 2), (0x38000381, 2), (0x38000382, 2), (0x38000383, 2), (0x3800038C, 2),
+        (Refs.Mothma, 1), (Refs.Leia, 1), (Refs.Luke, 1), (Refs.Han, 1), (Refs.Wedge, 1), (Refs.Chewbacca, 1),
+        (Refs.Dodonna, 1),
+        (Refs.Palpatine, 2), (Refs.Vader, 2), (Refs.Jerjerrod, 2), (Refs.Ozzel, 2), (Refs.Piett, 2), (Refs.Veers, 2),
+        (Refs.Needa, 2),
     ];
 
     /// <summary>Families with an object class, per moddable SD file.</summary>
     static readonly Dictionary<string, uint[]> Registered = new()
     {
-        ["TROOPSD"] = [0x10], ["CAPSHPSD"] = [0x14, 0x18], ["FIGHTSD"] = [0x1C], ["ALLFACSD"] = [0x20],
-        ["DEFFACSD"] = [0x22, 0x23, 0x24, 0x25], ["MANFACSD"] = [0x28, 0x29, 0x2A], ["PROFACSD"] = [0x2C, 0x2D],
-        ["MJCHARSD"] = [0x30, 0x31, 0x32, 0x33, 0x34, 0x35], ["MNCHARSD"] = [0x38], ["SPECFCSD"] = [0x3C],
-        ["SECTORSD"] = [0x80], ["SYSTEMSD"] = [0x90, 0x92],
+        ["TROOPSD"] = [Families.Troop], ["CAPSHPSD"] = [Families.CapitalShip, Families.DeathStar], ["FIGHTSD"] = [Families.Fighter], ["ALLFACSD"] = [Families.Headquarters],
+        ["DEFFACSD"] = [Families.IonCannon, Families.Gun, Families.PlanetaryShield, Families.DeathStarShield], ["MANFACSD"] = [Families.Shipyard, Families.TrainingFacility, Families.ConstructionYard], ["PROFACSD"] = [Families.Mine, Families.Refinery],
+        ["MJCHARSD"] = [Families.MajorCharacter, Families.Leia, Families.Luke, Families.Han, Families.Palpatine, Families.Vader], ["MNCHARSD"] = [Families.MinorCharacter], ["SPECFCSD"] = [Families.SpecialForce],
+        ["SECTORSD"] = [Families.Sector], ["SYSTEMSD"] = [Families.CoreSystem, Families.RimSystem],
     };
 
     /// <summary>The producer pair a buildable record of the file may name; (0, 0) = not buildable is always allowed.</summary>
     static readonly Dictionary<string, (uint, uint)> Producer = new()
     {
-        ["TROOPSD"] = (0x29, 0x2A), ["SPECFCSD"] = (0x29, 0x2A), ["CAPSHPSD"] = (0x28, 0x29), ["FIGHTSD"] = (0x28, 0x29),
-        ["ALLFACSD"] = (0x2A, 0x2B), ["DEFFACSD"] = (0x2A, 0x2B), ["MANFACSD"] = (0x2A, 0x2B), ["PROFACSD"] = (0x2A, 0x2B),
+        ["TROOPSD"] = (Families.TrainingFacility, Families.ConstructionYard), ["SPECFCSD"] = (Families.TrainingFacility, Families.ConstructionYard), ["CAPSHPSD"] = (Families.Shipyard, Families.TrainingFacility), ["FIGHTSD"] = (Families.Shipyard, Families.TrainingFacility),
+        ["ALLFACSD"] = (Families.ConstructionYard, Families.ManufacturingEnd), ["DEFFACSD"] = (Families.ConstructionYard, Families.ManufacturingEnd), ["MANFACSD"] = (Families.ConstructionYard, Families.ManufacturingEnd), ["PROFACSD"] = (Families.ConstructionYard, Families.ManufacturingEnd),
     };
 
     /// <summary>The side whose units a seed table places: its items must be available to that side.</summary>
@@ -105,7 +109,7 @@ public static class ModValidator
             uint r = s.Common.Ref;
             if (s.Common.Index is < 100 or > 299) err(r, "index", "system Index must be 100–299.");
             if (!sectors.TryGetValue(s.SectorIndex, out var sector)) { err(r, "sector", $"no sector with Index {s.SectorIndex}."); continue; }
-            if ((sector.Group == 1) != (s.Common.Family == 0x90))
+            if ((sector.Group == 1) != (s.Common.Family == Families.CoreSystem))
                 err(r, "sector", $"family 0x{s.Common.Family:X2} in a sector of group {sector.Group}: group 1 sectors hold core systems (0x90) only, groups 2 / 3 rim systems (0x92) only.");
             if (s.X >= 1024 || s.Y >= 1024) err(r, "x / y", "below 1024 (galaxy map).");
             // sector window: a system lies in its sector's box of 1024/13 x 1024/10 units from the sector's x / y
@@ -116,7 +120,7 @@ public static class ModValidator
         // the AI's and the advisor's sector records hold 10 system records: an 11th system would never be seen
         foreach (var g in d.Systems.Where(s => sectors.ContainsKey(s.SectorIndex)).GroupBy(s => s.SectorIndex).Where(g => g.Count() > 10))
             err(sectors[g.Key].Common.Ref, "systems", $"{g.Count()} systems in this sector, at most 10 (the computer player's sector records hold 10).");
-        foreach (uint must in new[] { Coruscant, Yavin })
+        foreach (uint must in new[] { Refs.Coruscant, Refs.Yavin })
             if (d.Systems.FirstOrDefault(s => s.Common.Ref == must) is { } s && sectors.TryGetValue(s.SectorIndex, out var sec) && sec.GalaxySize != 1)
                 err(must, "sector", "its sector must have galaxySize 1 (the system exists in every galaxy size).");
 
@@ -129,7 +133,7 @@ public static class ModValidator
         // Setup steps 11 and 21 per galaxy size and settings column (columns 1-7 = side x difficulty, head to head)
         var side = d.SideParams.GroupBy(p => p.ParamId).ToDictionary(g => g.Key, g => g.First().Values);
         int S(uint id, int column, int s) => side.TryGetValue(id, out var v) ? v[2 * column + s - 1] : 0;
-        var minors = d.MinorCharacters.Where(c => c.Common.Family == 0x38).ToList();
+        var minors = d.MinorCharacters.Where(c => c.Common.Family == Families.MinorCharacter).ToList();
         for (int size = 1; size <= 3; size++)
         {
             var placed = d.Systems.Where(s => sectors.TryGetValue(s.SectorIndex, out var sec) && sec.GalaxySize <= size).ToList();
@@ -138,13 +142,13 @@ public static class ModValidator
             if (n < 1) continue;
             for (int column = 1; column <= 7; column++)
             {
-                // step 11 quotas: a, b (Alliance), c, d (Empire) = pct(N, S 0x1E00 / 0x1E01); the capital takes one of c
-                int a = n * S(0x1E00, column, 1) / 100, b = n * S(0x1E01, column, 1) / 100, c = n * S(0x1E00, column, 2) / 100, e = n * S(0x1E01, column, 2) / 100;
+                // step 11 quotas: a, b (Alliance), c, d (Empire) = pct(N, S 7680 / 7681); the capital takes one of c
+                int a = n * S(7680, column, 1) / 100, b = n * S(7681, column, 1) / 100, c = n * S(7680, column, 2) / 100, e = n * S(7681, column, 2) / 100;
                 if (c < 1) errors.Add($"galaxy size {size}, settings column {column}: {n} core systems give the Empire a quota of {c}; the Empire capital (90000109) needs 1 (how setup handles a quota of 0 is not known).");
                 if (a + b + c + e > n) errors.Add($"galaxy size {size}, settings column {column}: control quotas {a} + {b} + {c} + {e} exceed the {n} core systems (step 11).");
                 foreach (int s in new[] { 1, 2 })
                 {
-                    int want = S(0x1400u + (uint)size - 1, column, s);
+                    int want = S(5120u + (uint)size - 1, column, s);
                     int free = minors.Count(m => (s == 1 ? m.Alliance != 0 && m.Empire == 0 : m.Empire != 0 && m.Alliance == 0) && !FixedCharacters.Any(f => f.Ref == m.Common.Ref));
                     if (free < want) errors.Add($"galaxy size {size}, settings column {column}: {(s == 1 ? "Alliance" : "Empire")} places {want} random minor characters but has {free} (how setup handles none left is not known).");
                 }
@@ -161,7 +165,7 @@ public static class ModValidator
             {
                 uint p = r.Common.Ref;
                 if ((r.Common.ProducerFamilyMin, r.Common.ProducerFamilyMax) is var got && got != (0u, 0u) && got != pair)
-                    err(p, "producer", $"{file} records are built by family 0x{pair.Item1:X2} (\"{(pair.Item1 == 0x28 ? "shipyard" : pair.Item1 == 0x29 ? "training" : "construction")}\") or none.");
+                    err(p, "producer", $"{file} records are built by family 0x{pair.Item1:X2} (\"{(pair.Item1 == Families.Shipyard ? "shipyard" : pair.Item1 == Families.TrainingFacility ? "training" : "construction")}\") or none.");
                 if (r.U32At(24) == 0 && r.U32At(28) == 0) err(p, "alliance / empire", "at least one side must have the unit.");
                 if (r.U32At(44) > 100) err(p, "researchDifficulty", "0–100.");
             }
@@ -169,7 +173,7 @@ public static class ModValidator
         // Per side and producer family, each research order >= 1 is used at most once among buildable records
         var buildable = d.SdFiles.SelectMany(f => f.Records).Where(r => r.Body.Length >= 6 && r.U32At(32) != 0).ToList();
         foreach (int side in new[] { 1, 2 })
-            foreach (uint f in new uint[] { 0x28, 0x29, 0x2A })
+            foreach (uint f in new uint[] { Families.Shipyard, Families.TrainingFacility, Families.ConstructionYard })
                 foreach (var g in buildable.Where(r => r.Common.ProducerFamilyMin <= f && f < r.Common.ProducerFamilyMax && r.U32At(side == 1 ? 24 : 28) != 0 && r.U32At(40) >= 1)
                              .GroupBy(r => r.U32At(40)).Where(g => g.Count() > 1))
                     err(g.Last().Common.Ref, "researchOrder", $"order {g.Key} is used by {string.Join(", ", g.Select(r => r.Common.Ref.ToString("X8")))} for the {(side == 1 ? "Alliance" : "Empire")} at producer 0x{f:X2}; one record per order.");
@@ -194,10 +198,10 @@ public static class ModValidator
     // timer base (first Start argument) >= 1, variance >= 0, divisors >= 1
     static readonly (uint Id, int Min)[] GeneralMinimums =
     [
-        (0x1802, 1), (0x1803, 0), (0x1804, 1), (0x1805, 0), (0x1C00, 1), (0x1C01, 1), (0x1C02, 0), (0x1E0C, 1), (0x1E0E, 1), (0x1E12, 1),
-        (0x1E13, 1), (0x1E14, 0), (0x1E15, 1), (0x1E16, 0), (0x1E17, 1), (0x1E18, 0), (0x1E25, 1), (0x1E26, 0), (0x1E27, 1), (0x1E28, 0),
-        (0xA16, 1), (0xA17, 0), (0xA18, 1), (0xA19, 0),
-        (0x1400, 1), (0x1420, 1), (0x180A, 1), (0x180B, 1),
+        (6146, 1), (6147, 0), (6148, 1), (6149, 0), (7168, 1), (7169, 1), (7170, 0), (7692, 1), (7694, 1), (7698, 1),
+        (7699, 1), (7700, 0), (7701, 1), (7702, 0), (7703, 1), (7704, 0), (7717, 1), (7718, 0), (7719, 1), (7720, 0),
+        (2582, 1), (2583, 0), (2584, 1), (2585, 0),
+        (5120, 1), (5152, 1), (6154, 1), (6155, 1),
     ];
 
     static void Tables(GameDefinitions d, List<string> errors, Func<string, string> at)
@@ -208,7 +212,7 @@ public static class ModValidator
                 if (entries[i].Key <= entries[i - 1].Key) { errors.Add($"{at(name)}: {name} entries[{i}].key: keys must ascend."); break; }
             if (name is "SYFCCRTB" or "SYFCRMTB")
                 foreach (var e in entries.Where(e => e.Value != 0))
-                    if (d.Resolve((uint)e.Value) is null || new SdRef((uint)e.Value).Family is < 0x20 or >= 0x30)
+                    if (d.Resolve((uint)e.Value) is null || new SdRef((uint)e.Value).Family is < Families.Headquarters or >= Families.MajorCharacter)
                         errors.Add($"{at(name)}: {name} key {e.Key}: value {(uint)e.Value:X8} is not a facility type.");
         }
         // the side availability and maintenance cost of every unit type (the first record of a ref, as Resolve); a character's place for the cost is its Unk24
@@ -231,13 +235,13 @@ public static class ModValidator
                 if (e.Items.Length == 0) { errors.Add($"{where}: items: at least the container slot."); continue; }
                 // items[0] is the container of the other items (or null: they go to the target itself)
                 uint first = e.Items[0].Ref.Value;
-                if (first != 0 && e.Items.Length > 1 && new SdRef(first).Family is < 0x14 or >= 0x1C)
+                if (first != 0 && e.Items.Length > 1 && new SdRef(first).Family is < Families.CapitalShip or >= Families.Fighter)
                     errors.Add($"{where}: items[0]: {first:X8} holds the other items, so it must be a capital ship type (or null).");
                 for (int i = 0; i < e.Items.Length; i++)
                 {
                     uint r = e.Items[i].Ref.Value;
                     if (i == 0 && r == 0) continue;
-                    if (d.Resolve(r) is null || new SdRef(r).Family is < 0x10 or >= 0x40) { errors.Add($"{where}: items[{i}]: {r:X8} is not a unit type."); continue; }
+                    if (d.Resolve(r) is null || new SdRef(r).Family is < Families.Troop or >= Families.Mission) { errors.Add($"{where}: items[{i}]: {r:X8} is not a unit type."); continue; }
                     if (SeedSide.TryGetValue(name, out int side) && units.TryGetValue(r, out var unit) && (side == 1 ? unit.Alliance : unit.Empire) == 0)
                         errors.Add($"{where}: items[{i}]: {r:X8} is not available to the {(side == 1 ? "Alliance" : "Empire")}.");
                 }

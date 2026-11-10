@@ -10,7 +10,7 @@ namespace OpenSWR.Sim.Ai;
 /// The computer controller's save: the original saves the whole AI (model with every record, all planners,
 /// every operation and task, the strategy object). openswr writes every instance field of those objects: numbers, flags, lists,
 /// sets, list stacks. Game objects are written as their SdRefs; records, operations and tasks once each
-/// in a table (constructor key + fields) and referenced by their table index, so a record held by an op after its detach (0x302)
+/// in a table (constructor key + fields) and referenced by their table index, so a record held by an op after its detach (Destroyed view message)
 /// stays the same instance. Not written: back references (model, game, controller), delegates, the product catalogue (rebuilt at
 /// load), the clone constants and the per-tick observation snapshot (retaken at load).
 /// </summary>
@@ -99,10 +99,10 @@ static class AiSave
             AiAgent x => [r(x.Agent)],
             AiFleet x => [r(x.Fleet)],
             AiShip x => [r(x.Ship)],
-            MissionOp x => [x.Key, x.Class.Family, x.Class.Subtype, (int)x.Side],
-            CharacterOp x => [x.Key, x.Type],
+            MissionOp x => [x.Key, (uint)x.Class.Family, x.Class.Subtype, (int)x.Side],
+            CharacterOp x => [x.Key, x.Type.ToString()],
             FleetOp x => [x.Key],
-            FleetTask x => [x.Type],
+            FleetTask x => [x.Type.ToString()],
             GarrisonTask x => [x.Key],
             _ => throw new NotSupportedException(e.GetType().Name),
         };
@@ -125,7 +125,7 @@ static class AiSave
             if (u == typeof(object)) return new JsonArray(Tag(v), Value(v, v.GetType()));
             switch (v)
             {
-                case Enum: return JsonValue.Create(Convert.ToInt64(v));
+                case Enum: return JsonValue.Create(v.ToString()); // by name: internal codes have no fixed numbers
                 case int x: return x;
                 case uint x: return x;
                 case long x: return x;
@@ -134,7 +134,7 @@ static class AiSave
                 case string x: return x;
                 case GameObject g: return r(g);
                 case Sector x: return x.Definition.Common.Index;
-                case OpClass c: return new JsonArray(c.Family, c.Subtype);
+                case OpClass c: return new JsonArray((uint)c.Family, c.Subtype);
                 case int[] w:
                     {
                         int n = w.Length;
@@ -188,6 +188,7 @@ static class AiSave
                 var a = e["a"]!.AsArray();
                 uint U(int k) => a[k]!.GetValue<uint>();
                 int I(int k) => a[k]!.GetValue<int>();
+                T E<T>(int k) where T : struct, Enum => Enum.Parse<T>(a[k]!.GetValue<string>());
                 _entities[i] = (string)e["t"]! switch
                 {
                     nameof(AiSystem) => new AiSystem((StarSystem)o(U(0)), model),
@@ -195,10 +196,10 @@ static class AiSave
                     nameof(AiAgent) => new AiAgent((Agent)o(U(0))),
                     nameof(AiFleet) => new AiFleet((Fleet)o(U(0))),
                     nameof(AiShip) => new AiShip(o(U(0))),
-                    nameof(MissionOp) => new MissionOp(I(0), OpClass.Of(U(1), I(2)) ?? throw new InvalidDataException("unknown op class"), (Owner)I(3)),
-                    nameof(CharacterOp) => new CharacterOp(I(0), I(1)),
+                    nameof(MissionOp) => new MissionOp(I(0), OpClass.Of((MissionKind)U(1), I(2)) ?? throw new InvalidDataException("unknown op class"), (Owner)I(3)),
+                    nameof(CharacterOp) => new CharacterOp(I(0), E<CharacterOpType>(1)),
                     nameof(FleetOp) => new FleetOp(I(0)),
-                    nameof(FleetTask) => new FleetTask(I(0)),
+                    nameof(FleetTask) => new FleetTask(E<FleetTaskType>(0)),
                     nameof(GarrisonTask) => new GarrisonTask(I(0)),
                     var t => throw new InvalidDataException($"unknown AI entity {t}"),
                 };
@@ -265,11 +266,11 @@ static class AiSave
                 string tag = (string)n[0]!;
                 return Read(n[1], tag == "g" ? typeof(GameObject) : Tags[tag]);
             }
-            if (u.IsEnum) return Enum.ToObject(u, n.GetValue<long>());
+            if (u.IsEnum) return Enum.Parse(u, n.GetValue<string>());
             if (u.IsPrimitive || u == typeof(string)) return n.Deserialize(u);
             if (typeof(GameObject).IsAssignableFrom(u)) return _o(n.GetValue<uint>());
             if (u == typeof(Sector)) return Sector(n.GetValue<uint>());
-            if (u == typeof(OpClass)) return OpClass.Of(n[0]!.GetValue<uint>(), n[1]!.GetValue<int>());
+            if (u == typeof(OpClass)) return OpClass.Of((MissionKind)n[0]!.GetValue<uint>(), n[1]!.GetValue<int>());
             if (IsEntity(u)) return _entities[n.GetValue<int>()];
             if (u.IsArray)
             {

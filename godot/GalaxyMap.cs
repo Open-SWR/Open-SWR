@@ -16,7 +16,7 @@ using SimOwner = OpenSWR.Sim.Owner;
 /// </summary>
 public partial class GalaxyMap : Node2D
 {
-    const ushort GalaxyBitmap = 902;
+    const ushort GalaxyBitmap = StrategyBitmaps.Galaxy;
     const float HoverRadius = 4f; // screen pixels
 
     Texture2D? _galaxy, _dimmed;
@@ -52,7 +52,7 @@ public partial class GalaxyMap : Node2D
     public StarSystem? HoveredSystem => _hovered is null ? null : _state.GetValueOrDefault(_hovered);
 
     /// <summary>
-    /// Map display filter mode: 0x80 = the normal map; any other mode draws background 903 and one 17 x 17
+    /// Map display filter mode: 128 = the normal map; any other mode draws background 903 and one 17 x 17
     /// marker cell per system (glyph at offset (1, 1), Inferred) from the player side's views (<see cref="MapFilter"/>);
     /// hidden cells show the white dot 10158 (observation O3); fleet markers and system dots are left out.
     /// </summary>
@@ -62,7 +62,7 @@ public partial class GalaxyMap : Node2D
         set { _filter = value; Refresh(); }
     }
 
-    /// <summary>The one-system list (SD indexes) of the advisor-only modes 0x92 / 0x93; set before <see cref="FilterMode"/>.</summary>
+    /// <summary>The one-system list (SD indexes) of the two advisor-only one-system modes; set before <see cref="FilterMode"/>.</summary>
     public IReadOnlyCollection<int>? FilterList { get; set; }
 
     /// <summary>Redraws and re-reports the hover text after the game state changed (a day passed, an order ran); recomputes the filter cells (openswr: all cells per refresh).</summary>
@@ -110,10 +110,10 @@ public partial class GalaxyMap : Node2D
         var image = GameFiles.LoadBitmap(gameDir, "STRATEGY.DLL", GalaxyBitmap);
         _logicalSize = image.GetSize();
         _galaxy = ImageTexture.CreateFromImage(image);
-        var dimmed = GameFiles.LoadBitmap(gameDir, "STRATEGY.DLL", 903);
+        var dimmed = GameFiles.LoadBitmap(gameDir, "STRATEGY.DLL", StrategyBitmaps.MapFilterBackground);
         _dimmed = ImageTexture.CreateFromImage(dimmed); // filter background
         DrawLog.Register(_galaxy, "STRATEGY.DLL", GalaxyBitmap, image.GetSize(), -1);
-        DrawLog.Register(_dimmed, "STRATEGY.DLL", 903, dimmed.GetSize(), -1);
+        DrawLog.Register(_dimmed, "STRATEGY.DLL", StrategyBitmaps.MapFilterBackground, dimmed.GetSize(), -1);
         // a mod's galaxy picture: drawn into the same logical 607 x 437 rect, so the coordinate mapping holds;
         // the filter background is the same picture darkened (openswr's choice: a mod has no second picture)
         _dimModulate = Colors.White;
@@ -160,7 +160,7 @@ public partial class GalaxyMap : Node2D
             foreach (var (system, cell) in _cells)
             {
                 var at = Pixel(system.Definition.X, system.Definition.Y);
-                int glyph = cell.Hidden ? 10158 : cell.Glyph; // flag-0x80 cells (unexplored / destroyed): the white dot (observation O3)
+                int glyph = cell.Hidden ? StrategyBitmaps.HiddenSystemDot : cell.Glyph; // cells with flag 128 (unexplored / destroyed): the white dot (observation O3)
                 if (glyph == 0) continue;
                 var g = Assets.Strategy((ushort)glyph);
                 DrawTextureRect(g, new Rect2(at + Vector2.One, new Vector2(15, 15)), false);
@@ -209,7 +209,7 @@ public partial class GalaxyMap : Node2D
     // Own presentation, not the original's: Alliance red, Empire blue, neutral grey; unpopulated dimmed; as the side knows it.
     Color SystemColor(SystemRecord s)
     {
-        if (!_state.TryGetValue(s, out var state) || _game is null) return s.Common.Family == 0x90 ? Colors.Gold : Colors.White;
+        if (!_state.TryGetValue(s, out var state) || _game is null) return s.Common.Family == Families.CoreSystem ? Colors.Gold : Colors.White;
         var seen = Knowledge.See(_game, state, Side);
         return seen.Populated ? OwnerColor(seen.Owner) : OwnerColor(seen.Owner).Darkened(0.6f);
     }
@@ -294,9 +294,9 @@ public partial class GalaxyMap : Node2D
     {
         if (_state.TryGetValue(s, out var state)) return Describe(state);
         var sector = _sectorByIndex[s.SectorIndex];
-        string kind = s.Common.Family == 0x90 ? "core" : "rim";
+        string kind = s.Common.Family == Families.CoreSystem ? "core" : "rim";
         return $"{DisplayName(s.Common)}   sector: {DisplayName(sector.Common)} (group {sector.Group}, galaxy size {sector.GalaxySize})   "
-             + $"{kind}   pos: ({s.X}, {s.Y})   index {s.Common.Index}   string {s.Common.StringModule}:{s.Common.StringId}   unk1C {s.Unk1C}";
+             + $"{kind}   pos: ({s.X}, {s.Y})   index {s.Common.Index}   string {s.Common.StringModule}:{s.Common.StringId}   picture {s.Picture}";
     }
 
     /// <summary>Details of a system as <see cref="Side"/> knows it.</summary>
@@ -320,11 +320,11 @@ public partial class GalaxyMap : Node2D
             if (!live) // a frozen view: what was seen, no ETA
             {
                 int Seen(int tab) => ScreenViews.FleetContents(game, [f], tab, Side).Count;
-                return $"{ScreenViews.View(game, f, Side).Owner} fleet {f.Id:X} (last seen): {Seen(0x66)} ships {Seen(0x67)} fighters {Seen(0x68)} troops";
+                return $"{ScreenViews.View(game, f, Side).Owner} fleet {f.Id} (last seen): {Seen(ControlIds.FleetShipsTab)} ships {Seen(ControlIds.FleetFightersTab)} fighters {Seen(ControlIds.FleetTroopsTab)} troops";
             }
             var inside = All(f).ToList();
             string travel = f.Enroute ? $" en route, ETA day {f.Eta}" : "";
-            return $"{f.Owner} fleet {f.Id:X}: {inside.Count(x => Family.IsCapitalShip(x.Type))} ships {inside.Count(x => Family.Of(x.Type) is >= 0x1C and < 0x20)} fighters {inside.Count(x => Family.IsTroop(x.Type))} troops{travel}";
+            return $"{f.Owner} fleet {f.Id}: {inside.Count(x => Family.IsCapitalShip(x.Type))} ships {inside.Count(x => Family.Of(x.Type) is >= Families.Fighter and < Families.Headquarters)} fighters {inside.Count(x => Family.IsTroop(x.Type))} troops{travel}";
         }));
         string people = string.Join(", ", objects.OfType<Character>().Select(c => DisplayName(c.Definition.Common) + (c.Captured ? " (prisoner)" : "")));
         return $"{DisplayName(s.Definition.Common)} ({(s.IsCore ? "core" : "rim")}): {seen.Owner}{state}   {support}"

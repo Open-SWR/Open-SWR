@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 using System.Text.Json.Nodes;
 
 namespace OpenSWR.Sim.Ai;
@@ -63,7 +64,7 @@ public sealed partial class OpenSWRController
             }
             double space = PredictSpace(game, k, s, reinforcements, fleets).Win;
             var defenders = s.Contents.Where(t => OwnTroop(t, Side) && t.Usable).Select(t => t.Type).ToList();
-            var facilities = s.Contents.Where(f => f.Owner == Side && f.Usable && Family.Of(f.Type) is >= 0x22 and < 0x28).Select(f => f.Type).ToList();
+            var facilities = s.Contents.Where(f => f.Owner == Side && f.Usable && Family.Of(f.Type) is >= Families.IonCannon and < Families.Shipyard).Select(f => f.Type).ToList();
             double ground = troops == 0 ? 1 : 1 - PredictGround(game, s, [.. Enumerable.Repeat(EnemyArmy, troops)], defenders, facilities);
             result[s] = new(s, fleets, force, troops, days, defence, HighValue(s) && (space >= 0.6 || ground >= 0.6));
         }
@@ -123,7 +124,7 @@ public sealed partial class OpenSWRController
 
     void SaveWatch(JsonObject j)
     {
-        if (_watched.Count > 0) j["watched"] = new JsonArray([.. _watched.Select(e => (JsonNode)new JsonArray(e.Key, e.Value))]);
+        if (_watched.Count > 0) j["watched"] = new JsonArray([.. _watched.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value))]);
     }
 
     void LoadWatch(JsonObject j)

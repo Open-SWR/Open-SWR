@@ -55,8 +55,8 @@ public static class ModArt
     }
 
     /// <summary>
-    /// Mod picture of a record in form <paramref name="form"/> (the offset added to the picture id p: 0 small, 0x4000 large,
-    /// + 0x1000 side 2, ...), with its logical size = the size of the GOKRES picture p + form of the first install record of the
+    /// Mod picture of a record in form <paramref name="form"/> (the offset added to the picture id p: 0 small, 16384 large,
+    /// + 4096 side 2, ...), with its logical size = the size of the GOKRES picture p + form of the first install record of the
     /// same family (the PNG's own size when there is none). Null without a mod picture.
     /// </summary>
     public static (Texture2D Texture, Vector2 Size)? Picture(GameDefinitions d, uint sdRef, int form)
@@ -84,7 +84,7 @@ public static class ModArt
     /// </summary>
     public static (Texture2D Texture, Vector2 Size)? Install(bool gokres, int id)
     {
-        if (id is <= 0 or > 0xFFFF || Assets.Indexed((ushort)id, gokres ? "GOKRES.DLL" : "STRATEGY.DLL") is not { } b) return null;
+        if (id is <= 0 or > 65535 || Assets.Indexed((ushort)id, gokres ? "GOKRES.DLL" : "STRATEGY.DLL") is not { } b) return null;
         if (!Keyed.TryGetValue((gokres, id), out var t))
         {
             Keyed[(gokres, id)] = t = Assets.Texture(b, b.Key);
@@ -121,7 +121,7 @@ public static class ModArt
     {
         string id = $"{w}x{h}:{fill}:" + string.Join(",", layers.Select(l => $"{(l.Gokres ? "G" : "S")}{l.Id}{(int)l.Role}"));
         if (Composed.TryGetValue(id, out var known)) return known;
-        var parts = layers.Select(l => (l.Id is > 0 and <= 0xFFFF ? Assets.Indexed((ushort)l.Id, l.Gokres ? "GOKRES.DLL" : "STRATEGY.DLL") : null, l.Role == ScreenViews.PictureRole.Frame))
+        var parts = layers.Select(l => (l.Id is > 0 and <= 65535 ? Assets.Indexed((ushort)l.Id, l.Gokres ? "GOKRES.DLL" : "STRATEGY.DLL") : null, l.Role == ScreenViews.PictureRole.Frame))
             .Where(p => p.Item1 is not null).Select(p => (p.Item1!, p.Item2)).ToList();
         if (parts.Count == 0) return Composed[id] = null;
         var (picture, key) = IndexedBitmap.Compose(w, h, fill, parts[0].Item1.Palette, parts);
@@ -134,10 +134,10 @@ public static class ModArt
     public static (Texture2D Texture, Vector2 Size) SystemPicture(GameDefinitions d, StarSystem s, int picture, bool destroyed)
     {
         if (!destroyed && Texture(d, s.Definition.Common.Ref) is { } t) return (t, Fit(t, new Vector2(37, 37)));
-        ushort id = (ushort)(destroyed ? 10240 : 14000 + picture);
+        ushort id = (ushort)(destroyed ? StrategyBitmaps.DestroyedSystem : StrategyBitmaps.SystemPictureBase + picture);
         // An unmodded install has no 14000 range: its SYSTEMSD p is 1-26 over bitmaps 10212-10234, 10237-10239 (Inferred from the art: Bespin, Hoth, Coruscant).
         if (!destroyed && Assets.Module("STRATEGY.DLL").Find(ResId.Bitmap, id) is null)
-            id = (ushort)(picture <= 23 ? 10211 + picture : 10213 + picture);
+            id = (ushort)(picture <= 23 ? StrategyBitmaps.PlainSystemPictureBase + picture : StrategyBitmaps.PlainSystemPictureHighBase + picture);
         return (Assets.Strategy(id), Assets.BitmapSize(id, "STRATEGY.DLL"));
     }
 }

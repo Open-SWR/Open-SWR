@@ -16,7 +16,7 @@ public sealed record XNode(string Type, string? Name, List<object> Data, List<XN
 
 public static class XFile
 {
-    /// <summary>"bzip" (MSZIP) .x -> equivalent "bin " .x. Other .x data is returned unchanged.</summary>
+    /// <summary>"bzip" (MSZIP) .x gives equivalent "bin " .x. Other .x data is returned unchanged.</summary>
     public static byte[] Decompress(ReadOnlySpan<byte> file)
     {
         if (!file[8..12].SequenceEqual("bzip"u8)) return file.ToArray();

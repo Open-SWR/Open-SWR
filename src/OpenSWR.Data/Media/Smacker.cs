@@ -52,8 +52,8 @@ public sealed class SmackerVideo
         for (int t = 0; t < 7; t++)
         {
             uint a = U32(72 + t * 4);
-            if ((a & 0x40000000) != 0)
-                tracks.Add(new SmackerAudioTrack(t, (int)(a & 0xFFFFFF), (a & 0x10000000) != 0, (a & 0x20000000) != 0, (a & 0x80000000) != 0));
+            if ((a & 1073741824) != 0)
+                tracks.Add(new SmackerAudioTrack(t, (int)(a & 16777215), (a & 268435456) != 0, (a & 536870912) != 0, (a & 2147483648u) != 0));
         }
         AudioTracks = tracks;
 
@@ -107,7 +107,7 @@ public sealed class SmackerVideo
         return true;
     }
 
-    // Palette chunk: 0x80 | n -> keep n+1 entries; 0x40 | n, src -> copy n+1 entries from the old palette at src; else 6-bit r, g, b.
+    // Palette chunk: 128 | n gives keep n+1 entries; 64 | n, src gives copy n+1 entries from the old palette at src; else 6-bit r, g, b.
     void UpdatePalette(ReadOnlySpan<byte> data)
     {
         var old = Palette.ToArray();
@@ -115,11 +115,11 @@ public sealed class SmackerVideo
         for (int i = 0; i < data.Length && p < 256;)
         {
             byte b = data[i++];
-            if ((b & 0x80) != 0)
-                p += (b & 0x7F) + 1;
-            else if ((b & 0x40) != 0)
+            if ((b & 128) != 0)
+                p += (b & 127) + 1;
+            else if ((b & 64) != 0)
             {
-                int count = (b & 0x3F) + 1, src = data[i++];
+                int count = (b & 63) + 1, src = data[i++];
                 old.AsSpan(src * 3, count * 3).CopyTo(Palette.AsSpan(p * 3));
                 p += count;
             }
@@ -133,7 +133,7 @@ public sealed class SmackerVideo
         }
     }
 
-    static byte Expand6(byte v) => (byte)(((v & 0x3F) << 2) | ((v & 0x3F) >> 4));
+    static byte Expand6(byte v) => (byte)(((v & 63) << 2) | ((v & 63) >> 4));
 
     void DecodeVideo(BitReader bits)
     {
@@ -145,7 +145,7 @@ public sealed class SmackerVideo
         int blocksPerRow = Width / 4, total = blocksPerRow * (Height / 4);
         for (int block = 0; block < total;)
         {
-            int type = _type.Decode(bits), run = BlockRuns[(type >> 2) & 0x3F];
+            int type = _type.Decode(bits), run = BlockRuns[(type >> 2) & 63];
             switch (type & 3)
             {
                 case 0: // two-colour block: colours from MClr, 16-bit pixel mask from MMap (bit set = high colour)

@@ -27,15 +27,15 @@ public readonly record struct Presence(bool Fighters = false, bool Troops = fals
     public bool Includes(Presence part) => Or(part) == this;
 }
 
-/// <summary>Sector-window icon (group mode 4 / 8 / 0x10 / 0x40): count and colour side (None = hidden).</summary>
-public readonly record struct SectorIcon(int Mode, int Count, Owner Colour)
+/// <summary>Sector-window icon (group mode facilities / ground / fleets / missions): count and colour side (None = hidden).</summary>
+public readonly record struct SectorIcon(GroupMode Mode, int Count, Owner Colour)
 {
     public bool Shown => Count > 0 && Colour is Owner.Alliance or Owner.Empire or Owner.Neutral;
 }
 
 /// <summary>
 /// One system entry of a sector window: picture id (14000 + <see cref="Picture"/>), its top-left in the
-/// window, the side's view of the system and the four icons (order 4, 8, 0x10, 0x40). Energy / raw material: views keep none,
+/// window, the side's view of the system and the four icons (order 4, 8, 16, 64). Energy / raw material: views keep none,
 /// so the real values (Inferred, as <see cref="MapFilter"/>).
 /// </summary>
 public sealed record SectorSystem(StarSystem System, int Picture, int X, int Y, Owner Owner, bool Destroyed, bool Explored, bool Populated, bool Uprising,
@@ -94,27 +94,27 @@ public static class ScreenViews
         var owner = v.Owner;
         int support = side == Owner.Alliance ? v.Support : 100 - v.Support;
         return new(s, (int)s.Definition.Picture, x, y, owner, v.Destroyed, v.Explored, v.Populated, v.Uprising,
-            contents.Any(c => c.In(0x20, 0x22)), s.Energy, s.UsedEnergy, s.RawMaterials, s.UsedRaw, support,
-            [new(4, Facilities(contents, owner).Count, owner), new(8, PlanetUnits(contents, owner).Count, owner), FleetIcon(contents, side, owner),
+            contents.Any(c => c.In(Families.Headquarters, Families.IonCannon)), s.Energy, s.UsedEnergy, s.RawMaterials, s.UsedRaw, support,
+            [new(GroupMode.Facilities, Facilities(contents, owner).Count, owner), new(GroupMode.Ground, PlanetUnits(contents, owner).Count, owner), FleetIcon(contents, side, owner),
              MissionIcon(game, s, side)]);
     }
 
-    /// <summary>Mode 4: facilities [0x28, 0x30) of the view owner.</summary>
-    static List<ViewObject> Facilities(List<ViewObject> contents, Owner owner) => [.. contents.Where(c => c.In(0x28, 0x30) && c.Owner == owner)];
+    /// <summary>Facilities mode: facilities [40, 48) of the view owner.</summary>
+    static List<ViewObject> Facilities(List<ViewObject> contents, Owner owner) => [.. contents.Where(c => c.In(Families.Shipyard, Families.MajorCharacter) && c.Owner == owner)];
 
     /// <summary>
-    /// Mode 8: defences [0x22, 0x28), troops, fighters and the characters / special forces not on a mission, of the view owner
+    /// Ground mode: defences [34, 40), troops, fighters and the characters / special forces not on a mission, of the view owner
     /// (the sub-window side filter), plus those on an unlisted (movement) mission.
     /// </summary>
     static List<ViewObject> PlanetUnits(List<ViewObject> contents, Owner owner) =>
-        [.. contents.Where(c => c.Owner == owner && (c.In(0x22, 0x28) || c.In(0x10, 0x14) || c.In(0x1C, 0x20) || c.In(0x30, 0x40) && !Listed(c.Mission)))];
+        [.. contents.Where(c => c.Owner == owner && (c.In(Families.IonCannon, Families.Shipyard) || c.In(Families.Troop, Families.CapitalShip) || c.In(Families.Fighter, Families.Headquarters) || c.In(Families.MajorCharacter, Families.Mission) && !Listed(c.Mission)))];
 
-    /// <summary>Mode 0x10: the player side's fleets if any, else the enemy's, else the owner's.</summary>
+    /// <summary>Fleets mode: the player side's fleets if any, else the enemy's, else the owner's.</summary>
     static SectorIcon FleetIcon(List<ViewObject> contents, Owner side, Owner owner)
     {
-        int Count(Owner o) => contents.Count(c => c.In(0x08, 0x10) && c.Owner == o);
+        int Count(Owner o) => contents.Count(c => c.In(Families.Fleet, Families.Troop) && c.Owner == o);
         int p = Count(side), q = Count(Enemy(side));
-        return p > 0 ? new(0x10, p, side) : q > 0 ? new(0x10, q, Enemy(side)) : new(0x10, Count(owner), owner is Owner.Neutral ? Owner.None : owner);
+        return p > 0 ? new(GroupMode.Fleets, p, side) : q > 0 ? new(GroupMode.Fleets, q, Enemy(side)) : new(GroupMode.Fleets, Count(owner), owner is Owner.Neutral ? Owner.None : owner);
     }
 
     /// <summary>
@@ -123,21 +123,21 @@ public static class ScreenViews
     /// </summary>
     public static bool Listed(Mission? m) => m is not null && !m.Record.Unlisted;
 
-    /// <summary>The listed missions (<see cref="Listed"/>) of the agents [0x30, 0x40) at the system (Existing), deduplicated, in key order (sort Inferred).</summary>
+    /// <summary>The listed missions (<see cref="Listed"/>) of the agents [48, 64) at the system (Existing), deduplicated, in key order (sort Inferred).</summary>
     public static List<Mission> Missions(GameState game, StarSystem s, Owner side) =>
-        [.. Existing(game, s, side).Where(c => c.In(0x30, 0x40) && Listed(c.Mission)).Select(c => c.Mission!).Distinct().OrderBy(m => m.Key)];
+        [.. Existing(game, s, side).Where(c => c.In(Families.MajorCharacter, Families.Mission) && Listed(c.Mission)).Select(c => c.Mission!).Distinct().OrderBy(m => m.Key)];
 
-    /// <summary>Mode 0x40: the enemy side if it has missions there, else the player side (Inferred priority).</summary>
+    /// <summary>Missions mode: the enemy side if it has missions there, else the player side (Inferred priority).</summary>
     static SectorIcon MissionIcon(GameState game, StarSystem s, Owner side)
     {
         var missions = Missions(game, s, side);
         int p = missions.Count(m => m.Owner == side), q = missions.Count(m => m.Owner == Enemy(side));
-        return q > 0 ? new(0x40, q, Enemy(side)) : new(0x40, p, p > 0 ? side : Owner.None);
+        return q > 0 ? new(GroupMode.Missions, q, Enemy(side)) : new(GroupMode.Missions, p, p > 0 ? side : Owner.None);
     }
 
     /// <summary>
     /// Missions-window skin side: the enemy side when it has missions there, else the player side
-    /// when it has, else 3; the sector window's 0x40 rule (which count is the enemy's: Inferred).
+    /// when it has, else 3; the sector window's missions rule (which count is the enemy's: Inferred).
     /// </summary>
     public static Owner MissionSide(GameState game, StarSystem s, Owner side) =>
         MissionIcon(game, s, side).Colour is var c && c == Owner.None ? Owner.Neutral : c;
@@ -146,28 +146,28 @@ public static class ScreenViews
 
     static List<ViewObject> Of(List<ViewObject> list, uint lo, uint hi) => [.. list.Where(c => c.In(lo, hi) && !c.Destroyed)];
 
-    /// <summary>Fleet window list: every fleet [0x08, 0x10) at the system, any owner.</summary>
-    public static List<ViewObject> Fleets(GameState game, StarSystem s, Owner side) => Of(Existing(game, s, side), 0x08, 0x10);
+    /// <summary>Fleet window list: every fleet [8, 16) at the system, any owner.</summary>
+    public static List<ViewObject> Fleets(GameState game, StarSystem s, Owner side) => Of(Existing(game, s, side), Families.Fleet, Families.Troop);
 
-    /// <summary>A fleet's capital ships [0x14, 0x1C) (the expanded fleet cell, the Ships tab).</summary>
-    public static List<ViewObject> Ships(GameState game, GameObject fleet, Owner side) => Of(Existing(game, fleet, side), 0x14, 0x1C);
+    /// <summary>A fleet's capital ships [20, 28) (the expanded fleet cell, the Ships tab).</summary>
+    public static List<ViewObject> Ships(GameState game, GameObject fleet, Owner side) => Of(Existing(game, fleet, side), Families.CapitalShip, Families.Fighter);
 
     /// <summary>
-    /// Fleet window contents tab (0x66 ships, 0x67 fighters, 0x68 troops, 0x69 personnel) over the selected fleets: their capital
+    /// Fleet window contents tab (102 ships, 103 fighters, 104 troops, 105 personnel) over the selected fleets: their capital
     /// ships, or what those ships carry (aggregated in fleet, ship, key order; Inferred).
     /// </summary>
     public static List<ViewObject> FleetContents(GameState game, IEnumerable<GameObject> fleets, int tab, Owner side)
     {
         // a selected fleet gives its capital ships, a selected ship row itself; an object already listed is not added twice
         var ships = fleets.SelectMany(f => f is Fleet ? Ships(game, f, side) : [View(game, f, side)]).DistinctBy(x => x.Object).ToList();
-        if (tab == 0x66) return ships;
-        var (lo, hi) = tab switch { 0x67 => (0x1Cu, 0x20u), 0x68 => (0x10u, 0x14u), _ => (0x30u, 0x40u) };
+        if (tab == 102) return ships;
+        var (lo, hi) = tab switch { 103 => (Families.Fighter, Families.Headquarters), 104 => (Families.Troop, Families.CapitalShip), _ => (Families.MajorCharacter, Families.Mission) };
         return [.. ships.SelectMany(x => Of(Existing(game, x.Object, side), lo, hi)).DistinctBy(x => x.Object)];
     }
 
     /// <summary>
     /// Fleet-window presence of a capital ship as side sees it: fighters, troops,
-    /// 4 characters / special forces aboard (Existing contents of its view), 0x40 speed 0 (<see cref="Orders.Speed"/>; only for a
+    /// 4 characters / special forces aboard (Existing contents of its view), speed 0 (<see cref="Orders.Speed"/>; only for a
     /// ship the side sees live, Inferred: a frozen view keeps no speed). The original's repaint-only markers
     /// are left out. A fleet: what any of its capital ships has.
     /// </summary>
@@ -175,8 +175,8 @@ public static class ScreenViews
     {
         if (o is Fleet) return Ships(game, o, side).Aggregate(Presence.None, (m, s) => m.Or(PresenceMask(game, s.Object, side)));
         var aboard = Existing(game, o, side);
-        return new(Fighters: aboard.Any(c => c.In(0x1C, 0x20)), Troops: aboard.Any(c => c.In(0x10, 0x14)),
-            Characters: aboard.Any(c => c.In(0x30, 0x40)), Immobile: Sees(o, side) && Orders.Speed(game, o) == 0);
+        return new(Fighters: aboard.Any(c => c.In(Families.Fighter, Families.Headquarters)), Troops: aboard.Any(c => c.In(Families.Troop, Families.CapitalShip)),
+            Characters: aboard.Any(c => c.In(Families.MajorCharacter, Families.Mission)), Immobile: Sees(o, side) && Orders.Speed(game, o) == 0);
     }
 
     /// <summary>Presence icons in draw order: (bitmap, x); 15 x 11 each; owner 1 gives A ids, any other owner gives A id + 50.</summary>
@@ -192,8 +192,8 @@ public static class ScreenViews
     }
 
     /// <summary>
-    /// Planet window tab 1-5 of the view owner (side filter = view owner): 1 personnel [0x30, 0x40) not on a
-    /// mission, 2 troops, 3 fighters, 4 shields [0x24, 0x26), 5 batteries [0x22, 0x24); directly at the system.
+    /// Planet window tab 1-5 of the view owner (side filter = view owner): 1 personnel [48, 64) not on a
+    /// mission, 2 troops, 3 fighters, 4 shields [36, 38), 5 batteries [34, 36); directly at the system.
     /// </summary>
     public static List<ViewObject> Planet(GameState game, StarSystem s, int tab, Owner side)
     {
@@ -201,11 +201,11 @@ public static class ScreenViews
         var all = Existing(game, s, side).Where(c => c.Owner == owner).ToList();
         return tab switch
         {
-            1 => [.. Of(all, 0x30, 0x40).Where(c => !Listed(c.Mission))],
-            2 => Of(all, 0x10, 0x14),
-            3 => Of(all, 0x1C, 0x20),
-            4 => Of(all, 0x24, 0x26),
-            _ => Of(all, 0x22, 0x24),
+            1 => [.. Of(all, Families.MajorCharacter, Families.Mission).Where(c => !Listed(c.Mission))],
+            2 => Of(all, Families.Troop, Families.CapitalShip),
+            3 => Of(all, Families.Fighter, Families.Headquarters),
+            4 => Of(all, Families.PlanetaryShield, Families.DeathStarShieldEnd),
+            _ => Of(all, Families.IonCannon, Families.PlanetaryShield),
         };
     }
 
@@ -217,7 +217,7 @@ public static class ScreenViews
     }
 
     /// <summary>
-    /// Manufacturing window tab 0x67 rows: one per manager of the system, any owner: shipyard (kind 0),
+    /// Manufacturing window tab 103 rows: one per manager of the system, any owner: shipyard (kind 0),
     /// training (2), construction (1). The window reads queue count and TargetKey through the side's view (the manager views in Knowledge; <see cref="Knowledge.QueueCount"/>, <see cref="Knowledge.TargetKey"/>).
     /// </summary>
     public static List<ManufacturingManager> ManagerRows(StarSystem s) =>
@@ -227,14 +227,14 @@ public static class ScreenViews
     public static List<ManufacturingManager> Managers(StarSystem s, Owner side) => s.Owner != side ? [] : ManagerRows(s);
 
     /// <summary>
-    /// Facility cell picture: base by the facility's kind (the SD Index, Inferred): production facilities [0x28, 0x2C)
+    /// Facility cell picture: base by the facility's kind (the SD Index, Inferred): production facilities [40, 44)
     /// 1 is 9006, 2 is 9014, 3 is 9022, 4 is 9010, 5 is 9018, 6 is 9026; Mines / Refineries 1 is 9001, 2 is 9030; not Completed gives base + 1
     /// (+ 2 for a side-1 owner), Completed gives base (+ 3 when the view flag is set).
     /// </summary>
     public static int FacilityPicture(ViewObject f)
     {
         uint kind = SdRef.IndexOf(f.Object.Type);
-        int b = f.In(0x2C, 0x30) ? (kind == 2 ? 9030 : 9001)
+        int b = f.In(Families.Mine, Families.MajorCharacter) ? (kind == 2 ? 9030 : 9001)
             : kind switch { 1 => 9006, 2 => 9014, 3 => 9022, 4 => 9010, 5 => 9018, _ => 9026 };
         return !f.Completed ? b + (f.Owner == Owner.Alliance ? 2 : 1) : f.Enroute ? b + 3 : b;
     }
@@ -261,7 +261,7 @@ public static class ScreenViews
     /// 11513 / 11514), then with <paramref name="overlays"/> the Enroute, Damaged and not-Completed overlays, the base, and the
     /// Captured overlay on top. The result has the base's size; the composer (<c>IndexedBitmap.Compose</c>) fills it with the base's
     /// key, copies the frame opaque and blits the rest keyed. <paramref name="small"/> = the list's small form (p; the large form is
-    /// p + 0x4000).
+    /// p + 16384).
     /// </summary>
     public static List<PictureLayer> Picture(GameState game, ViewObject v, Owner side, bool small, bool overlays)
     {
@@ -270,11 +270,11 @@ public static class ScreenViews
         bool one = v.Owner == Owner.Alliance;
         int s = small ? 1 : 0;
         var layers = new List<PictureLayer>();
-        PictureLayer @base = f is >= 0x40 and < 0x80 ? new(true, (one ? 0 : 0x1000) + (small ? p : p + 0x4000), PictureRole.Base)
-            : f is >= 0x08 and < 0x10 ? new(false, (one ? 10400 : 10450) + 25 * s, PictureRole.Base)
-            : new(true, small ? p : p + 0x4000, PictureRole.Base);
-        if (!small && f is >= 0x30 and < 0x40) layers.Add(new(false, 11500, PictureRole.Frame));
-        if (f is >= 0x10 and < 0x14) layers.Add(new(false, 11513 + s, PictureRole.Frame));
+        PictureLayer @base = f is >= Families.Mission and < Families.Sector ? new(true, (one ? 0 : 4096) + (small ? p : p + 16384), PictureRole.Base)
+            : f is >= Families.Fleet and < Families.Troop ? new(false, (one ? 10400 : 10450) + 25 * s, PictureRole.Base)
+            : new(true, small ? p : p + 16384, PictureRole.Base);
+        if (!small && f is >= Families.MajorCharacter and < Families.Mission) layers.Add(new(false, 11500, PictureRole.Frame));
+        if (f is >= Families.Troop and < Families.CapitalShip) layers.Add(new(false, 11513 + s, PictureRole.Frame));
         if (!overlays)
         {
             layers.Add(@base);
@@ -282,60 +282,59 @@ public static class ScreenViews
         }
         if (v.Enroute && !v.Destroyed)
         {
-            // Special forces 0x3C000003 / 0x3C000005 and troops 0x10000002 / 0x10000008 have no own Enroute overlay. They take the generic GOKRES overlay (the last branch).
-            if (f is >= 0x30 and < 0x3C) { if (!small) layers.Add(new(false, 11501)); }
-            else if (f is >= 0x3C and < 0x40 && v.Object.Type is not (0x3C000003 or 0x3C000005)) layers.Add(new(false, small ? 11520 : 11501));
-            else if (f is >= 0x22 and < 0x28) layers.Add(new(false, 11509 + s));
-            else if (f is >= 0x20 and < 0x30) layers.Add(new(false, 11505 + s));
-            else if (f is >= 0x10 and < 0x14 && v.Object.Type is not (0x10000002 or 0x10000008)) layers.Add(new(false, 11515 + s));
-            else if (f is >= 0x08 and < 0x10) layers.Add(new(false, (one ? 10423 : 10473) + 3 * s));
-            else layers.Add(new(true, small ? p + 0x1000 : p + 0x5000)); // overlay matches its base size (GOKRES p, p + 0x1000 122 x 50; p + 0x4000, p + 0x5000 61 x 25)
+            // Special forces (family 60, index 3 and 5) and troops (family 16, index 2 and 8) have no own Enroute overlay. They take the generic GOKRES overlay (the last branch).
+            if (f is >= Families.MajorCharacter and < Families.SpecialForce) { if (!small) layers.Add(new(false, 11501)); }
+            else if (f is >= Families.SpecialForce and < Families.Mission && v.Object.Type is not (Refs.LongprobeRecon or Refs.ProbeDroids)) layers.Add(new(false, small ? 11520 : 11501));
+            else if (f is >= Families.IonCannon and < Families.Shipyard) layers.Add(new(false, 11509 + s));
+            else if (f is >= Families.Headquarters and < Families.MajorCharacter) layers.Add(new(false, 11505 + s));
+            else if (f is >= Families.Troop and < Families.CapitalShip && v.Object.Type is not (Refs.AllianceArmy or Refs.EmpireArmy)) layers.Add(new(false, 11515 + s));
+            else if (f is >= Families.Fleet and < Families.Troop) layers.Add(new(false, (one ? 10423 : 10473) + 3 * s));
+            else layers.Add(new(true, small ? p + 4096 : p + 20480)); // overlay matches its base size (GOKRES p, p + 4096 122 x 50; p + 16384, p + 20480 61 x 25)
         }
         if (v.Damaged)
         {
-            if (f is >= 0x30 and < 0x40) { if (!small) layers.Add(new(false, 11502)); }
-            else if (f is >= 0x08 and < 0x10) layers.Add(new(false, (one ? 10424 : 10474) + 3 * s));
-            else layers.Add(new(true, small ? p + 0x2000 : p + 0x6000));
+            if (f is >= Families.MajorCharacter and < Families.Mission) { if (!small) layers.Add(new(false, 11502)); }
+            else if (f is >= Families.Fleet and < Families.Troop) layers.Add(new(false, (one ? 10424 : 10474) + 3 * s));
+            else layers.Add(new(true, small ? p + 8192 : p + 24576));
         }
         if (!v.Completed) layers.Add(new(false, (one ? 11570 : 11572) + s));
         layers.Add(@base);
-        if (!small && f is >= 0x30 and < 0x3C && Knowledge.See(game, v.Object, side).Captured) layers.Add(new(true, p + 0x7000));
+        if (!small && f is >= Families.MajorCharacter and < Families.SpecialForce && Knowledge.See(game, v.Object, side).Captured) layers.Add(new(true, p + 28672));
         return layers;
     }
 
     /// <summary>
     /// Drop (main screen): the commands for a drag from a window of kind <paramref name="sourceKind"/>
-    /// with its selection onto a window's targets T_dest / T_move; nothing unless T_move is set. Move id = 0x202 with Ctrl, else
-    /// 0x201. Sector window (1): Facilities entries give 0x214 with (system, Facilities) to T_dest, the other entries (not the object
-    /// itself) give the move to T_move; the move first. Fleet (4) / planet (10) windows: the move with the selection; manufacturing
-    /// (9): 0x214 with the managers to T_move; missions (0xB) and others: nothing. Each entry: (command id, selection, target).
+    /// with its selection onto a window's targets T_dest / T_move; nothing unless T_move is set. Move id = the move variant with Ctrl, else
+    /// Move. Sector window: Facilities entries give the set production target command with (system, Facilities) to T_dest, the other entries (not the object
+    /// itself) give the move to T_move; the move first. Fleet and planet windows: the move with the selection; manufacturing: the set production target command with the managers to T_move; missions and others: nothing. Each entry: (command id, selection, target).
     /// </summary>
-    public static List<(int Id, List<(GameObject Object, int Mode)> Selection, GameObject Target)> Drop(int sourceKind,
-        IReadOnlyList<(GameObject Object, int Mode)> selection, GameObject? dest, GameObject? move, bool ctrl)
+    public static List<(CommandType Id, List<(GameObject Object, GroupMode Mode)> Selection, GameObject Target)> Drop(WindowKind sourceKind,
+        IReadOnlyList<(GameObject Object, GroupMode Mode)> selection, GameObject? dest, GameObject? move, bool ctrl)
     {
-        var commands = new List<(int, List<(GameObject, int)>, GameObject)>();
+        var commands = new List<(CommandType, List<(GameObject, GroupMode)>, GameObject)>();
         if (move is null || selection.Count == 0) return commands;
-        int m = ctrl ? 0x202 : 0x201;
+        var m = ctrl ? CommandType.MoveVariant : CommandType.Move;
         switch (sourceKind)
         {
-            case 1:
+            case WindowKind.Sector:
                 var moves = selection.Where(e => e.Mode is not (GroupMode.Object or GroupMode.Facilities)).Select(e => (e.Object, e.Mode)).ToList();
                 var managers = selection.Where(e => e.Mode == GroupMode.Facilities).Select(e => (e.Object, GroupMode.Facilities)).ToList();
                 if (moves.Count > 0) commands.Add((m, moves, move));
-                if (managers.Count > 0 && dest is not null) commands.Add((0x214, managers, dest));
+                if (managers.Count > 0 && dest is not null) commands.Add((CommandType.SetProductionTarget, managers, dest));
                 break;
-            case 4 or 10:
+            case WindowKind.SystemFleet or WindowKind.SystemPlanet:
                 commands.Add((m, [.. selection], move));
                 break;
-            case 9:
-                commands.Add((0x214, [.. selection], move));
+            case WindowKind.SystemManufacturing:
+                commands.Add((CommandType.SetProductionTarget, [.. selection], move));
                 break;
         }
         return commands;
     }
 
     /// <summary>
-    /// openswr deviation (product owner): <see cref="Drop(int, IReadOnlyList{ValueTuple{GameObject, int}}, GameObject?, GameObject?, bool)"/>,
+    /// openswr deviation (product owner): <see cref="Drop(WindowKind, IReadOnlyList{ValueTuple{GameObject, GroupMode}}, GameObject?, GameObject?, bool)"/>,
     /// then a move onto an own fleet takes each unit on its own: the selection resolved (<see cref="Orders.Targets"/>; a fleet
     /// stands for its Existing capital ships; units already directly in the fleet left out), then in key order each unit joins
     /// the accepted set while the move of the set still validates (capital ships into the fleet; troops and fighters aboard a ship
@@ -343,23 +342,23 @@ public static class ScreenViews
     /// refuses the whole move on one unit's error. Every refused unit gives one move of the accepted set plus that unit (it
     /// fails validation: the normal refusal), before the move of the accepted set.
     /// </summary>
-    public static List<(int Id, List<(GameObject Object, int Mode)> Selection, GameObject Target)> Drop(GameState game, Owner side, int sourceKind,
-        IReadOnlyList<(GameObject Object, int Mode)> selection, GameObject? dest, GameObject? move, bool ctrl)
+    public static List<(CommandType Id, List<(GameObject Object, GroupMode Mode)> Selection, GameObject Target)> Drop(GameState game, Owner side, WindowKind sourceKind,
+        IReadOnlyList<(GameObject Object, GroupMode Mode)> selection, GameObject? dest, GameObject? move, bool ctrl)
     {
         var commands = Drop(sourceKind, selection, dest, move, ctrl);
         if (move is not Fleet fleet || fleet.Owner != side) return commands;
-        var result = new List<(int, List<(GameObject, int)>, GameObject)>();
+        var result = new List<(CommandType, List<(GameObject, GroupMode)>, GameObject)>();
         foreach (var (id, entries, target) in commands)
         {
-            if (id is not (0x201 or 0x202)) { result.Add((id, entries, target)); continue; }
+            if (id is not (CommandType.Move or CommandType.MoveVariant)) { result.Add((id, entries, target)); continue; }
             var units = Orders.Targets(ObjectCommands.Build(id, side, entries, fleet))
                 .SelectMany(u => u is Fleet f ? f.Contents.Where(x => Family.IsCapitalShip(x.Type) && x.Existing && x.Owner == f.Owner) : [u])
                 .Where(u => u != fleet && u.Container != fleet).Distinct().OrderBy(u => u.Ref).ToList();
             // shortcut: validated on the current state, so a troop or fighter cannot board a carrier dropped in the same move; upgrade if players ask
-            var kept = new List<(GameObject, int)>();
+            var kept = new List<(GameObject, GroupMode)>();
             foreach (var u in units)
             {
-                List<(GameObject, int)> trial = [.. kept, (u, 0)];
+                List<(GameObject, GroupMode)> trial = [.. kept, (u, GroupMode.Object)];
                 if (Orders.Validate(game, ObjectCommands.Build(id, side, trial, fleet)).Success) kept = trial;
                 else result.Add((id, trial, fleet));
             }
@@ -369,7 +368,7 @@ public static class ScreenViews
     }
 
     /// <summary>
-    /// openswr deviation (product owner): the fleet a drop on the sector window's fleet icon (group mode 0x10) moves to: the side's
+    /// openswr deviation (product owner): the fleet a drop on the sector window's fleet icon (fleets mode) moves to: the side's
     /// first Existing, Usable fleet at the system in key order (one icon stands for all of them); null: none (the drop targets the
     /// system).
     /// </summary>
@@ -377,38 +376,37 @@ public static class ScreenViews
         s.Contents.OfType<Fleet>().Where(f => f.Owner == side && f.Existing && f.Usable).OrderBy(f => f.Ref).FirstOrDefault();
 
     /// <summary>
-    /// Go to an object: the system whose sector window opens, the sub-window kind (4, 9, 10, 0xB; 0 = the sector
-    /// window only) and its container, from side's view of the object (its view parents). Null when the view has no location, is
+    /// Go to an object: the system whose sector window opens, the sub-window kind (none = the sector window only) and its container, from side's view of the object (its view parents). Null when the view has no location, is
     /// in the staging container or in an abode.
     /// </summary>
-    public static (StarSystem System, int Kind, GameObject Container)? GoTo(GameState game, GameObject o, Owner side)
+    public static (StarSystem System, WindowKind Kind, GameObject Container)? GoTo(GameState game, GameObject o, Owner side)
     {
         GameObject? Parent(GameObject x) => Sees(x, side) ? x.Container : game.Views.TryGetValue((x, side), out var v) ? v.Parent : null;
-        if (o is StarSystem s) return (s, 0, s);
+        if (o is StarSystem s) return (s, WindowKind.None, s);
         var parent = o is ManufacturingManager mm ? mm.System : Parent(o);
-        if (parent is null || parent == game.Staging || Family.Of(parent.Type) is >= 0x98 and < 0xA0) return null;
+        if (parent is null || parent == game.Staging || Family.Of(parent.Type) is >= Families.Abode and < Families.ConstructionManager) return null;
         uint f = Family.Of(o.Type);
         var system = parent as StarSystem ?? Knowledge.See(game, o, side).Location as StarSystem;
         if (system is null) return null;
-        if (o is ManufacturingManager) return (system, 9, system);
-        if (f is >= 0x08 and < 0x10) return (system, 4, system);
-        if (f is >= 0x14 and < 0x1C) return (system, 4, parent);
-        if (f is >= 0x10 and < 0x14 or >= 0x1C and < 0x20 or >= 0x30 and < 0x40)
+        if (o is ManufacturingManager) return (system, WindowKind.SystemManufacturing, system);
+        if (f is >= Families.Fleet and < Families.Troop) return (system, WindowKind.SystemFleet, system);
+        if (f is >= Families.CapitalShip and < Families.Fighter) return (system, WindowKind.SystemFleet, parent);
+        if (f is >= Families.Troop and < Families.CapitalShip or >= Families.Fighter and < Families.Headquarters or >= Families.MajorCharacter and < Families.Mission)
         {
-            if (parent is not StarSystem) return (system, 4, parent);
-            if (f >= 0x30 && Listed(View(game, o, side).Mission)) return (system, 0xB, system); // Inferred: an agent on a mission opens the missions window
-            return (system, 10, system);
+            if (parent is not StarSystem) return (system, WindowKind.SystemFleet, parent);
+            if (f >= Families.MajorCharacter && Listed(View(game, o, side).Mission)) return (system, WindowKind.SystemMissions, system); // Inferred: an agent on a mission opens the missions window
+            return (system, WindowKind.SystemPlanet, system);
         }
-        if (f is >= 0x22 and < 0x28) return (system, 10, system);
-        if (f is >= 0x28 and < 0x30) return (system, 9, system);
-        if (f is >= 0x40 and < 0x80) return (system, 0xB, system);
-        return (system, 0, system);
+        if (f is >= Families.IonCannon and < Families.Shipyard) return (system, WindowKind.SystemPlanet, system);
+        if (f is >= Families.Shipyard and < Families.MajorCharacter) return (system, WindowKind.SystemManufacturing, system);
+        if (f is >= Families.Mission and < Families.Sector) return (system, WindowKind.SystemMissions, system);
+        return (system, WindowKind.None, system);
     }
 
     /// <summary>
-    /// Transit list of a move confirmation: the 0x201 / 0x202 command validated (refused: empty,
-    /// Inferred), then per sub-command (<see cref="Orders.Expand"/>) every target with its days: 0x204 the travel time to the
-    /// destination (<see cref="Orders.TravelDays"/> at the object's speed), 0x241 the agent's (Inferred:
+    /// Transit list of a move confirmation: the Move or move variant command validated (refused: empty,
+    /// Inferred), then per sub-command (<see cref="Orders.Expand"/>) every target with its days: the move object command: the travel time to the
+    /// destination (<see cref="Orders.TravelDays"/> at the object's speed), the create move mission command: the agent's (Inferred:
     /// a leg to or from an abode takes 1 day); an object's later entry replaces its earlier one;
     /// ascending key (Inferred); days 0 when they cannot be computed.
     /// </summary>
@@ -422,7 +420,7 @@ public static class ScreenViews
             {
                 var from = OpenSWR.Sim.Missions.Location(o);
                 list[o.Ref] = (o, from is StarSystem a && to is StarSystem b ? Orders.TravelDays(game, a, b, Orders.Speed(game, o))
-                    : sub.Type == 0x241 && from is not null && to is not null && from != to ? 1 : 0);
+                    : sub.Type == CommandType.CreateMoveMission && from is not null && to is not null && from != to ? 1 : 0);
             }
         return [.. list.Values];
     }
@@ -440,7 +438,7 @@ public static class ScreenViews
     /// <summary>
     /// One row of the battle-start list: the object (its name is the text) or a TEXTSTRA string id
     /// (<paramref name="StringId"/> != 0), font, centred (format 1) or left (the list default), the picture's x in the cell
-    /// (-1 = none; the icon form p + 0x4000 with overlays, top-left at (x, 0)) and the text offset x (0 / 70 / 90).
+    /// (-1 = none; the icon form p + 16384 with overlays, top-left at (x, 0)) and the text offset x (0 / 70 / 90).
     /// </summary>
     public readonly record struct BattleStartRow(GameObject? Object, int StringId, int Font, bool Centred, int PictureX, int TextX);
 
@@ -455,7 +453,7 @@ public static class ScreenViews
     /// </summary>
     public static List<BattleStartRow> BattleStartRows(StarSystem system, int tab)
     {
-        static bool Fighter(GameObject x) => Family.Of(x.Type) is >= 0x1C and < 0x20;
+        static bool Fighter(GameObject x) => Family.Of(x.Type) is >= Families.Fighter and < Families.Headquarters;
         var rows = new List<BattleStartRow>();
         void Units(IEnumerable<GameObject> contents, Func<GameObject, bool>[] classes, int indent)
         {

@@ -10,8 +10,8 @@ public readonly record struct SdRef(uint Value)
     /// <summary>The reference of record <paramref name="index"/> in <paramref name="family"/>.</summary>
     public static uint Make(uint family, uint index) => family << 24 | index;
     public static uint FamilyOf(uint sdRef) => sdRef >> 24;
-    public static uint IndexOf(uint sdRef) => sdRef & 0xFFFFFF;
-    public override string ToString() => $"{Family:x2}:{Index:x}";
+    public static uint IndexOf(uint sdRef) => sdRef & 16777215;
+    public override string ToString() => $"{Family}:{Index}";
 }
 
 /// <summary>IntTableEntry / SeedTableEntry (16 bytes). In SeedTableEntry files Value is an SdRef.</summary>

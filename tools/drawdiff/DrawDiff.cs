@@ -14,7 +14,7 @@ public sealed class Item
 {
     public required string Kind { get; init; }
     public string? Res { get; init; }
-    /// <summary>Text: "length:first 8 hex of SHA-256 (UTF-8)" (<see cref="Strings.Hash"/>); the match key.</summary>
+    /// <summary>Text: "length:first 4 bytes of SHA-256 (UTF-8) as a decimal number" (<see cref="Strings.Hash"/>); the match key.</summary>
     public string? TextHash { get; init; }
     /// <summary>Text as logged, null when the log holds only the hash.</summary>
     public string? Text { get; init; }
@@ -48,7 +48,7 @@ public sealed class Item
     {
         yield return ("size", $"{W}x{H}");
         if (Kind == "bitmap") { yield return ("src", Src); yield return ("key", Key?.ToString(CultureInfo.InvariantCulture)); }
-        if (Kind == "text") { yield return ("fmt", Fmt is { } f ? $"0x{f:x}" : null); yield return ("font", Font); }
+        if (Kind == "text") { yield return ("fmt", Fmt?.ToString(CultureInfo.InvariantCulture)); yield return ("font", Font); }
         yield return ("colour", Colour);
         if (Kind is "fill" or "ellipse") yield return ("pen", Pen);
     }
@@ -69,19 +69,29 @@ public sealed class Item
 
 public static class Strings
 {
-    /// <summary>Length plus the first 8 hex digits of SHA-256 over UTF-8: vectors keep no original strings.</summary>
+    /// <summary>Length plus the first 4 bytes of SHA-256 over UTF-8 as a decimal number: vectors keep no original strings.</summary>
     public static string Hash(string s) =>
-        $"{s.Length}:{Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(s)))[..8]}";
+        $"{s.Length}:{BitConverter.ToUInt32(SHA256.HashData(Encoding.UTF8.GetBytes(s)))}";
 
     public static string Quote(string s) => JsonSerializer.Serialize(s);
 
-    /// <summary>COLORREF "0x02BBGGRR" / "0x00BBGGRR" as RGB hex; 0x01 flag (PALETTEINDEX) as "iN".</summary>
-    public static string? ColorRef(string? hex)
+    /// <summary>
+    /// A number of the Frida trace: the tracer writes Win32 values (COLORREF, DrawText flags) as the original passed them, in hex.
+    /// This is the one place drawdiff reads that form; everything it reports is decimal.
+    /// </summary>
+    public static uint TraceNumber(string text) =>
+        uint.Parse(text.StartsWith("0x") ? text[2..] : text, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+
+    /// <summary>A colour as "red,green,blue" in decimal, the form both logs are compared in.</summary>
+    public static string Rgb(uint red, uint green, uint blue) => $"{red},{green},{blue}";
+
+    /// <summary>A COLORREF of the trace: an RGB colour as <see cref="Rgb"/>, or a palette index (PALETTEINDEX) as "iN".</summary>
+    public static string? ColorRef(string? traced)
     {
-        if (hex is null) return null;
-        uint v = uint.Parse(hex.StartsWith("0x") ? hex[2..] : hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
-        if (v >> 24 == 1) return $"i{v & 0xffff}";
-        return $"{v & 0xff:x2}{(v >> 8) & 0xff:x2}{(v >> 16) & 0xff:x2}";
+        if (traced is null) return null;
+        uint v = TraceNumber(traced);
+        if (v >> 24 == 1) return $"i{v % 65536}";
+        return Rgb(v % 256, v / 256 % 256, v / 65536 % 256);
     }
 
     public static int Num(JsonElement e, string name, int def = 0) =>
@@ -121,6 +131,10 @@ public static class Strings
 /// </summary>
 public sealed class TraceReader
 {
+    static readonly string Black = Strings.Rgb(0, 0, 0), White = Strings.Rgb(255, 255, 255);
+    /// <summary>The DrawText flag DT_CALCRECT.</summary>
+    const int DrawTextCalcRect = 1024;
+
     /// <summary>A drawing target: a bitmap object, the screen, or a DC whose bitmap and position are not in the trace.</summary>
     sealed class Surf(string name, string kind, int w, int h, string? res)
     {
@@ -141,8 +155,8 @@ public sealed class TraceReader
         public int W, H;
         public Surf? Selected, Own;
         public string Font = SystemFont;
-        public string TextColour = "000000";
-        public string Brush = "ffffff", Pen = "000000";
+        public string TextColour = Black;
+        public string Brush = White, Pen = Black;
         public int CurX, CurY;
     }
 
@@ -236,7 +250,7 @@ public sealed class TraceReader
             case "brush": _brushes[Strings.Str(e, "obj")!] = Strings.ColorRef(Strings.Str(e, "color"))!; break;
             case "pen": _pens[Strings.Str(e, "obj")!] = Strings.Num(e, "style") == 5 ? "none" : Strings.ColorRef(Strings.Str(e, "color"))!; break;
             case "select": Select(DcOf(Strings.Str(e, "dc")), Strings.Str(e, "obj") ?? ""); break;
-            case "textcolor": DcOf(Strings.Str(e, "dc")).TextColour = Strings.ColorRef(Strings.Str(e, "color")) ?? "000000"; break;
+            case "textcolor": DcOf(Strings.Str(e, "dc")).TextColour = Strings.ColorRef(Strings.Str(e, "color")) ?? Black; break;
             case "bm_blit":
             case "bm_kblit":
             {
@@ -276,8 +290,8 @@ public sealed class TraceReader
             }
             case "drawtext":
             {
-                int fmt = int.Parse(Strings.Str(e, "fmt")![2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
-                if ((fmt & 0x400) != 0) break; // DT_CALCRECT measures, draws nothing
+                int fmt = (int)Strings.TraceNumber(Strings.Str(e, "fmt")!);
+                if ((fmt & DrawTextCalcRect) != 0) break; // measures, draws nothing
                 var dc = DcOf(Strings.Str(e, "dc"));
                 var r = Strings.Ints(e, "r") ?? [0, 0, 0, 0];
                 var (hash, text) = Strings.TextOf(e);
@@ -319,14 +333,14 @@ public sealed class TraceReader
         {
             switch (n)
             {
-                case 0: dc.Brush = "ffffff"; break;
-                case 1: dc.Brush = "c0c0c0"; break;
-                case 2: dc.Brush = "808080"; break;
-                case 3: dc.Brush = "404040"; break;
-                case 4: dc.Brush = "000000"; break;
+                case 0: dc.Brush = White; break;
+                case 1: dc.Brush = Strings.Rgb(192, 192, 192); break;
+                case 2: dc.Brush = Strings.Rgb(128, 128, 128); break;
+                case 3: dc.Brush = Strings.Rgb(64, 64, 64); break;
+                case 4: dc.Brush = Black; break;
                 case 5: dc.Brush = "none"; break;
-                case 6: dc.Pen = "ffffff"; break;
-                case 7: dc.Pen = "000000"; break;
+                case 6: dc.Pen = White; break;
+                case 7: dc.Pen = Black; break;
                 case 8: dc.Pen = "none"; break;
                 case 13: dc.Font = SystemFont; break;
                 case >= 10 and <= 17: dc.Font = obj; break;
@@ -346,7 +360,7 @@ public sealed class TraceReader
 
     /// <summary>
     /// Screen origins of the bitmap objects, to a fixed point. Forward: a composite (canvas / section) drawn into placed targets at one
-    /// position only is at that position (canvas -> backbuffer -> screen). Backward: a canvas filled by an opaque blit of a region of a
+    /// position only is at that position (canvas gives backbuffer gives screen). Backward: a canvas filled by an opaque blit of a region of a
     /// placed composite is at that region (a button canvas taking its background from the backbuffer, Inferred from the blit shape).
     /// </summary>
     void Resolve()
@@ -401,7 +415,7 @@ public sealed class TraceReader
 /// <summary>Reader for the openswr draw log (godot/DrawLog.cs): positions are screen coordinates already.</summary>
 public static class OpenSWRLogReader
 {
-    /// <param name="alias">openswr res id -> original res id (e.g. the other side's skin of the same frame).</param>
+    /// <param name="alias">openswr res id gives original res id (e.g. the other side's skin of the same frame).</param>
     public static List<Item> Read(IEnumerable<string> lines, IReadOnlyDictionary<string, string>? alias = null)
     {
         var items = new List<Item>();
@@ -437,7 +451,7 @@ public static class OpenSWRLogReader
                     items.Add(new Item
                     {
                         Kind = "text", TextHash = hash, Text = text, X = r[0], Y = r[1], W = r[2] - r[0], H = r[3] - r[1],
-                        Fmt = int.Parse(Strings.Str(e, "fmt")![2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture),
+                        Fmt = Strings.Num(e, "fmt"),
                         Font = font switch
                         {
                             -1 => "?/?/godot", // Godot's own font (Label, Button, LineEdit, RichTextLabel, DrawString)
@@ -639,17 +653,17 @@ public static class Vector
     /// <summary>Indices of the records before <paramref name="start"/> the window needs: state first, then placement draws.</summary>
     static List<int> Before(List<JsonElement> recs, int start)
     {
-        var bmNew = new Dictionary<string, int>();     // live object tag -> its bm_new
+        var bmNew = new Dictionary<string, int>();     // live object tag gives its bm_new
         var composite = new HashSet<string>();         // live tags that are canvases / sections not from a resource
-        var sectionOf = new Dictionary<int, int>();    // bm_new of a section -> its CreateDIBSection bitmap record
-        var ownerOf = new Dictionary<int, int>();      // that bitmap record -> the bm_new
-        var def = new Dictionary<string, int>();       // GDI object -> the record defining it now
+        var sectionOf = new Dictionary<int, int>();    // bm_new of a section gives its CreateDIBSection bitmap record
+        var ownerOf = new Dictionary<int, int>();      // that bitmap record gives the bm_new
+        var def = new Dictionary<string, int>();       // GDI object gives the record defining it now
         var dcDef = new Dictionary<string, int>();
         var selects = new Dictionary<(string Dc, string Cat), (int Select, int? Def)>();
         var textColour = new Dictionary<string, int>();
         // placement draws: B placed by / placing T (TraceReader edges), with the objects and DCs they need
         var edges = new Dictionary<string, (int Index, string B, string T, bool Capture, string[] Bms, string[] Dcs)>();
-        var selected = new Dictionary<string, int>(); // DC -> the bitmap record selected in it
+        var selected = new Dictionary<string, int>(); // DC gives the bitmap record selected in it
         int? lastSection = null;
         // a DC target: the bitmap selected in it, else its kind (paint DCs of the many repaints collapse)
         string Target(string? dc) => dc is null ? "?" : selected.TryGetValue(dc, out int b) ? $"b{b}"

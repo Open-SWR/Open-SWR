@@ -31,7 +31,7 @@ public class SdFileTests
         // Side flags at 24 / 28: Alliance-only, Empire-only (Inferred)
         Assert.Equal((1u, 0u), (ships[0].U32At(24), ships[0].U32At(28)));
         Assert.Equal((0u, 1u), (chars[^1].U32At(24), chars[^1].U32At(28)));
-        Assert.Equal((ushort)0x2881, chars[^1].Common.StringId);
+        Assert.Equal((ushort)10369, chars[^1].Common.StringId);
         Assert.All(chars, c => Assert.Equal(2, c.Common.StringModule));
     }
 
@@ -50,7 +50,7 @@ public class SdFileTests
 
         var sectorByIndex = sectors.ToDictionary(s => s.Common.Index);
         Assert.All(systems.GroupBy(s => s.SectorIndex), g => Assert.Equal(10, g.Count()));
-        Assert.All(systems, s => Assert.Equal(s.Common.Family == 0x90, sectorByIndex[s.SectorIndex].Group == 1));
+        Assert.All(systems, s => Assert.Equal(s.Common.Family == Families.CoreSystem, sectorByIndex[s.SectorIndex].Group == 1));
 
         var coruscant = systems.Single(s => names[s.Common.StringId] == "Coruscant");
         Assert.Equal("Core Worlds North", names[sectorByIndex[coruscant.SectorIndex].Common.StringId]);
@@ -166,8 +166,8 @@ public class SdFileTests
         uint all = forces.Aggregate(0u, (m, f) => m | f.MissionMask);
         Assert.All(missions, m => Assert.Equal(0u, m.SpecialForceMask & ~all));
         uint Mask(params int[] forceIndices) => forceIndices.Aggregate(0u, (m, i) => m | forces.Single(f => f.Common.Index == (uint)i).MissionMask);
-        Assert.Equal(Mask(4, 6), missions.Single(m => m.Common.Index == 0x13).SpecialForceMask); // Espionage: Bothan Spies, Imperial Espionage Droid
-        Assert.Equal(Mask(3, 5), missions.Single(m => m.Common.Index == 0x15).SpecialForceMask); // Reconnaissance: Longprobe Y-wing, Imperial Probe Droid
+        Assert.Equal(Mask(4, 6), missions.Single(m => m.Common.Index == 19).SpecialForceMask); // Espionage: Bothan Spies, Imperial Espionage Droid
+        Assert.Equal(Mask(3, 5), missions.Single(m => m.Common.Index == 21).SpecialForceMask); // Reconnaissance: Longprobe Y-wing, Imperial Probe Droid
     }
 
     [GameFact]
@@ -180,23 +180,23 @@ public class SdFileTests
         Assert.All(major.Concat(minor), c => Assert.Equal(1u, c.Alliance ^ c.Empire));
         Assert.All(major.Concat(minor), c => Assert.Equal(100u, c.Skills.Loyalty.Base));
 
-        var luke = major.Single(c => c.Common.StringId == 0x2842);
+        var luke = major.Single(c => c.Common.StringId == 10306);
         Assert.Equal((1u, 1u, new Skill(50, 0)), (luke.IsKnownJedi, luke.IsJediTrainer, luke.JediLevel));
-        var veers = minor.Single(c => c.Common.StringId == 0x2a83); // General only
+        var veers = minor.Single(c => c.Common.StringId == 10883); // General only
         Assert.Equal((0u, 0u, 1u), (veers.CanBeAdmiral, veers.CanBeCommander, veers.CanBeGeneral));
     }
 
     static PeResources? _ency;
 
     static bool HasEncy(SdCommon c) =>
-        (_ency ??= PeResources.Load(GameDir.File("ENCYTEXT.DLL"))).Find(ResId.RcData, (ushort)(c.StringId - 0x1000)) != null;
+        (_ency ??= PeResources.Load(GameDir.File("ENCYTEXT.DLL"))).Find(ResId.RcData, (ushort)(c.StringId - 4096)) != null;
 
-    /// <summary>Stat lookup in the entity's encyclopedia entry: id = name string id - 0x1000 (25th Anniversary mod text carries stat blocks).
+    /// <summary>Stat lookup in the entity's encyclopedia entry: id = name string id minus 4096 (25th Anniversary mod text carries stat blocks).
     /// Returns group 1 as int, 1 for a non-numeric match, 0 for no match.</summary>
     static Func<string, int> EncyStats(SdCommon c)
     {
         _ency ??= PeResources.Load(GameDir.File("ENCYTEXT.DLL"));
-        var text = System.Text.Encoding.Latin1.GetString(_ency.Find(ResId.RcData, (ushort)(c.StringId - 0x1000))!.Data.Span);
+        var text = System.Text.Encoding.Latin1.GetString(_ency.Find(ResId.RcData, (ushort)(c.StringId - 4096))!.Data.Span);
         return pattern =>
         {
             var m = System.Text.RegularExpressions.Regex.Match(text, pattern);

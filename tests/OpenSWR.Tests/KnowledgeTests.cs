@@ -17,18 +17,18 @@ public class KnowledgeTests
     public void SetupKnowledge()
     {
         var game = Game();
-        var yavin = game.System(Refs.Yavin);
-        var coruscant = game.System(Refs.Coruscant);
+        var yavin = game.Known.Yavin!;
+        var coruscant = game.Known.Coruscant!;
         Assert.True(Knowledge.IsLive(coruscant, Owner.Empire));
         Assert.False(Knowledge.IsLive(coruscant, Owner.Alliance));
         Assert.Equal(Owner.Empire, Knowledge.See(game, coruscant, Owner.Alliance).Owner);
-        var rim = game.Systems.First(s => Family.Of(s.Type) == 0x92 && s.Owner == Owner.Alliance && s != yavin);
+        var rim = game.Systems.First(s => Family.Of(s.Type) == Families.RimSystem && s.Owner == Owner.Alliance && s != yavin);
         Assert.Equal(Owner.Neutral, Knowledge.See(game, rim, Owner.Empire).Owner); // fresh view: owner 3
         Assert.Equal(Owner.Alliance, Knowledge.See(game, yavin, Owner.Empire).Owner);
-        var luke = game.Characters.First(c => c.Ref == Refs.Luke);
+        var luke = game.Known.Luke!;
         Assert.Same(yavin, luke.Container);
         Assert.Same(yavin, Knowledge.Location(game, luke, Owner.Empire));
-        var vader = game.Characters.First(c => c.Ref == Refs.Vader);
+        var vader = game.Known.Vader!;
         Assert.Null(Knowledge.Location(game, vader, Owner.Alliance));
     }
 
@@ -61,7 +61,7 @@ public class KnowledgeTests
     public void UpdateRevealsCharacters()
     {
         var game = Game();
-        var vader = game.Characters.First(c => c.Ref == Refs.Vader);
+        var vader = game.Known.Vader!;
         var at = vader.System!;
         Assert.Null(Knowledge.Location(game, vader, Owner.Alliance));
         Knowledge.Update(game, at, 9, Owner.Alliance);
@@ -71,16 +71,16 @@ public class KnowledgeTests
     }
 
     // After setup step 24 every system view is a valid mission target, and its owner is still 3. A never refreshed
-    // non-system object, such as Vader for the Alliance, is refused with (0x40, 0x20).
+    // non-system object, such as Vader for the Alliance, is refused with Refusal.NoTargetLocation.
     [GameFact]
     public void CommandTargetCheck()
     {
         var game = Game();
-        var rim = game.Systems.First(s => Family.Of(s.Type) == 0x92 && s.Owner != Owner.Empire && !Knowledge.IsLive(s, Owner.Empire) && s.Type != Refs.Yavin);
+        var rim = game.Systems.First(s => Family.Of(s.Type) == Families.RimSystem && s.Owner != Owner.Empire && !Knowledge.IsLive(s, Owner.Empire) && s.Type != Refs.Yavin);
         Assert.Null(Knowledge.TargetCheck(game, rim, Owner.Empire));
         Assert.Equal((Owner.Neutral, false), (Knowledge.See(game, rim, Owner.Empire).Owner, Knowledge.See(game, rim, Owner.Empire).Populated));
-        var vader = game.Characters.First(c => c.Ref == Refs.Vader);
-        Assert.Equal(new OrderResult(0x40, 0x20), Knowledge.TargetCheck(game, vader, Owner.Alliance));
+        var vader = game.Known.Vader!;
+        Assert.Equal(Refusal.NoTargetLocation, Knowledge.TargetCheck(game, vader, Owner.Alliance));
     }
 
     // Setup step 24 gives every frozen manager view the manager's own system as TargetKey, and the view keeps that
@@ -98,16 +98,16 @@ public class KnowledgeTests
         m.TargetKey = other;
         Assert.Same(m.System, Knowledge.TargetKey(m, Owner.Alliance));
         Assert.Same(other, Knowledge.TargetKey(m, Owner.Empire));
-        var core = game.Systems.First(s => Family.Of(s.Type) == 0x90 && s.Owner == Owner.Empire && s.Control != default);
+        var core = game.Systems.First(s => Family.Of(s.Type) == Families.CoreSystem && s.Owner == Owner.Empire && s.Control != default);
         Assert.Equal(core.Control, Knowledge.Control(game, core, Owner.Alliance));
-        var rim = game.Systems.First(s => Family.Of(s.Type) == 0x92 && s.Control != default && !Knowledge.IsLive(s, Owner.Alliance));
+        var rim = game.Systems.First(s => Family.Of(s.Type) == Families.RimSystem && s.Control != default && !Knowledge.IsLive(s, Owner.Alliance));
         Assert.Equal(default, Knowledge.Control(game, rim, Owner.Alliance));
         Knowledge.Update(game, rim, 1, Owner.Alliance);
         Assert.Equal(rim.Control, Knowledge.Control(game, rim, Owner.Alliance));
     }
 
     static int Posts(GameState game, StarSystem s, bool rise) =>
-        game.Messages.Count(m => m.Side == Owner.Alliance && m.Type == 0x14C && m.Object == s && (m.A is not null) == rise);
+        game.Messages.Count(m => m.Side == Owner.Alliance && m.Type == ViewMessageType.NeverBeenControlled && m.Object == s && (m.A is not null) == rise);
 
     static (GameState, Fleet) Watched()
     {
@@ -117,12 +117,12 @@ public class KnowledgeTests
     }
 
     // Rim systems keep the real NeverBeenControlled flag from setup, while the Alliance's view holds a fresh 0. The
-    // first Alliance fleet arriving posts 0x14C 0 -> 1 once. A second arrival posts nothing.
+    // first Alliance fleet arriving posts NeverBeenControlled 0 gives 1 once. A second arrival posts nothing.
     [GameFact]
     public void FirstArrivalInNeutralRimPostsTheRise()
     {
         var (game, fleet) = Watched();
-        var s = game.Systems.First(s => Family.Of(s.Type) == 0x92 && s.Owner == Owner.Neutral && s.NeverBeenControlled && !Knowledge.IsLive(s, Owner.Alliance));
+        var s = game.Systems.First(s => Family.Of(s.Type) == Families.RimSystem && s.Owner == Owner.Neutral && s.NeverBeenControlled && !Knowledge.IsLive(s, Owner.Alliance));
         Assert.False(Knowledge.NeverControlled(game, s, Owner.Alliance));
         var home = fleet.Container!;
         for (int i = 0; i < 2; i++)
@@ -144,24 +144,24 @@ public class KnowledgeTests
     public void CoreSystemNeverPostsTheRise()
     {
         var (game, fleet) = Watched();
-        var s = game.Systems.First(s => Family.Of(s.Type) == 0x90 && s.Owner != Owner.Alliance && !Knowledge.IsLive(s, Owner.Alliance));
+        var s = game.Systems.First(s => Family.Of(s.Type) == Families.CoreSystem && s.Owner != Owner.Alliance && !Knowledge.IsLive(s, Owner.Alliance));
         s.Add(fleet);
         Knowledge.RecomputeSystem(game, s);
         Assert.True(Knowledge.IsLive(s, Owner.Alliance));
         Assert.Equal(0, Posts(game, s, true));
     }
 
-    // Capturing a never-seen populated rim system: the owner hook's full refresh posts 0x14C 1, then the real flag's
-    // clear posts 0x14C 0 through the live copy.
+    // Capturing a never-seen populated rim system: the owner hook's full refresh posts NeverBeenControlled 1, then the real flag's
+    // clear posts NeverBeenControlled 0 through the live copy.
     [GameFact]
     public void CaptureOfNeverSeenRimPostsRiseThenClear()
     {
         var (game, _) = Watched();
-        var s = game.Systems.First(s => Family.Of(s.Type) == 0x92 && s.Owner == Owner.Neutral && s.Populated && s.NeverBeenControlled && !Knowledge.IsLive(s, Owner.Alliance));
+        var s = game.Systems.First(s => Family.Of(s.Type) == Families.RimSystem && s.Owner == Owner.Neutral && s.Populated && s.NeverBeenControlled && !Knowledge.IsLive(s, Owner.Alliance));
         Systems.StoreControl(game, s, s.Control with { Owner = Owner.Alliance });
         Assert.Equal(Owner.Alliance, s.Owner);
         Assert.False(s.NeverBeenControlled);
-        var posts = game.Messages.Where(m => m.Side == Owner.Alliance && m.Type == 0x14C && m.Object == s).Select(m => m.A is not null).ToList();
+        var posts = game.Messages.Where(m => m.Side == Owner.Alliance && m.Type == ViewMessageType.NeverBeenControlled && m.Object == s).Select(m => m.A is not null).ToList();
         Assert.Equal([true, false], posts);
         Assert.False(Knowledge.NeverControlled(game, s, Owner.Alliance));
     }

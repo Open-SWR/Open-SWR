@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 namespace OpenSWR.Sim;
 
 /// <summary>
@@ -14,8 +15,6 @@ public sealed record FinderRow(GameObject Key, string Text, int[]? Counts = null
 /// </summary>
 public static class Finders
 {
-    public const int SystemFinder = 0x14, FleetFinder = 0x15, TroopFinder = 0x16, PersonnelFinder = 0x17;
-
     static List<FinderRow> Sorted(IEnumerable<FinderRow> rows) => [.. rows.OrderBy(r => r.Text, StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
@@ -37,24 +36,24 @@ public static class Finders
         ScreenViews.Sees(o, side) ? o.Container : game.Views.TryGetValue((o, side), out var v) ? v.Parent : null;
 
     /// <summary>
-    /// Fleet Finder: every view of the side in [0x08, 0x10) (fleets) or [0x14, 0x1C) (<paramref name="ships"/>) that is
+    /// Fleet Finder: every view of the side in [8, 16) (fleets) or [20, 28) (<paramref name="ships"/>) that is
     /// Existing with a view parent outside staging; filter 2 / 3 = view owner 1 / 2.
     /// </summary>
     public static List<FinderRow> Fleets(GameState game, Owner side, bool ships, int filter, Func<GameObject, string> name)
     {
         IEnumerable<GameObject> candidates = ships ? game.Created.Where(o => Family.IsCapitalShip(o.Type)) : game.Fleets;
         return Sorted(candidates.OrderBy(o => o.Key).Select(o => (o, v: ScreenViews.View(game, o, side)))
-            .Where(x => x.v.Existing && ViewParent(game, x.o, side) is { } p && p != game.Staging && Family.Of(p.Type) != 0xF2
+            .Where(x => x.v.Existing && ViewParent(game, x.o, side) is { } p && p != game.Staging && Family.Of(p.Type) != Families.Staging
                 && (filter == 1 || x.v.Owner == (filter == 2 ? Owner.Alliance : Owner.Empire)))
             .Select(x => new FinderRow(x.o, name(x.o))));
     }
 
     /// <summary>Troop types per side, in the order of the count cells.</summary>
     public static readonly uint[][] TroopTypes =
-        [[0x10000002, 0x10000001, 0x10000005, 0x10000003, 0x10000004], [0x10000008, 0x1000000A, 0x10000007, 0x10000006, 0x10000009]];
+        [[Refs.AllianceArmy, Refs.AllianceFleetRegiment, Refs.MonCalamariRegiment, Refs.SullustanRegiment, Refs.WookieeRegiment], [Refs.EmpireArmy, Refs.DarkTrooperRegiment, Refs.ImperialFleetRegiment, Refs.Stormtroopers, Refs.WarDroidRegiment]];
     /// <summary>Special-force types per side, in the order of the count cells.</summary>
     public static readonly uint[][] SpecialForceTypes =
-        [[0x3C000004, 0x3C000002, 0x3C000001, 0x3C000003], [0x3C000007, 0x3C000006, 0x3C000008, 0x3C000005]];
+        [[Refs.BothanSpies, Refs.Infiltrators, Refs.Guerrillas, Refs.LongprobeRecon], [Refs.ImperialCommandos, Refs.EspionageDroids, Refs.NoghriCommandos, Refs.ProbeDroids]];
 
     /// <summary>
     /// Troop Finder / SpecForces rows: over every system view of the side (ascending key): a row for the system when
@@ -76,7 +75,7 @@ public static class Finders
         {
             var contents = ScreenViews.Existing(game, system, side);
             if (Row(system, contents) is { } here) rows.Add(here);
-            foreach (var fleet in contents.Where(c => c.In(0x08, 0x10) && c.Owner == s))
+            foreach (var fleet in contents.Where(c => c.In(Families.Fleet, Families.Troop) && c.Owner == s))
             {
                 var aboard = ScreenViews.Ships(game, fleet.Object, side).SelectMany(x => ScreenViews.Existing(game, x.Object, side)).ToList();
                 if (Row(fleet.Object, aboard) is { } row) rows.Add(row);
@@ -90,14 +89,14 @@ public static class Finders
         c.Definition.Alliance != 0 && c.Definition.Empire == 0 ? Owner.Alliance : c.Definition.Empire != 0 && c.Definition.Alliance == 0 ? Owner.Empire : Owner.None;
 
     /// <summary>
-    /// Personnel Finder characters: every character [0x30, 0x3C) whose side view is Created and whose definition side is
-    /// the filter. Text = name + 6295 + location (Destroyed: 34712 Killed for DestroyedReason 0x14-0x16, else 34713
+    /// Personnel Finder characters: every character [48, 60) whose side view is Created and whose definition side is
+    /// the filter. Text = name + 6295 + location (Destroyed: 34712 Killed for DestroyedReason Scrapped, MaintenanceScrap and ProductionCancelled, else 34713
     /// Retired (branch Inferred); else the view parent's name when a system, capital ship or abode, else 6293), then " ( status ) "
-    /// (Captured 34630, on a mission [0x50, 0x80) 34629, Injury 34631, Enroute 34628; at most one), then " ( command ) " (1 gives 34818, 2 gives 34817,
+    /// (Captured 34630, on a mission [80, 128) 34629, Injury 34631, Enroute 34628; at most one), then " ( command ) " (1 gives 34818, 2 gives 34817,
     /// 3 gives 34816). Injury and command kind are not kept in views: the real values (Inferred).
     /// </summary>
     public static List<FinderRow> Characters(GameState game, Owner side, Owner filter, Func<GameObject, string> name, Func<int, string> text) =>
-        Sorted(game.Characters.Where(c => Family.Of(c.Type) is >= 0x30 and < 0x3C).OrderBy(c => c.Key)
+        Sorted(game.Characters.Where(c => Family.Of(c.Type) is >= Families.MajorCharacter and < Families.SpecialForce).OrderBy(c => c.Key)
             .Where(c => DefinitionSide(c) == filter && (ScreenViews.Sees(c, side) ? c.Created : game.Views.TryGetValue((c, side), out var v) && v.Created))
             .Select(c => new FinderRow(c, CharacterText(game, side, c, name, text))));
 
@@ -105,12 +104,12 @@ public static class Finders
     {
         var v = ScreenViews.View(game, c, side);
         string location;
-        if (v.Destroyed) location = text(c.DestroyedReason is >= 0x14 and <= 0x16 ? 34712 : 34713);
-        else location = ViewParent(game, c, side) is { } p && (p is StarSystem || Family.IsCapitalShip(p.Type) || Family.Of(p.Type) is >= 0x98 and < 0xA0)
+        if (v.Destroyed) location = text(c.DestroyedReason is DestroyedReason.Scrapped or DestroyedReason.MaintenanceScrap or DestroyedReason.ProductionCancelled ? 34712 : 34713);
+        else location = ViewParent(game, c, side) is { } p && (p is StarSystem || Family.IsCapitalShip(p.Type) || Family.Of(p.Type) is >= Families.Abode and < Families.ConstructionManager)
             ? name(p) : text(6293);
         string result = name(c) + text(6295) + location;
         bool captured = Knowledge.See(game, c, side).Captured;
-        int status = captured ? 34630 : v.Mission is { Kind: >= 0x50 and < 0x80 } ? 34629 : c.Injury != 0 ? 34631 : v.Enroute ? 34628 : 0;
+        int status = captured ? 34630 : v.Mission is { Kind: >= MissionKind.Diplomacy and <= MissionKind.Pickup } ? 34629 : c.Injury != 0 ? 34631 : v.Enroute ? 34628 : 0;
         if (status != 0) result += " ( " + text(status) + " ) ";
         if (c.CommandKind is >= 1 and <= 3) result += " ( " + text(34819 - c.CommandKind) + " ) ";
         return result;

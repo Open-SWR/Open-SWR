@@ -9,7 +9,7 @@ using TextFormat = OpenSWR.Data.TextFormat;
 /// <see cref="VisibleRows"/> + 4, directly below the box, above it when it would pass the bottom bound (Inferred: the
 /// screen, 0 ... 480; the pop-up's top and bottom bounds are not verified); inside it the cell list at (2, 2), (w - 4) x (h - 4), cells (w - 4) x row height,
 /// scroll skin 10650. The item bitmaps (box size, picture centred both ways) are drawn at the cell origin, clipped by the list. A
-/// click on an item selects it, closes the pop-up and calls <see cref="Changed"/> (WM_COMMAND 0x29B); a click outside closes it.
+/// click on an item selects it, closes the pop-up and calls <see cref="Changed"/> (WM_COMMAND); a click outside closes it.
 /// Initial item = the first. Inferred: the pop-up's black background and the frame 10598 drawn centred behind the current item's
 /// cell in the pop-up. Text: the owner draws the picture; the box draws the item text. The current item is painted with the box
 /// format <see cref="Format"/> in the box colour; its rect is the box moved by the item's text offset (the box's own offset is 0),
@@ -111,11 +111,11 @@ public partial class DropDownBox : Control
         public override void _Ready()
         {
             var l = _layout;
-            var list = new CellList(10650) { Single = true, Cell = new Vector2(l.CellWidth, l.CellHeight), Position = new Vector2(l.ListX, l.ListY), Size = new Vector2(l.ListWidth, l.ListHeight) };
+            var list = new CellList(StrategyRcData.DefaultScrollSkin) { Single = true, Cell = new Vector2(l.CellWidth, l.CellHeight), Position = new Vector2(l.ListX, l.ListY), Size = new Vector2(l.ListWidth, l.ListHeight) };
             list.Count = _box.Count;
             list.DrawCell = (l, i, r) =>
             {
-                if (i == _box.Selected) CellList.Centred(l, Assets.Strategy(10598), Assets.BitmapSize(10598, "STRATEGY.DLL"), r);
+                if (i == _box.Selected) CellList.Centred(l, StrategyArt.DropDownSelectedFrame, Assets.BitmapSize(StrategyBitmaps.DropDownSelectedFrame, "STRATEGY.DLL"), r);
                 _box.DrawRow(l, i, r, i == _box.Selected);
             };
             list.SelectionChanged = () => { if (list.Selected.Count == 1) _box.Pick(list.Selected.Min); };

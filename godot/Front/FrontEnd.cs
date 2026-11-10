@@ -10,7 +10,7 @@ using SimOwner = OpenSWR.Sim.Owner;
 /// Menu music MDATA.300 loops while no game exists (Inferred).
 /// Env OPENSWR_FRONT_DEMO (headless renders): "menu" skips the startup movies; "options" opens Load; "start" starts as
 /// Empire without the side movie; "ingame" also opens the in-game options. OPENSWR_DEMO_PRESS = comma-separated menu control
-/// ids (hex) clicked first, e.g. "6F,71,6C"; OPENSWR_DEMO_OPTIONS the same for the options screen; "mods" opens the mods screen.
+/// ids clicked first, e.g. "111,113,108"; OPENSWR_DEMO_OPTIONS the same for the options screen; "mods" opens the mods screen.
 /// A plain "Mods" button over the menu's bottom-left corner opens the mods screen (openswr extra).
 /// </summary>
 public partial class FrontEnd : Node
@@ -66,7 +66,7 @@ public partial class FrontEnd : Node
         }
         CheckMods();
         if (_skipMovies) Menu();
-        else Movie("MDATA.000", () => Movie("MDATA.001", Menu));
+        else Movie(Movies.Startup, () => Movie(Movies.Intro, Menu));
     }
 
     /// <summary>Mods: load errors stay on screen over the menu; the strategy screen refuses to start with them.</summary>
@@ -117,7 +117,7 @@ public partial class FrontEnd : Node
         {
             try
             {
-                _music.Stream ??= AudioStreamWav.LoadFromBuffer(File.ReadAllBytes(Path.Combine(GameDir, "MDATA", "MDATA.300")));
+                _music.Stream ??= AudioStreamWav.LoadFromBuffer(File.ReadAllBytes(Path.Combine(GameDir, "MDATA", Music.Menu)));
                 _music.Play();
             }
             catch (IOException ex)
@@ -137,7 +137,7 @@ public partial class FrontEnd : Node
             Start = StartGame,
             Load = () => Options(),
             Exit = Quit,
-            Credits = () => Movie("MDATA.005", Menu),
+            Credits = () => Movie(Movies.Credits, Menu),
         };
         if (_menu.GetNodeOrNull("Mods") is null)
         {
@@ -150,10 +150,10 @@ public partial class FrontEnd : Node
         string demo = _demo;
         _demo = ""; // once
         foreach (var id in (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_PRESS") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
-            _menu.Controls[Convert.ToInt32(id.Trim(), 16)].Click();
-        if (demo == "options") _menu.Controls[0x68].Click();
+            _menu.Controls[int.Parse(id.Trim())].Click();
+        if (demo == "options") _menu.Controls[ControlIds.MainMenuLoadGame].Click();
         if (demo == "mods") Mods();
-        if (demo is "start" or "ingame") _menu.Controls[0x66].Click();
+        if (demo is "start" or "ingame") _menu.Controls[ControlIds.MainMenuStartEmpire].Click();
         if (demo == "ingame") Callable.From(() => Options()).CallDeferred();
     }
 
@@ -163,7 +163,7 @@ public partial class FrontEnd : Node
         var screen = NewMainScreen();
         screen.Settings = settings;
         if (_skipMovies) Enter(screen);
-        else Movie(settings.PlayerSide == SimOwner.Alliance ? "MDATA.003" : "MDATA.004", () => Enter(screen));
+        else Movie(settings.PlayerSide == SimOwner.Alliance ? Movies.NewGameAlliance : Movies.NewGameEmpire, () => Enter(screen));
     }
 
     MainScreen NewMainScreen()
@@ -171,7 +171,7 @@ public partial class FrontEnd : Node
         var screen = GD.Load<PackedScene>("res://MainScreen.tscn").Instantiate<MainScreen>();
         screen.GameDir = GameDir;
         screen.OptionsRequested = () => Options();
-        // States 0x10-0x13 play the end movie, then the main menu (state 3); the game is gone
+        // States 16-19 play the end movie, then the main menu (state 3); the game is gone
         screen.GameEnded = movie => Callable.From(() => // deferred: the call comes from inside the screen's own _Process
         {
             var old = _game;
@@ -213,9 +213,9 @@ public partial class FrontEnd : Node
             MusicChanged = () => { UpdateMusic(); _game?.MusicSwitched(); },
         };
         Show(options);
-        // demo: OPENSWR_DEMO_OPTIONS = options control ids (hex) clicked once, e.g. "6F" save slot 1, "79" load slot 1
+        // demo: OPENSWR_DEMO_OPTIONS = options control ids clicked once, e.g. "111" save slot 1, "121" load slot 1
         foreach (var id in (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_OPTIONS") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
-            options.Controls[Convert.ToInt32(id.Trim(), 16)].Click();
+            options.Controls[int.Parse(id.Trim())].Click();
         System.Environment.SetEnvironmentVariable("OPENSWR_DEMO_OPTIONS", null);
     }
 
@@ -232,5 +232,5 @@ public partial class FrontEnd : Node
         Enter(screen);
     }
 
-    void Quit() => Assets.Confirm(this, Assets.Dialog(4610), () => GetTree().Quit());
+    void Quit() => Assets.Confirm(this, DialogText.QuitConfirm, () => GetTree().Quit());
 }

@@ -10,11 +10,59 @@ public readonly record struct FilterCell(int Glyph, bool Hidden);
 /// glyph chosen from a value, a colour side and thresholds, read from the player side's views. UI only: no state
 /// change, no draw. OpenSWR readings (Inferred): view contents = the real direct contents the side sees (own or live) plus the
 /// objects whose frozen view is parented to the system (Usable / Existing / owner from the frozen view); views keep no energy or
-/// raw material, so modes 0x51 / 0x52 read the real values; personnel (0x43 / 0x44) reads the agents the side sees.
+/// raw material, so the energy and raw material modes read the real values; the personnel modes read the agents the side sees.
 /// </summary>
+/// <summary>Map display filter modes (the picker's command ids).</summary>
+public static class FilterModes
+{
+    public const int PopularSupport = 16;
+    /// <summary>Same display as PopularSupport. Meaning of the second id in the original is unknown.</summary>
+    public const int PopularSupportVariant = 17;
+    public const int Uprisings = 18;
+    /// <summary>Advisor only: the player's systems it controls.</summary>
+    public const int AdvisorOwnControlled = 19;
+    /// <summary>Advisor only: the player's systems it does not control.</summary>
+    public const int AdvisorOwnUncontrolled = 20;
+    public const int AdvisorEnemyControlled = 21;
+    public const int AdvisorEnemyUncontrolled = 22;
+    /// <summary>Advisor only: unexplored systems.</summary>
+    public const int AdvisorUnexplored = 23;
+    public const int IdleFleets = 32;
+    /// <summary>Same display as IdleFleets. Meaning of the second id in the original is unknown.</summary>
+    public const int IdleFleetsVariant = 33;
+    public const int FleetsEnroute = 34;
+    /// <summary>Advisor only: draws nothing and has no title. Meaning in the original is unknown.</summary>
+    public const int AdvisorUntitled = 48;
+    public const int IdlePersonnel = 67;
+    public const int ActivePersonnel = 68;
+    public const int AvailableEnergy = 81;
+    public const int AvailableRawMaterial = 82;
+    public const int Mines = 83;
+    public const int Refineries = 84;
+    public const int Manufacturing = 97;
+    public const int Shipyards = 98;
+    public const int TrainingFacilities = 99;
+    public const int ConstructionYards = 100;
+    public const int IdleShipyards = 101;
+    public const int IdleTrainingFacilities = 102;
+    public const int IdleConstructionYards = 103;
+    public const int Troopers = 113;
+    public const int FighterSquadrons = 114;
+    public const int DeathStarShields = 115;
+    public const int PlanetaryShields = 116;
+    public const int DefenseBatteries = 117;
+    public const int Off = 128;
+    /// <summary>Advisor only: troops, defences and fighters.</summary>
+    public const int AdvisorDefenses = 145;
+    /// <summary>Advisor only: the listed systems, Empire colour.</summary>
+    public const int AdvisorListEmpire = 146;
+    /// <summary>Advisor only: the listed systems, Alliance colour.</summary>
+    public const int AdvisorListAlliance = 147;
+}
+
 public static class MapFilter
 {
-    public const int Off = 0x80;
+    public const int Off = FilterModes.Off;
 
     /// <summary>
     /// Filter title text item: at the map rect's top-left (A (55, 40), E (120, 40)), fixed
@@ -26,15 +74,16 @@ public static class MapFilter
             new Data.TextItemSize(FixedWidth: true));
 
     /// <summary>
-    /// Modes the picker and Alt+1...9 offer. 0x13-0x17 and 0x91-0x93 are advisor-only (the briefing's guided steps): computed
-    /// by <see cref="Cells"/> but never offered; 0x30, 0x41, 0x42 draw nothing.
+    /// Modes the picker and Alt+1...9 offer. The advisor modes are advisor-only (the briefing's guided steps): computed
+    /// by <see cref="Cells"/> but never offered; the untitled advisor mode and two unnamed modes draw nothing.
     /// </summary>
-    public static bool Supported(int mode) => mode is 0x10 or 0x11 or 0x12 or 0x20 or 0x21 or 0x22 or 0x43 or 0x44
-        or (>= 0x51 and <= 0x54) or (>= 0x62 and <= 0x67) or (>= 0x71 and <= 0x75);
+    public static bool Supported(int mode) => mode is FilterModes.PopularSupport or FilterModes.PopularSupportVariant or FilterModes.Uprisings or FilterModes.IdleFleets or FilterModes.IdleFleetsVariant or FilterModes.FleetsEnroute or FilterModes.IdlePersonnel or FilterModes.ActivePersonnel
+        or (>= FilterModes.AvailableEnergy and <= FilterModes.Refineries) or (>= FilterModes.Shipyards and <= FilterModes.IdleConstructionYards)
+        or (>= FilterModes.Troopers and <= FilterModes.DefenseBatteries);
 
     /// <summary>
-    /// A load: only the mode is saved. It is re-applied (command 0x140, no list, no custom title)
-    /// only when it differs from the mode shown before the load. The draw then plays sound 601, unless the mode is 0x80.
+    /// A load: only the mode is saved. It is re-applied (the map filter command, no list, no custom title)
+    /// only when it differs from the mode shown before the load. The draw then plays sound 601, unless the mode is Off.
     /// </summary>
     public static bool LoadSound(int shown, int saved) => saved != shown && saved != Off;
 
@@ -53,7 +102,7 @@ public static class MapFilter
 
     /// <summary>
     /// Cells of every system of the game for <paramref name="side"/> in filter <paramref name="mode"/>; <paramref name="list"/> = the
-    /// SD indexes of the one-system list of modes 0x92 / 0x93 (the list the guided advisor step sets).
+    /// SD indexes of the one-system list of the advisor list modes (the list the guided advisor step sets).
     /// </summary>
     public static Dictionary<StarSystem, FilterCell> Cells(GameState game, Owner side, int mode, IReadOnlyCollection<int>? list = null)
     {
@@ -73,14 +122,14 @@ public static class MapFilter
     {
         var view = Knowledge.See(game, s, side);
         var enemy = side == Owner.Alliance ? Owner.Empire : Owner.Alliance;
-        // 0x92 / 0x93: listed gives c = 7, colour 2 / 1; not listed gives hidden. Destroyed views are not hidden, unexplored ones are
-        if (mode is 0x92 or 0x93)
-            return view.Explored && list?.Contains((int)SdRef.IndexOf(s.Type)) == true ? new(Glyph(7, mode == 0x92 ? Owner.Empire : Owner.Alliance, 6, 5, 3, 2), false) : new(0, true);
-        // 0x17: c = 82 for a view that is not Explored, colour 3; the hidden rule inverted (Explored views are hidden)
-        if (mode == 0x17) return view.Explored ? new(0, true) : new(Glyph(82, Owner.Neutral, 81, 80, 60, 59, 50), false);
-        // Other modes hide unexplored views (except 0x22 / 0x44) and destroyed views (except 0x20, 0x21, 0x22, 0x43, 0x44).
-        bool hidden = !view.Explored && mode is not (0x22 or 0x44)
-            || view.Destroyed && mode is not (0x20 or 0x21 or 0x22 or 0x43 or 0x44);
+        // Advisor list modes: listed gives c = 7, colour 2 / 1; not listed gives hidden. Destroyed views are not hidden, unexplored ones are
+        if (mode is FilterModes.AdvisorListEmpire or FilterModes.AdvisorListAlliance)
+            return view.Explored && list?.Contains((int)SdRef.IndexOf(s.Type)) == true ? new(Glyph(7, mode == FilterModes.AdvisorListEmpire ? Owner.Empire : Owner.Alliance, 6, 5, 3, 2), false) : new(0, true);
+        // Advisor unexplored mode: c = 82 for a view that is not Explored, colour 3; the hidden rule inverted (Explored views are hidden)
+        if (mode == FilterModes.AdvisorUnexplored) return view.Explored ? new(0, true) : new(Glyph(82, Owner.Neutral, 81, 80, 60, 59, 50), false);
+        // Other modes hide unexplored views (except fleets enroute and active personnel) and destroyed views (except idle fleets, its variant, fleets enroute, idle and active personnel).
+        bool hidden = !view.Explored && mode is not (FilterModes.FleetsEnroute or FilterModes.ActivePersonnel)
+            || view.Destroyed && mode is not (FilterModes.IdleFleets or FilterModes.IdleFleetsVariant or FilterModes.FleetsEnroute or FilterModes.IdlePersonnel or FilterModes.ActivePersonnel);
         if (hidden) return new(0, true);
         var owner = view.Owner;
         // count [lo, hi) of the owner's Usable objects directly in the system (iterator mode 1)
@@ -88,24 +137,24 @@ public static class MapFilter
         int Default(int c) => Glyph(c, owner, 6, 5, 3, 2);
         switch (mode)
         {
-            case 0x10 or 0x11:
+            case FilterModes.PopularSupport or FilterModes.PopularSupportVariant:
                 int share = side == Owner.Alliance ? view.Support : 100 - view.Support;
                 return new(Glyph(share, owner, 81, 80, 60, 59, 50), false);
-            case 0x12:
+            case FilterModes.Uprisings:
                 return new(Glyph(view.Uprising ? 1 : 0, owner, 1, 1, 1, 1), false);
-            case 0x13 or 0x14 or 0x15 or 0x16:
+            case FilterModes.AdvisorOwnControlled or FilterModes.AdvisorOwnUncontrolled or FilterModes.AdvisorEnemyControlled or FilterModes.AdvisorEnemyUncontrolled:
             {
-                // c = 82 when the view owner is the side (0x13 / 0x14: the player, 0x15 / 0x16: the enemy) and the control
-                // (read from the view's control) is (0x13 / 0x15) or is not (0x14 / 0x16) that side;
-                // thresholds as 0x10, colour = the view owner
-                var who = mode is 0x13 or 0x14 ? side : enemy;
+                // c = 82 when the view owner is the side (own modes: the player, enemy modes: the enemy) and the control
+                // (read from the view's control) is (controlled modes) or is not (uncontrolled modes) that side;
+                // thresholds as popular support, colour = the view owner
+                var who = mode is FilterModes.AdvisorOwnControlled or FilterModes.AdvisorOwnUncontrolled ? side : enemy;
                 bool control = Knowledge.Control(game, s, side).Support == who;
-                bool holds = owner == who && (mode is 0x13 or 0x15 ? control : !control);
+                bool holds = owner == who && (mode is FilterModes.AdvisorOwnControlled or FilterModes.AdvisorEnemyControlled ? control : !control);
                 return new(Glyph(holds ? 82 : 0, owner, 81, 80, 60, 59, 50), false);
             }
-            case 0x20 or 0x21 or 0x22:
+            case FilterModes.IdleFleets or FilterModes.IdleFleetsVariant or FilterModes.FleetsEnroute:
             {
-                bool enroute = mode == 0x22; // Inferred: iterator mode 2 = fleets en route to the system
+                bool enroute = mode == FilterModes.FleetsEnroute; // Inferred: iterator mode 2 = fleets en route to the system
                 int Fleets(Owner o) => contents.Count(x => x.Object is Fleet && x.Owner == o && (enroute ? x.Enroute && x.Existing : x.Usable));
                 int p = Fleets(side), q = Fleets(enemy);
                 if (p > 0 && q > 0) return new(Conflict, false);
@@ -114,33 +163,33 @@ public static class MapFilter
                 if (enroute && !view.Explored) return new(0, false);
                 return new(Glyph(Fleets(owner), owner, 3, 2, 2, 1), false);
             }
-            case 0x43 or 0x44:
+            case FilterModes.IdlePersonnel or FilterModes.ActivePersonnel:
             {
-                var (own, other) = Personnel(s, side, mode == 0x43);
+                var (own, other) = Personnel(s, side, mode == FilterModes.IdlePersonnel);
                 var colour = own > 0 ? side : other > 0 ? enemy : owner;
                 return new(Glyph(own > 0 ? own : other, colour, 1, 1, 1, 1), false);
             }
-            case 0x51: return new(Default(s.Energy - s.UsedEnergy), false);
-            case 0x52: return new(Glyph(s.RawMaterials - s.UsedRaw, owner, 3, 2, 2, 1), false);
-            case 0x53: return new(Default(Count(0x2C, 0x2D)), false);
-            case 0x54: return new(Default(Count(0x2D, 0x2E)), false);
-            case 0x61: return new(Glyph(Count(0x28, 0x2C) > 0 ? 1 : 0, owner, 1, 1, 1, 1), false);
-            case 0x62: return new(Glyph(Count(0x28, 0x29), owner, 5, 4, 2, 1), false);
-            case 0x63: return new(Glyph(Count(0x29, 0x2A), owner, 5, 4, 2, 1), false);
-            case 0x64: return new(Glyph(Count(0x2A, 0x2B), owner, 5, 4, 2, 1), false);
-            case 0x65 or 0x66 or 0x67:
+            case FilterModes.AvailableEnergy: return new(Default(s.Energy - s.UsedEnergy), false);
+            case FilterModes.AvailableRawMaterial: return new(Glyph(s.RawMaterials - s.UsedRaw, owner, 3, 2, 2, 1), false);
+            case FilterModes.Mines: return new(Default(Count(Families.Mine, Families.Refinery)), false);
+            case FilterModes.Refineries: return new(Default(Count(Families.Refinery, Families.RefineryEnd)), false);
+            case FilterModes.Manufacturing: return new(Glyph(Count(Families.Shipyard, Families.Mine) > 0 ? 1 : 0, owner, 1, 1, 1, 1), false);
+            case FilterModes.Shipyards: return new(Glyph(Count(Families.Shipyard, Families.TrainingFacility), owner, 5, 4, 2, 1), false);
+            case FilterModes.TrainingFacilities: return new(Glyph(Count(Families.TrainingFacility, Families.ConstructionYard), owner, 5, 4, 2, 1), false);
+            case FilterModes.ConstructionYards: return new(Glyph(Count(Families.ConstructionYard, Families.ManufacturingEnd), owner, 5, 4, 2, 1), false);
+            case FilterModes.IdleShipyards or FilterModes.IdleTrainingFacilities or FilterModes.IdleConstructionYards:
             {
-                var kind = mode switch { 0x65 => ManufacturingKind.Ship, 0x66 => ManufacturingKind.Training, _ => ManufacturingKind.Construction };
+                var kind = mode switch { FilterModes.IdleShipyards => ManufacturingKind.Ship, FilterModes.IdleTrainingFacilities => ManufacturingKind.Training, _ => ManufacturingKind.Construction };
                 // Inferred: the manager has producing members and no queued orders.
                 int c = owner == side && s.Managers[(int)kind] is { } m && Economy.Members(m).Count > 0 && m.Orders.Count == 0 ? 15 : 0;
-                return new(mode == 0x67 ? Glyph(c, owner, 5, 4, 3, 1) : Glyph(c, owner, 5, 4, 2, 1), false);
+                return new(mode == FilterModes.IdleConstructionYards ? Glyph(c, owner, 5, 4, 3, 1) : Glyph(c, owner, 5, 4, 2, 1), false);
             }
-            case 0x71: return new(Default(Count(0x10, 0x14)), false);
-            case 0x72: return new(Default(Count(0x1C, 0x20)), false);
-            case 0x73: return new(Glyph(Count(0x25, 0x26), owner, 1, 1, 1, 1), false);
-            case 0x74: return new(Default(Count(0x24, 0x25)), false);
-            case 0x75: return new(Default(Count(0x22, 0x23) + Count(0x23, 0x24)), false);
-            case 0x91: return new(Default(Count(0x10, 0x14) + Count(0x22, 0x28) + Count(0x1C, 0x20)), false); // troops + [0x22, 0x28) + fighters
+            case FilterModes.Troopers: return new(Default(Count(Families.Troop, Families.CapitalShip)), false);
+            case FilterModes.FighterSquadrons: return new(Default(Count(Families.Fighter, Families.Headquarters)), false);
+            case FilterModes.DeathStarShields: return new(Glyph(Count(Families.DeathStarShield, Families.DeathStarShieldEnd), owner, 1, 1, 1, 1), false);
+            case FilterModes.PlanetaryShields: return new(Default(Count(Families.PlanetaryShield, Families.DeathStarShield)), false);
+            case FilterModes.DefenseBatteries: return new(Default(Count(Families.IonCannon, Families.Gun) + Count(Families.Gun, Families.PlanetaryShield)), false);
+            case FilterModes.AdvisorDefenses: return new(Default(Count(Families.Troop, Families.CapitalShip) + Count(Families.IonCannon, Families.Shipyard) + Count(Families.Fighter, Families.Headquarters)), false); // troops + [34, 40) + fighters
         }
         return new(0, false);
     }
@@ -153,7 +202,7 @@ public static class MapFilter
     static (int Own, int Other) Personnel(StarSystem s, Owner side, bool idle)
     {
         static bool Idle(Agent a) => a.Usable && !a.OnMission && a is not Character { Captured: true } && a is not Character { CommandKind: not 0 };
-        bool Agent(GameObject o) => Family.Of(o.Type) is >= 0x30 and < 0x40 && o.Existing;
+        bool Agent(GameObject o) => Family.Of(o.Type) is >= Families.MajorCharacter and < Families.Mission && o.Existing;
         var direct = s.Contents.OfType<Agent>().Where(a => Agent(a) && a.Owner == side);
         var aboard = s.Contents.OfType<Fleet>().Where(f => Sees(f, side)).SelectMany(f => f.Contents.Where(x => Family.IsCapitalShip(x.Type)))
             .SelectMany(ship => ship.Contents.OfType<Agent>().Where(a => Agent(a) && (a is Character || a.Owner == side))).ToList();

@@ -34,7 +34,7 @@ public class ModTests(ITestOutputHelper output)
     [GameFact]
     public void AnEmptyModKeepsEveryRecord()
     {
-        // the loader's own path (SD words -> bytes -> records) reproduces the install exactly; only the mod list differs
+        // the loader's own path (SD words gives bytes gives records) reproduces the install exactly; only the mod list differs
         string dir = Path.Combine(Path.GetTempPath(), "openswr-modtest-" + Guid.NewGuid().ToString("N"));
         try
         {
@@ -71,22 +71,22 @@ public class ModTests(ITestOutputHelper output)
     {
         var d = Modded;
         Assert.Equal([("testmod", "1.0")], d.Mods);
-        // a new sector (next free Index 0x28) with five systems, all rim (group 2)
+        // a new sector (next free Index 40) with five systems, all rim (group 2)
         var drift = Assert.Single(d.Sectors, s => d.Names.GetValueOrDefault(s.Common.Ref) == "Ember Drift");
-        Assert.Equal(0x80000028u, drift.Common.Ref);
+        Assert.Equal(SdRef.Make(Families.Sector, 40), drift.Common.Ref);
         Assert.Equal(GameDefinitions.ModStringModule, drift.Common.StringModule);
-        Assert.Equal(20, d.Sectors.Count); // sector 0x15 and its ten systems removed to make room (at most 200 systems)
+        Assert.Equal(20, d.Sectors.Count); // sector 21 and its ten systems removed to make room (at most 200 systems)
         Assert.Equal(195, d.Systems.Count);
-        Assert.DoesNotContain(d.Sectors, s => s.Common.Index == 0x15);
-        Assert.Equal(5, d.Systems.Count(s => s.SectorIndex == 0x28));
-        Assert.All(d.Systems.Where(s => s.SectorIndex == 0x28), s => Assert.Equal(0x92u, s.Common.Family));
+        Assert.DoesNotContain(d.Sectors, s => s.Common.Index == 21);
+        Assert.Equal(5, d.Systems.Count(s => s.SectorIndex == 40));
+        Assert.All(d.Systems.Where(s => s.SectorIndex == Families.Shipyard), s => Assert.Equal(Families.RimSystem, s.Common.Family));
         var lantern = Assert.Single(d.Systems, s => d.Names.GetValueOrDefault(s.Common.Ref) == "Lantern");
-        Assert.Equal((0x92u, 0x28u, (ushort)215), (lantern.Common.Family, lantern.SectorIndex, lantern.X));
+        Assert.Equal((Families.RimSystem, 40u, (ushort)215), (lantern.Common.Family, lantern.SectorIndex, lantern.X));
         Assert.All(d.Systems, s => Assert.InRange(s.Common.Index, 100u, 299u));
-        // a capital ship copied from 0x14000041 with changed fields; weapon sums follow the arcs
+        // a capital ship copied from capital ship index 65 with changed fields; weapon sums follow the arcs
         var warden = Assert.Single(d.CapitalShips, s => d.Names.GetValueOrDefault(s.Common.Ref) == "Warden Picket");
-        var source = d.CapitalShips.Single(s => s.Common.Ref == 0x14000041);
-        Assert.Equal(0x1400008Fu, warden.Common.Ref);
+        var source = d.CapitalShips.Single(s => s.Common.Ref == SdRef.Make(Families.CapitalShip, 65));
+        Assert.Equal(SdRef.Make(Families.CapitalShip, 143), warden.Common.Ref);
         Assert.Equal((900u, 400u, 12u, 30u), (warden.Hull, warden.ShieldStrength, warden.ResearchOrder, warden.Fore.Turbolaser));
         Assert.Equal(source.Maneuverability, warden.Maneuverability);
         Assert.Equal(warden.Fore.Turbolaser + warden.Aft.Turbolaser + warden.Port.Turbolaser + warden.Starboard.Turbolaser, warden.AttackStrength.Turbolaser);
@@ -100,9 +100,9 @@ public class ModTests(ITestOutputHelper output)
         Assert.EndsWith("galaxy.png", d.GalaxyPicture);
         Assert.Equal((607, 437), ModLoader.PngSize(d.GalaxyPicture!));
         var kestrel = Assert.Single(d.Fighters, s => d.Names.GetValueOrDefault(s.Common.Ref) == "Kestrel Interceptor");
-        Assert.Equal((0x1C000009u, 7u), (kestrel.Common.Ref, kestrel.Maneuverability));
+        Assert.Equal((SdRef.Make(Families.Fighter, 9), 7u), (kestrel.Common.Ref, kestrel.Maneuverability));
         var varn = Assert.Single(d.MinorCharacters, s => d.Names.GetValueOrDefault(s.Common.Ref) == "Ilsa Varn");
-        Assert.Equal((0x3800039Cu, 1u, 0u, 60u, 1u), (varn.Common.Ref, varn.Alliance, varn.Empire, varn.Skills.Leadership.Base, varn.CanBeCommander));
+        Assert.Equal((SdRef.Make(Families.MinorCharacter, 924), 1u, 0u, 60u, 1u), (varn.Common.Ref, varn.Alliance, varn.Empire, varn.Skills.Leadership.Base, varn.CanBeCommander));
         // seed table by id
         Assert.Equal([warden.Common.Ref, kestrel.Common.Ref, kestrel.Common.Ref], d.SeedFamilies["CMUNAFTB"][0].Items.Select(i => i.Ref.Value));
         Assert.Empty(ModValidator.Validate(d));
@@ -116,7 +116,7 @@ public class ModTests(ITestOutputHelper output)
         foreach (int size in new[] { 1, 2, 3 })
         {
             var game = NewGame.Create(new GameSettings(Owner.Alliance, size, 0, 0, 874334749), d);
-            Assert.Contains(game.Sectors, s => s.Definition.Common.Index == 0x28);
+            Assert.Contains(game.Sectors, s => s.Definition.Common.Index == 40);
             Assert.Equal(5, game.Systems.Count(s => s.Definition.Common.StringModule == GameDefinitions.ModStringModule));
             Assert.Contains(game.Characters, c => d.Names.GetValueOrDefault(c.Type) == "Ilsa Varn");
             output.WriteLine($"size {size}: {game.Sectors.Count} sectors, {game.Systems.Count} systems, wardens {game.Systems.SelectMany(All).Count(o => o.Type == warden)}");
@@ -151,7 +151,7 @@ public class ModTests(ITestOutputHelper output)
         return stream.ToArray();
     }
 
-    /// <summary>100 days computer against computer with the test mod (the soak harness: no exception, no livelock, expected refusals only, save -> load -> save at day 100).</summary>
+    /// <summary>100 days computer against computer with the test mod (the soak harness: no exception, no livelock, expected refusals only, save gives load gives save at day 100).</summary>
     [GameTheory]
     [InlineData(874334749, 1)]
     [InlineData(532947196, 3)]
@@ -187,7 +187,7 @@ public class ModTests(ITestOutputHelper output)
     public void AModPictureLargerThanTheCapIsRefused()
     {
         // a PNG header alone (signature + IHDR) claiming 5000 x 5000: the size is read from the header before anything is decoded
-        byte[] png = [0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, (byte)'I', (byte)'H', (byte)'D', (byte)'R', 0, 0, 0x13, 0x88, 0, 0, 0x13, 0x88];
+        byte[] png = [137, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10, 0, 0, 0, 13, (byte)'I', (byte)'H', (byte)'D', (byte)'R', 0, 0, 19, 136, 0, 0, 19, 136];
         var e = WithMod("""{"op": "add", "type": "fighter", "id": "x", "from": "base:1C000003", "name": "X", "picture": "big.png"}""",
             dir => Assert.Throws<ModLoadException>(() => ModLoader.Load(GameDir.Path, dir, ["m"])), ("big.png", png));
         Assert.Contains("larger than 4096 pixels", e.Message);
@@ -340,10 +340,10 @@ public class ModTests(ITestOutputHelper output)
                 """);
             foreach (var sub in Directory.GetDirectories(ModsDir)) CopyDir(sub, Path.Combine(dir, Path.GetFileName(sub)));
             var d = ModLoader.Load(GameDir.Path, dir, ["testmod", "second"]);
-            var warden = d.CapitalShips.Single(s => s.Common.Ref == 0x1400008F);
+            var warden = d.CapitalShips.Single(s => s.Common.Ref == SdRef.Make(Families.CapitalShip, 143));
             Assert.Equal((1200u, "Warden Mk II"), (warden.Hull, d.Names[warden.Common.Ref]));
             Assert.Equal(194, d.Systems.Count);
-            Assert.Equal(50, d.GeneralParams.Single(p => p.ParamId == 0x1E32).Values[3]);
+            Assert.Equal(50, d.GeneralParams.Single(p => p.ParamId == 7730).Values[3]);
             Assert.Equal([("testmod", "1.0"), ("second", "2")], d.Mods);
             Assert.Contains("must come before", Assert.Throws<ModLoadException>(() => ModLoader.Load(GameDir.Path, dir, ["second", "testmod"])).Message);
         }

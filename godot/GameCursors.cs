@@ -22,7 +22,7 @@ public static class GameCursors
             try
             {
                 var exe = PeResources.Load(Path.Combine(Assets.GameDir, "REBEXE.EXE"));
-                (_arrow, _cross) = (Cursors.Load(exe, 1001), Cursors.Load(exe, 1002));
+                (_arrow, _cross) = (Cursors.Load(exe, UiIds.DefaultCursor), Cursors.Load(exe, UiIds.TargetingCursor));
             }
             catch (Exception e)
             {

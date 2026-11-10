@@ -157,7 +157,7 @@ public sealed partial class OpenSWRController
         bool siege = g.Fleet is not null && _siege == target; // Siege: bombard until the defence and troops are gone, then land
         if (siege && SiegeBombard(game, k, target, used)) { }
         else if (clear && !LandAllowed(k, there, target)) HoldLanding(game, target, staging, there, used);
-        else if (clear && Issue(game, new Command(0x234, Side) { Targets = [.. there.Select(f => ((GameObject)f, 0))], ArgRef = target }, used))
+        else if (clear && Issue(game, new Command(CommandType.Assault, Side) { Targets = [.. there.Select(f => ((GameObject)f, GroupMode.Object))], ArgRef = target }, used))
         {
             RecordAge(game, "assault", target);
             RecordOwnLanding(game, target, landing, AttackTroopsFor(k, target)); // measurement only
@@ -218,7 +218,7 @@ public sealed partial class OpenSWRController
         if (_groups.Count > 0)
             j["groups"] = new JsonArray([.. _groups.Select(g => (JsonNode)(g.Fleet is { } f ? new JsonArray(g.Target.Ref, g.Staging?.Ref ?? 0, g.HeldSince ?? -1, f)
                 : new JsonArray(g.Target.Ref, g.Staging?.Ref ?? 0, g.HeldSince ?? -1)))]);
-        if (_lost.Count > 0) j["lost"] = new JsonArray([.. _lost.Select(e => (JsonNode)new JsonArray(e.Key, e.Value.Day, e.Value.Value))]);
+        if (_lost.Count > 0) j["lost"] = new JsonArray([.. _lost.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value.Day, e.Value.Value))]);
     }
 
     /// <summary>Restores <see cref="SaveAttack"/>; a save from before the multi-group format holds one group as "target" / "staging" / "heldSince".</summary>

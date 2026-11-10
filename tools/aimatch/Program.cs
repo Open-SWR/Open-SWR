@@ -74,7 +74,7 @@ var total = Stopwatch.StartNew();
 // Each game owns its state: its GameState and its two controllers' generators (the openswr controller draws nothing, the
 // original AI gets its own UiRandom), so games are independent and may run at once. Process-wide UiRandom.Shared is not drawn by
 // a match (checked at the end). The shared definitions are read-only; their Index maps are built once here, before any game.
-definitions.Resolve(0x10000006);
+definitions.Resolve(Refs.Stormtroopers);
 var jobs = new List<(int Game, int Seed, Owner Side)>();
 for (int g = 0; g < games; g++)
 {
@@ -165,8 +165,8 @@ return 0;
 static string TypeName(OpenSWR.Data.Dat.GameDefinitions d, uint type)
 {
     var f = d.SpecialForces.FirstOrDefault(x => x.Common.Ref == type);
-    if (f is null) return $"{type:X8}";
-    var kinds = d.Missions.Where(r => r.Unk34 == 0 && f.MissionMask != 0 && r.AllowsSpecialForce(f.MissionMask)).Select(r => OpenSWR.Sim.Family.Of(r.Common.Ref)).Distinct().Order()
+    if (f is null) return $"{Family.Of(type)}:{SdRef.IndexOf(type)}";
+    var kinds = d.Missions.Where(r => !r.Unlisted && f.MissionMask != 0 && r.AllowsSpecialForce(f.MissionMask)).Select(r => OpenSWR.Sim.Family.Of(r.Common.Ref)).Distinct().Order()
         .Select(k => Match.MissionName(k)[..3]);
-    return $"{type:X8} {string.Join("+", kinds)} e{f.Skills.Espionage.Base}c{f.Skills.Combat.Base}m{f.MaintenanceCost}";
+    return $"{Family.Of(type)}:{SdRef.IndexOf(type)} {string.Join("+", kinds)} e{f.Skills.Espionage.Base}c{f.Skills.Combat.Base}m{f.MaintenanceCost}";
 }

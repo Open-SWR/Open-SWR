@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace OpenSWR.Tests;
 
 /// <summary>
-/// The computer controller's save: save -> load -> save byte-equal with live computer controllers, and the
+/// The computer controller's save: save gives load gives save byte-equal with live computer controllers, and the
 /// continuation check: a game saved at day D continues the same way in memory with the load effects applied (branch A) and loaded
 /// into a fresh <see cref="GameState"/> (branch B), draw for draw, command for command, fact for fact, and saves equal after.
 /// </summary>
@@ -57,16 +57,16 @@ public class AiSaveTests(ITestOutputHelper output)
     {
         var root = System.Text.Json.Nodes.JsonNode.Parse(save)!;
         root["uiRngState"] = 0;
-        void Sort(string name, Func<System.Text.Json.Nodes.JsonNode, (long, long)> key)
+        void Sort(string name, Func<System.Text.Json.Nodes.JsonNode, (string, long)> key)
         {
             var list = root[name]!.AsArray();
-            var sorted = list.OrderBy(x => key(x!)).Select(x => x!.DeepClone()).ToList();
+            var sorted = list.OrderBy(x => key(x!).Item1, StringComparer.Ordinal).ThenBy(x => key(x!).Item2).Select(x => x!.DeepClone()).ToList();
             list.Clear();
             foreach (var x in sorted) list.Add(x);
         }
-        Sort("timers", t => ((int)t["type"]!, (uint)t["target"]!));
-        Sort("views", v => ((uint)v["object"]!, (int)v["side"]!));
-        Sort("objects", o => ((uint)o["type"]!, (uint)o["id"]!)); // first-reference order, follows the views
+        Sort("timers", t => ((string)t["type"]!, (uint)t["target"]!));
+        Sort("views", v => (((uint)v["object"]!).ToString("D10"), v["side"] is { } side ? (long)Enum.Parse<Owner>((string)side!) : 0));
+        Sort("objects", o => (((uint)o["type"]!).ToString("D10"), (uint)o["id"]!)); // first-reference order, follows the views
         return root.ToJsonString();
     }
 
@@ -128,7 +128,7 @@ public class AiSaveTests(ITestOutputHelper output)
             g.FactTrace = [];
             g.Random.Trace = [];
             g.BattleResults = _ => null;
-            g.Clock.Executed = (c, r) => list.Add($"{g.Clock.Tick} {c.Side} {c.Type:X} {c.Sequence} [{string.Join(",", c.Targets.Select(t => t.Target.Ref.ToString("X")))}] {c.ArgRef?.Ref:X} {r.Category:X}/{r.Code:X}");
+            g.Clock.Executed = (c, r) => list.Add($"{g.Clock.Tick} {c.Side} {(int)c.Type} {c.Sequence} [{string.Join(",", c.Targets.Select(t => t.Target.Ref.ToString()))}] {c.ArgRef?.Ref} {(int)r.Category}/{(int)r.Code}");
         }
         RunDays(a, 200);
         RunDays(b, 200);

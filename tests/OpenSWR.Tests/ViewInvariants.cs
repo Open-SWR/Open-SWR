@@ -22,7 +22,7 @@ sealed class ViewInvariants
         game.LockFloor = o => _floored.Add(o);
     }
 
-    /// <summary>The mission side's views holding a RoleMissionKey: live -> the real key, frozen -> the entry.</summary>
+    /// <summary>The mission side's views holding a RoleMissionKey: live gives the real key, frozen gives the entry.</summary>
     static IEnumerable<(Agent Agent, Owner Side, Mission Mission)> Held(GameState game) =>
         from a in game.Created.OfType<Agent>().Concat(game.Characters).Distinct()
         from side in Sides
@@ -40,17 +40,17 @@ sealed class ViewInvariants
         {
             foreach (var ((x, side), v) in _game.Views)
                 if (!Knowledge.IsLive(x, side) && v.Parent is { } p && deleted.Contains(p))
-                    errors.Add($"{where}: {side} view of {x.Ref:X8} parented to deleted {p.Ref:X8}");
+                    errors.Add($"{where}: {side} view of {x.Ref} parented to deleted {p.Ref}");
             foreach (var (a, side, m) in Held(_game))
-                if (deleted.Contains(m)) errors.Add($"{where}: {side} view of {a.Ref:X8} holds deleted mission {m.Ref:X8}");
+                if (deleted.Contains(m)) errors.Add($"{where}: {side} view of {a.Ref} holds deleted mission {m.Ref}");
         }
         var count = Held(_game).GroupBy(h => h.Mission).ToDictionary(g => g.Key, g => g.Count());
         foreach (var m in _game.Missions)
             if (m.Objective is Mission om) count[om] = count.GetValueOrDefault(om) + 1;
         foreach (var m in _game.Missions)
             if (m.LockCount != count.GetValueOrDefault(m))
-                errors.Add($"{where}: mission {m.Ref:X8} lock {m.LockCount}, views {count.GetValueOrDefault(m)}");
-        foreach (var o in _floored) errors.Add($"{where}: lock of {o.Ref:X8} decremented at 0");
+                errors.Add($"{where}: mission {m.Ref} lock {m.LockCount}, views {count.GetValueOrDefault(m)}");
+        foreach (var o in _floored) errors.Add($"{where}: lock of {o.Ref} decremented at 0");
         _floored.Clear();
         return errors;
     }

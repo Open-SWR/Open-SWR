@@ -60,7 +60,7 @@ public readonly record struct TextItemSize(bool FixedWidth = false, bool FixedHe
 public static class TextLayout
 {
     /// <summary>
-    /// DrawText prefix processing:"&&" -> "&"; a single "&" is not drawn and the next character is underlined; a single
+    /// DrawText prefix processing:"&&" gives "&"; a single "&" is not drawn and the next character is underlined; a single
     /// "&" as the last character draws nothing. The characters drawn, each with its underline flag.
     /// </summary>
     public static List<(char C, bool Underline)> Prefixed(string text)
@@ -79,14 +79,14 @@ public static class TextLayout
 
     /// <summary>
     /// Tooltip text (the Win32 tooltip control without TTS_NOPREFIX; Inferred comctl32 behaviour): every single "&"
-    /// removed, "&&" -> "&", no underline. E.g. TEXTTACT 56781 "Maneuvers & Tactics" -> "Maneuvers  Tactics".
+    /// removed, "&&" gives "&", no underline. E.g. TEXTTACT 56781 "Maneuvers & Tactics" gives "Maneuvers  Tactics".
     /// </summary>
     public static string Tooltip(string text) => text.Replace("&&", "\u0001").Replace("&", "").Replace("\u0001", "&");
 
     /// <summary>Width DrawText measures (DT_CALCRECT): with prefix processing unless <paramref name="noPrefix"/>.</summary>
     public static int DrawnWidth(int font, string text, bool noPrefix = false) => TextWidth(font, noPrefix ? text : Unprefixed(text));
 
-    // Font table: index -> lfHeight (cell height), lfWeight, the GDI ppem (em px),
+    // Font table: index gives lfHeight (cell height), lfWeight, the GDI ppem (em px),
     // tmHeight and ascent measured with GDI on Arial (Inferred: the 1998 Arial maps the same). One face, "Arial"; weight 900
     // (font 13) maps to Arial Bold with the bold advances, no synthetic emboldening.
     static readonly (int Height, int Weight, int Ppem, int Line, int Ascent)[] FontTable =
@@ -379,7 +379,7 @@ public static class TextLayout
     /// <summary>
     /// Edit field horizontal scroll rule (`CoolStringField`), run after every edit, caret move,
     /// selection change and text set: <paramref name="x"/> = width of the text before the caret, <paramref name="scroll"/> = s
-    /// the scroll value, <paramref name="width"/> = control width, e = 1. X - s &gt; w - e -> s := X + e - w (caret at x = w - 1); X - s &lt; 0 ->
+    /// the scroll value, <paramref name="width"/> = control width, e = 1. X - s &gt; w - e gives s := X + e - w (caret at x = w - 1); X - s &lt; 0 gives
     /// s := X (caret at x 0); else s unchanged (the view does not move back while the caret stays visible). The caret sits at X - s.
     /// </summary>
     public static int FieldScroll(int scroll, int x, int width) => x - scroll > width - 1 ? x + 1 - width : x - scroll < 0 ? x : scroll;

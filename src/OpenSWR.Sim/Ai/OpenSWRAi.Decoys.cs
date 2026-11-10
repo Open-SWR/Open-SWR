@@ -59,13 +59,13 @@ public sealed partial class OpenSWRController
     /// missions' pivot reservations, the lowest worth as agents for the mission first, and never lower the estimated success. Fewer
     /// free than the target: the mission goes with what is free; a retry still waits below max(1, known detectors).
     /// </summary>
-    internal (List<Agent> Team, List<Agent> Decoys)? StepDecoys(GameState game, uint kind, GameObject target, CovertKnown known, List<Agent> team,
+    internal (List<Agent> Team, List<Agent> Decoys)? StepDecoys(GameState game, MissionKind kind, GameObject target, CovertKnown known, List<Agent> team,
         List<Agent> decoys, IEnumerable<Agent> pool, Func<List<Agent>, List<Agent>, bool> valid, out int shortBy, Known? k, int value, double? successCap)
     {
         shortBy = 0;
         int room = TeamCap(kind, target) - team.Count;
         bool character = team.Any(a => a is Character);
-        int want = character ? CharacterTarget(kind, target) : kind == 0x52 && IdleShare(game) > IdleReserve ? 1 : 0;
+        int want = character ? CharacterTarget(kind, target) : kind == MissionKind.Espionage && IdleShare(game) > IdleReserve ? 1 : 0;
         int retry = _foiledTargets.Contains(target.Ref) ? Math.Max(1, known.Count) : 0;
         want = Math.Min(Math.Max(want, retry), room);
         retry = Math.Min(retry, room);
@@ -75,7 +75,7 @@ public sealed partial class OpenSWRController
             var order = pool.Where(a => Family.IsSpecialForce(a.Type) && !team.Contains(a) && !d.Contains(a)
                 && (!_reserved.TryGetValue(a, out uint pivot) || pivot == target.Ref));
             // the lowest worth as agents for this mission first (espionage: the lowest espionage skill)
-            order = k is not null && kind != 0x52
+            order = k is not null && kind != MissionKind.Espionage
                 ? order.OrderBy(a => Worth(game, kind, [a], Attempt(game, k, kind, a, target), value, known)).ThenBy(a => a.Key)
                 : order.OrderBy(a => Missions.Enhanced(game, a, SkillIndex.Espionage)).ThenBy(a => a.Key);
             foreach (var a in order.ToList())
@@ -83,7 +83,7 @@ public sealed partial class OpenSWRController
                 if (d.Count >= want) break;
                 if (!valid(team, [.. d, a])) continue;
                 // a decoy never lowers a character team's estimated success
-                if (character && k is not null && kind != 0x52
+                if (character && k is not null && kind != MissionKind.Espionage
                     && TeamSuccess(game, k, kind, target, team, [.. d, a], known, successCap) < TeamSuccess(game, k, kind, target, team, d, known, successCap) - 1e-9)
                 {
                     Probe?.SuccessSkipped.Add(a); // measurement only
@@ -101,10 +101,10 @@ public sealed partial class OpenSWRController
     }
 
     /// <summary>Rule 2's decoy target for a character-led team: <see cref="DecoysMajor"/> against a major character's abduction, rescue or assassination, else <see cref="DecoysCharacter"/>.</summary>
-    static int CharacterTarget(uint kind, GameObject target) => Major(target) && kind is 0x61 or 0x62 or 0x63 ? DecoysMajor : DecoysCharacter;
+    static int CharacterTarget(MissionKind kind, GameObject target) => Major(target) && kind is MissionKind.Rescue or MissionKind.Abduction or MissionKind.Assassination ? DecoysMajor : DecoysCharacter;
 
     /// <summary>Counts a character-led mission sent with fewer decoys than its target within the cap (rule 7).</summary>
-    void CountFewer(uint kind, GameObject target, IReadOnlyList<Agent> team, int decoys)
+    void CountFewer(MissionKind kind, GameObject target, IReadOnlyList<Agent> team, int decoys)
     {
         if (On(V7.Decoys) && team.Any(a => a is Character) && decoys < Math.Min(CharacterTarget(kind, target), TeamCap(kind, target) - team.Count)) FewerDecoys++;
     }

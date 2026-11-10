@@ -17,14 +17,14 @@ public static class UiFrame
         if (fill) { c.DrawRect(r, Colors.Black); DrawLog.Fill(c, r, Colors.Black); }
         Vector2 p = r.Position, e = r.End;
         void Piece(ushort id, Rect2 at) { var t = Assets.Strategy(id); c.DrawTextureRect(t, at, false); DrawLog.Bitmap(c, t, at); }
-        Piece(10105, new Rect2(p.X + 2, p.Y, r.Size.X - 4, 2));
-        Piece(10106, new Rect2(p.X + 2, e.Y - 2, r.Size.X - 4, 2));
-        Piece(10107, new Rect2(p.X, p.Y + 2, 2, r.Size.Y - 4));
-        Piece(10104, new Rect2(e.X - 2, p.Y + 2, 2, r.Size.Y - 4));
-        Piece(10101, new Rect2(p, new Vector2(2, 2)));
-        Piece(10100, new Rect2(e.X - 2, p.Y, 2, 2));
-        Piece(10103, new Rect2(p.X, e.Y - 2, 2, 2));
-        Piece(10102, new Rect2(e - new Vector2(2, 2), new Vector2(2, 2)));
+        Piece(StrategyBitmaps.WindowFrameTop, new Rect2(p.X + 2, p.Y, r.Size.X - 4, 2));
+        Piece(StrategyBitmaps.WindowFrameBottom, new Rect2(p.X + 2, e.Y - 2, r.Size.X - 4, 2));
+        Piece(StrategyBitmaps.WindowFrameLeft, new Rect2(p.X, p.Y + 2, 2, r.Size.Y - 4));
+        Piece(StrategyBitmaps.WindowFrameRight, new Rect2(e.X - 2, p.Y + 2, 2, r.Size.Y - 4));
+        Piece(StrategyBitmaps.WindowFrameTopLeft, new Rect2(p, new Vector2(2, 2)));
+        Piece(StrategyBitmaps.WindowFrameTopRight, new Rect2(e.X - 2, p.Y, 2, 2));
+        Piece(StrategyBitmaps.WindowFrameBottomLeft, new Rect2(p.X, e.Y - 2, 2, 2));
+        Piece(StrategyBitmaps.WindowFrameBottomRight, new Rect2(e - new Vector2(2, 2), new Vector2(2, 2)));
     }
 
     /// <summary>Text colours (PALETTERGB): side colour (side 1 red, side 2 green), highlight white, disabled grey.</summary>

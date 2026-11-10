@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 using OpenSWR.Sim.Ai;
 
 namespace OpenSWR.Sim;
@@ -57,9 +58,9 @@ public sealed class AdvisorSystem(StarSystem system)
     public bool IdleConstruction { get; set; }
     /// <summary>Mixes several "has something spare" cases (also a reserved ship manager); no planner reads it.</summary>
     public bool Spare { get; set; }
-    /// <summary>The training manager is reserved (0x216).</summary>
+    /// <summary>The training manager is reserved (CommandType.SetReserved).</summary>
     public bool ReservedTraining { get; set; }
-    /// <summary>The construction manager is reserved (0x216).</summary>
+    /// <summary>The construction manager is reserved (CommandType.SetReserved).</summary>
     public bool ReservedConstruction { get; set; }
     /// <summary>Own with a troop shortfall.</summary>
     public bool TroopShortfall { get; set; }
@@ -161,7 +162,15 @@ public sealed class AdvisorModel(Owner side)
     public int Refineries { get => Total(AdvisorSectorValue.Refineries); set => Total(AdvisorSectorValue.Refineries) = value; }
     /// <summary>The sum of sector value i over the sectors.</summary>
     public ref int Total(AdvisorSectorValue i) => ref _totals[(int)i];
-    readonly int[] _totals = new int[20];
+    /// <summary>The support share of a side in per cent: the sum of the two sides' shares.</summary>
+    const int SupportShareTotal = 100;
+    /// <summary>The Index of Coruscant's SD record (family 144, index 265).</summary>
+    const int CoruscantIndex = 265;
+    /// <summary>Troop need: a support below SupportNeedLimit gives (SupportNeedBase - support) / SupportNeedStep + 1, else 1 (Inferred meaning of the constants).</summary>
+    const int SupportNeedLimit = 60, SupportNeedBase = 69, SupportNeedStep = 10;
+    /// <summary>The sector values summed into the totals: Explored to ProducerMaintenance.</summary>
+    const int SummedValues = (int)AdvisorSectorValue.ProducerMaintenance + 1;
+    readonly int[] _totals = new int[SummedValues];
     /// <summary>The sums of the sectors' own, neutral and enemy support.</summary>
     public int OwnSupport { get; set; }
     public int NeutralSupport { get; set; }
@@ -178,7 +187,7 @@ public sealed class AdvisorModel(Owner side)
             {
                 var r = new AdvisorSector(sector) { Key = (int)sector.Ref };
                 if (sector.IsCore) r.Core = true;
-                foreach (var s in game.Systems.Where(s => s.Sector == sector).OrderBy(s => s.Ref).Take(10))
+                foreach (var s in game.Systems.Where(s => s.Sector == sector).OrderBy(s => s.Ref).Take(AiSector.SystemsPerSector))
                 {
                     Systems[s].Sector = r;
                     r.Systems.Add(Systems[s]);
@@ -193,7 +202,7 @@ public sealed class AdvisorModel(Owner side)
         (OwnSupport, NeutralSupport, EnemySupport) = (0, 0, 0);
         foreach (var r in Sectors)
         {
-            for (int i = 0; i < 20; i++) Total((AdvisorSectorValue)i) += r[(AdvisorSectorValue)i];
+            for (int i = 0; i < SummedValues; i++) Total((AdvisorSectorValue)i) += r[(AdvisorSectorValue)i];
             // the support sums (own, neutral, enemy)
             OwnSupport += r[AdvisorSectorValue.Support];
             NeutralSupport += r[AdvisorSectorValue.NeutralSupport];
@@ -220,7 +229,7 @@ public sealed class AdvisorModel(Owner side)
         if (own) r.Own = true;
         else if (enemy) r.Enemy = true;
         else r.Neutral = true;
-        if (Family.Of(s.Type) is >= 0x90 and < 0x92) r.Core = true;
+        if (Family.Of(s.Type) is >= Families.CoreSystem and < Families.RimSystem) r.Core = true;
         // 2. shortcut: views keep no energy / raw material / used counts; the real system's values and stored used counts are read
         // for every view
         if (!v.Explored) return;
@@ -238,11 +247,11 @@ public sealed class AdvisorModel(Owner side)
             r.Blockade = true;
             if (!own) r.BlockadeDay = game.Day;
         }
-        if (own) r[AdvisorValue.Support] = 100;
+        if (own) r[AdvisorValue.Support] = SupportShareTotal;
         // 4. troops (mode 3)
         var contents = ScreenViews.Existing(game, s, Side);
         bool troopUsable = false;
-        foreach (var t in contents.Where(x => x.In(0x10, 0x14)))
+        foreach (var t in contents.Where(x => x.In(Families.Troop, Families.CapitalShip)))
         {
             r[AdvisorValue.Troops]++;
             r[AdvisorValue.TroopMaintenance] += Cost(t.Object);
@@ -250,32 +259,32 @@ public sealed class AdvisorModel(Owner side)
         }
         // 5
         if (!v.Populated) return;
-        if (s.Id == 0x109) r.Coruscant = true;
-        if (contents.Any(x => x.In(0x20, 0x22) && x.Owner == v.Owner)) r.Headquarters = true; // an HQ of the owner
+        if (s.Id == CoruscantIndex) r.Coruscant = true;
+        if (contents.Any(x => x.In(Families.Headquarters, Families.IonCannon) && x.Owner == v.Owner)) r.Headquarters = true; // an HQ of the owner
         if (v.Uprising) r.Uprising = true;
         r.Populated = true;
-        r[AdvisorValue.Support] = Side == Owner.Alliance ? v.Support : 100 - v.Support; // the side's support share
-        r[AdvisorValue.Mines] = contents.Count(x => x.Family == 0x2C && x.Owner == v.Owner);
-        r[AdvisorValue.Refineries] = contents.Count(x => x.Family == 0x2D && x.Owner == v.Owner);
-        // production facilities with their manager: reserved (0x216) gives the kind's reserved flag; empty queue gives idle (also Spare
+        r[AdvisorValue.Support] = Side == Owner.Alliance ? v.Support : SupportShareTotal - v.Support; // the side's support share
+        r[AdvisorValue.Mines] = contents.Count(x => x.Family == Families.Mine && x.Owner == v.Owner);
+        r[AdvisorValue.Refineries] = contents.Count(x => x.Family == Families.Refinery && x.Owner == v.Owner);
+        // production facilities with their manager: reserved (CommandType.SetReserved) gives the kind's reserved flag; empty queue gives idle (also Spare
         // with more than one facility, not for yards)
-        Producers(game, r, contents, 0x28, AdvisorValue.Shipyards, ManufacturingKind.Ship, true);
-        Producers(game, r, contents, 0x29, AdvisorValue.TrainingFacilities, ManufacturingKind.Training, true);
-        Producers(game, r, contents, 0x2A, AdvisorValue.ConstructionYards, ManufacturingKind.Construction, false);
+        Producers(game, r, contents, Families.Shipyard, AdvisorValue.Shipyards, ManufacturingKind.Ship, true);
+        Producers(game, r, contents, Families.TrainingFacility, AdvisorValue.TrainingFacilities, ManufacturingKind.Training, true);
+        Producers(game, r, contents, Families.ConstructionYard, AdvisorValue.ConstructionYards, ManufacturingKind.Construction, false);
         foreach (var x in contents)
             switch (x.Family)
             {
-                case 0x24: r[AdvisorValue.GenCores]++; r[AdvisorValue.DefenceMaintenance] += Cost(x.Object); break;
-                case 0x25: r[AdvisorValue.DeathStarShields]++; r[AdvisorValue.DefenceMaintenance] += Cost(x.Object); break;
-                case 0x22 or 0x23: r[AdvisorValue.Batteries]++; r[AdvisorValue.DefenceMaintenance] += Cost(x.Object); break;
-                case >= 0x1C and < 0x20: r[AdvisorValue.Fighters]++; r[AdvisorValue.FighterMaintenance] += Cost(x.Object); break;
+                case Families.PlanetaryShield: r[AdvisorValue.GenCores]++; r[AdvisorValue.DefenceMaintenance] += Cost(x.Object); break;
+                case Families.DeathStarShield: r[AdvisorValue.DeathStarShields]++; r[AdvisorValue.DefenceMaintenance] += Cost(x.Object); break;
+                case Families.IonCannon or Families.Gun: r[AdvisorValue.Batteries]++; r[AdvisorValue.DefenceMaintenance] += Cost(x.Object); break;
+                case >= Families.Fighter and < Families.Headquarters: r[AdvisorValue.Fighters]++; r[AdvisorValue.FighterMaintenance] += Cost(x.Object); break;
             }
-        if (contents.Any(x => x.Family == 0x24 && x.Usable) && r[AdvisorValue.GenCores] > 1) r.Spare = true;
-        if (contents.Any(x => x.Family is 0x22 or 0x23 && x.Usable) && r[AdvisorValue.Batteries] > 1) r.Spare = true;
-        if (contents.Any(x => x.In(0x1C, 0x20) && x.Usable)) r.Spare = true;
+        if (contents.Any(x => x.Family == Families.PlanetaryShield && x.Usable) && r[AdvisorValue.GenCores] > 1) r.Spare = true;
+        if (contents.Any(x => x.Family is Families.IonCannon or Families.Gun && x.Usable) && r[AdvisorValue.Batteries] > 1) r.Spare = true;
+        if (contents.Any(x => x.In(Families.Fighter, Families.Headquarters) && x.Usable)) r.Spare = true;
         // 6. own: troop need / surplus, total maintenance
         if (!own) return;
-        int support = r[AdvisorValue.Support], need = support < 60 ? (69 - support) / 10 + 1 : 1;
+        int support = r[AdvisorValue.Support], need = support < SupportNeedLimit ? (SupportNeedBase - support) / SupportNeedStep + 1 : 1;
         if (v.Uprising) need *= 2;
         if (troopUsable && need < r[AdvisorValue.Troops]) r.Spare = true;
         int f = (r[AdvisorValue.Mines] + r[AdvisorValue.Refineries]) / 2 + r[AdvisorValue.ConstructionYards] + r[AdvisorValue.Shipyards]
@@ -375,8 +384,8 @@ public sealed class AdvisorModel(Owner side)
                 r[AdvisorSectorValue.NeutralSupport] += s[AdvisorValue.Support];
             }
         }
-        if (r[AdvisorSectorValue.Explored] == 10) r.AllExplored = true;
-        if (r[AdvisorSectorValue.Populated] == 10) r.AllPopulated = true;
+        if (r[AdvisorSectorValue.Explored] == AiSector.SystemsPerSector) r.AllExplored = true;
+        if (r[AdvisorSectorValue.Populated] == AiSector.SystemsPerSector) r.AllPopulated = true;
     }
 
     // ---- list builders (the marks are never asked for) ----
@@ -393,11 +402,11 @@ public sealed class AdvisorModel(Owner side)
     };
 
     /// <summary>Sector records (key order) by sector value i.</summary>
-    public RankedList Sectorwise(Func<AdvisorSector, bool> pass, AdvisorSectorValue i, int dir) =>
+    public RankedList Sectorwise(Func<AdvisorSector, bool> pass, AdvisorSectorValue i, RankOrder dir) =>
         new(Sectors.Where(pass).Select(x => ((object)x, x[i])), dir, Rand);
 
     /// <summary>Sector records by squared distance to the sector of <paramref name="from"/>; none without a system.</summary>
-    public RankedList? SectorsNear(GameState game, GameObject? from, Func<AdvisorSector, bool> pass, int dir)
+    public RankedList? SectorsNear(GameState game, GameObject? from, Func<AdvisorSector, bool> pass, RankOrder dir)
     {
         if (SystemOf(game, from) is not { } at) return null;
         var p = at.Sector.Definition;
@@ -405,11 +414,11 @@ public sealed class AdvisorModel(Owner side)
     }
 
     /// <summary>The sector's systems (slot order) by system value k; none when <paramref name="sector"/> is no sector record.</summary>
-    public RankedList? Systemwise(object? sector, Func<AdvisorSystem, bool> pass, AdvisorValue k, int dir) =>
+    public RankedList? Systemwise(object? sector, Func<AdvisorSystem, bool> pass, AdvisorValue k, RankOrder dir) =>
         sector is AdvisorSector r ? new(r.Systems.Where(pass).Select(x => ((object)x, x[k])), dir, Rand) : null;
 
     /// <summary>The sector's systems by squared distance to the system of <paramref name="from"/>.</summary>
-    public RankedList? SystemsNear(GameState game, object? sector, GameObject? from, Func<AdvisorSystem, bool> pass, int dir)
+    public RankedList? SystemsNear(GameState game, object? sector, GameObject? from, Func<AdvisorSystem, bool> pass, RankOrder dir)
     {
         if (sector is not AdvisorSector r || SystemOf(game, from) is not { } at) return null;
         var p = at.Definition;

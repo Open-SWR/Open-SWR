@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 using OpenSWR.Sim;
 
 namespace OpenSWR.Tests;
@@ -25,8 +26,8 @@ public class AdvisorRuntimeTests
     public void LowestIdWinsOnePerTick()
     {
         var r = new Rig();
-        r.A.MessageCode(5); // 59
-        r.A.MessageCode(1); // 52
+        r.A.MessageCode(AdvisorCode.ShipsArrived); // 59
+        r.A.MessageCode(AdvisorCode.GoodNews); // 52
         r.Open();
         Assert.Equal([52], r.Played);
         r.A.Tick(); // gate still open after playing
@@ -38,20 +39,20 @@ public class AdvisorRuntimeTests
     public void ExpiryAndCooldown()
     {
         var r = new Rig();
-        r.A.MessageCode(1); // validity 10
+        r.A.MessageCode(AdvisorCode.GoodNews); // validity 10
         r.Now += 11;
         r.Open();
         Assert.Empty(r.Played);
         Assert.False(r.A.Pending(52));
-        r.A.MessageCode(1);
+        r.A.MessageCode(AdvisorCode.GoodNews);
         r.Open();
-        r.A.MessageCode(1); // within 60 ticks: dropped
-        r.A.MessageCode(2);
+        r.A.MessageCode(AdvisorCode.GoodNews); // within 60 ticks: dropped
+        r.A.MessageCode(AdvisorCode.BadNews);
         r.A.Tick();
         Assert.Equal([52, 53], r.Played);
         Assert.False(r.A.Pending(52));
         r.Now += 61;
-        r.A.MessageCode(1);
+        r.A.MessageCode(AdvisorCode.GoodNews);
         r.Open();
         Assert.Equal([52, 53, 52], r.Played);
     }
@@ -64,7 +65,7 @@ public class AdvisorRuntimeTests
         r.Now = 10; // not > last play + 50: no idle bit
         r.Open();
         Assert.False(r.A.Gate);
-        r.A.MessageCode(1);
+        r.A.MessageCode(AdvisorCode.GoodNews);
         r.A.Tick();
         Assert.Empty(r.Played);
         r.Open();
@@ -77,7 +78,7 @@ public class AdvisorRuntimeTests
     {
         var r = new Rig();
         r.Draws.Enqueue(3);
-        r.Open(); // last play 0, now 100: idle bit -> rule step draws
+        r.Open(); // last play 0, now 100: idle bit gives rule step draws
         Assert.Equal([12], r.Rolls);
         Assert.True(r.A.Gate);
         r.A.Tick();
@@ -100,61 +101,61 @@ public class AdvisorRuntimeTests
         var r = new Rig();
         void Expect(int category, int code, int id)
         {
-            r.A.Refused(category, code, null);
-            Assert.True(r.A.Pending(id), $"({category:X}, {code:X}) → {id}");
+            r.A.Refused(new(category, code), null);
+            Assert.True(r.A.Pending(id), $"({category}, {code}) → {id}");
             r.Now += 100; // let it expire
         }
-        Expect(0x90, 1, 11);
-        Expect(0x90, 1, 15);
-        Expect(0x90, 1, 16);
-        Expect(0x90, 1, 11); // forgotten: dispatched again
-        Expect(0xA0, 3, 24);
-        Expect(1, 0x11, 1);
-        Expect(0xF3, 1, 10);
+        Expect(144, 1, 11);
+        Expect(144, 1, 15);
+        Expect(144, 1, 16);
+        Expect(144, 1, 11); // forgotten: dispatched again
+        Expect(160, 3, 24);
+        Expect(1, 17, 1);
+        Expect(243, 1, 10);
         r.Draws.Enqueue(1);
-        Expect(1, 0x17, 18); // generic rand(2) = 1
+        Expect(1, 23, 18); // generic rand(2) = 1
         int pending = Enumerable.Range(1, 87).Count(r.A.Pending);
-        r.A.Refused(1, 0x12, null);
+        r.A.Refused(Refusal.Missing, null);
         Assert.Equal(pending, Enumerable.Range(1, 87).Count(r.A.Pending));
 
         var imp = new Rig(Owner.Empire);
-        imp.A.Refused(0x90, 3, null);
-        imp.A.Refused(0x90, 3, null);
+        imp.A.Refused(Refusal.DeathStarLimit, null);
+        imp.A.Refused(Refusal.DeathStarLimit, null);
         Assert.True(imp.A.Pending(11) && imp.A.Pending(16));
 
-        // Exact categories (0x91, 1), (0xA1, 3) and (0x15, 1) take the generic line.
-        foreach (var (category, code) in new[] { (0x91, 1), (0xA1, 3), (0x15, 1) })
+        // Exact categories (AdvisorDefenses with code 1, an unnamed category with code 3, Garrisons with code 1) take the generic line.
+        foreach (var (category, code) in new[] { (145, 1), (161, 3), (21, 1) })
         {
             r.Draws.Enqueue(0);
             Expect(category, code, 17);
         }
-        // (0x40, 0x91): a mission with decoys and no agents -> 20; without decoys -> generic
-        var at = new GameObject(0x90000109, Owner.Neutral, 0);
-        var decoy = new GameObject(0x30000240, Owner.Alliance, 0);
-        Expect(0x40, 0x91, 17); // queue empty: rand(2) = 0
-        r.A.Refused(1, 1, null); // reset the stored pair
+        // Refusal.NoFreeAgent: a mission with decoys and no agents gives 20; without decoys gives generic
+        var at = new GameObject(Refs.Coruscant, Owner.Neutral, 0);
+        var decoy = new GameObject(Refs.Mothma, Owner.Alliance, 0);
+        Expect(64, 145, 17); // queue empty: rand(2) = 0
+        r.A.Refused(Refusal.WrongClass, null); // reset the stored pair
         r.Now += 100;
-        Expect(0x40, 0x91, 17);
-        r.A.Refused(1, 1, null);
-        r.A.Refused(0x40, 0x91, new Command(0x240, Owner.Alliance) { ArgRef = at, Decoys = [decoy] });
+        Expect(64, 145, 17);
+        r.A.Refused(Refusal.WrongClass, null);
+        r.A.Refused(Refusal.NoFreeAgent, new Command(CommandType.CreateMission, Owner.Alliance) { ArgRef = at, Decoys = [decoy] });
         Assert.True(r.A.Pending(20));
         var e = new Rig(Owner.Empire);
-        e.A.Refused(0x40, 0x91, new Command(0x240, Owner.Empire) { ArgRef = at, Decoys = [decoy] });
+        e.A.Refused(Refusal.NoFreeAgent, new Command(CommandType.CreateMission, Owner.Empire) { ArgRef = at, Decoys = [decoy] });
         Assert.True(e.A.Pending(21));
-        // (1, 0x22) without a destroyed system view: nothing, no draw
+        // Refusal.NoDestination without a destroyed system view: nothing, no draw
         int rolls = e.Rolls.Count;
-        e.A.Refused(1, 0x22, new Command(0x201, Owner.Empire) { ArgRef = at });
+        e.A.Refused(Refusal.NoDestination, new Command(CommandType.Move, Owner.Empire) { ArgRef = at });
         Assert.Equal(rolls, e.Rolls.Count);
         Assert.Equal(1, Enumerable.Range(1, 85).Count(e.A.Pending));
-        // (1, 0x25) / (1, 0x27): a fleet ArgRef -> 7, else C 23 / I 24
-        e.A.Refused(1, 0x25, new Command(0x201, Owner.Empire) { ArgRef = new Fleet(0x08000004, Owner.Empire, 0) });
+        // Refusal.NotInSystem / Refusal.WrongDestinationKind: a fleet ArgRef gives 7, else C 23 / I 24
+        e.A.Refused(Refusal.NotInSystem, new Command(CommandType.Move, Owner.Empire) { ArgRef = new Fleet(Refs.Fleet, Owner.Empire, 0) });
         Assert.True(e.A.Pending(7));
-        e.A.Refused(1, 0x27, null);
+        e.A.Refused(Refusal.WrongDestinationKind, null);
         Assert.True(e.A.Pending(24));
     }
 
-    // Capital-ship refusals read the advisor side's view of the ArgRef: capacity != 0 -> 8, 0 -> 7, fleet -> 9.
-    // (validity 5); (1, 0x22) -> 6 only on a Destroyed system view; (1, 0x24) -> 2 for a system ArgRef
+    // Capital-ship refusals read the advisor side's view of the ArgRef: capacity != 0 gives 8, 0 gives 7, fleet gives 9.
+    // (validity 5); Refusal.NoDestination gives 6 only on a Destroyed system view; Refusal.DestinationOtherOwner gives 2 for a system ArgRef
     [GameFact]
     public void RefusalViews()
     {
@@ -165,20 +166,20 @@ public class AdvisorRuntimeTests
         var r = new Rig();
         void Expect(int category, int code, GameObject? arg, int id, int validity)
         {
-            r.A.Refused(1, 1, null); // another pair first: no repeat
-            r.A.Refused(category, code, new Command(0x204, Owner.Alliance) { ArgRef = arg }, game);
+            r.A.Refused(Refusal.WrongClass, null); // another pair first: no repeat
+            r.A.Refused(new(category, code), new Command(CommandType.MoveObject, Owner.Alliance) { ArgRef = arg }, game);
             Assert.Equal(r.Now + validity, r.A.Due(id));
             r.Now += 100;
         }
-        Expect(0x14, 1, carrier, 8, 5);
-        Expect(0x14, 1, empty, 7, 5);
-        Expect(0x14, 1, new Fleet(0x08000004, Owner.Alliance, 0), 9, 5);
-        Expect(0x14, 2, ships.FirstOrDefault(x => x.TroopCapacity == 0) is { } t ? new GameObject(t.Common.Ref, Owner.Alliance, 0) : empty,
+        Expect(20, 1, carrier, 8, 5);
+        Expect(20, 1, empty, 7, 5);
+        Expect(20, 1, new Fleet(Refs.Fleet, Owner.Alliance, 0), 9, 5);
+        Expect(20, 2, ships.FirstOrDefault(x => x.TroopCapacity == 0) is { } t ? new GameObject(t.Common.Ref, Owner.Alliance, 0) : empty,
             ships.Any(x => x.TroopCapacity == 0) ? 7 : 8, 5);
         var system = game.Systems.First(s => s.Owner == Owner.Alliance);
-        Expect(1, 0x24, system, 2, 10);
+        Expect(1, 36, system, 2, 10);
         system.Destroyed = true; // own system: live view, real value
-        Expect(1, 0x22, system, 6, 10);
+        Expect(1, 34, system, 6, 10);
     }
 
     // An accepted order clears the refusal memory and the menu counter.
@@ -186,9 +187,9 @@ public class AdvisorRuntimeTests
     public void AcceptClearsMemory()
     {
         var r = new Rig();
-        r.A.Refused(0x90, 2, null);
-        r.A.Accepted(new Command(0x201, Owner.Alliance));
-        r.A.Refused(0x90, 2, null);
+        r.A.Refused(Refusal.NoRawMaterials, null);
+        r.A.Accepted(new Command(CommandType.Move, Owner.Alliance));
+        r.A.Refused(Refusal.NoRawMaterials, null);
         Assert.False(r.A.Pending(15));
         Assert.True(r.A.Pending(12));
     }
@@ -212,7 +213,7 @@ public class AdvisorRuntimeTests
         }
         Assert.Equal([76, 76, 77, 78, 78, 76], got);
         r.A.MenuOpen();
-        r.A.Accepted(new Command(0x201, Owner.Alliance));
+        r.A.Accepted(new Command(CommandType.Move, Owner.Alliance));
         r.A.Tick();
         Assert.True(r.A.Pending(76));
     }
@@ -223,35 +224,35 @@ public class AdvisorRuntimeTests
     {
         var r = new Rig();
         r.Draws.Enqueue(2);
-        for (int i = 0; i < 9; i++) r.A.MessageCode(0x2A);
+        for (int i = 0; i < 9; i++) r.A.MessageCode(AdvisorCode.Tip);
         Assert.Equal([4], r.Rolls);
         Assert.True(r.A.Pending(71));
     }
 
-    // The 0x115 / 0x116 toggles: record state, counter, reaction bits; 0x11B / 0x11E option bits.
+    // The ManageGarrisons / ManageProduction toggles: record state, counter, reaction bits; Translate / Tips option bits.
     [Fact]
     public void Toggles()
     {
         var r = new Rig();
-        Assert.Equal((true, false), r.A.Row(0x115));
-        r.A.Toggle(0x115);
-        Assert.Equal((true, true), r.A.Row(0x115));
+        Assert.Equal((true, false), r.A.Row(277));
+        r.A.Toggle(277);
+        Assert.Equal((true, true), r.A.Row(277));
         r.A.Tick();
         Assert.True(r.A.Pending(36));
-        r.A.Toggle(0x115);
-        r.A.Toggle(0x116);
-        r.A.Tick(); // 0x20 before 0x100
+        r.A.Toggle(277);
+        r.A.Toggle(278);
+        r.A.Tick(); // priority 32 before priority 256
         Assert.True(r.A.Pending(38));
         r.A.Tick();
         Assert.True(r.A.Pending(37));
         Assert.Equal(1, r.A.ToggleCounter);
-        Assert.True(r.A.Row(0x11B).Checked);
-        r.A.Toggle(0x11B);
+        Assert.True(r.A.Row(283).Checked);
+        r.A.Toggle(283);
         Assert.False(r.A.Plays(commentary: true));
         Assert.True(r.A.Plays(commentary: false));
-        Assert.False(r.A.Row(0x11E).Checked);
-        r.A.Toggle(0x11E);
-        Assert.True(r.A.Row(0x11E).Checked);
+        Assert.False(r.A.Row(286).Checked);
+        r.A.Toggle(286);
+        Assert.True(r.A.Row(286).Checked);
     }
 
     // Comment steps are skipped while the message window is open.
@@ -274,9 +275,9 @@ public class AdvisorRuntimeTests
         r.A.Post = (a, b) => posts.Add((a, b));
         r.Open();
         Assert.Equal([41], r.Played);
-        r.A.Posted(2, 0xC);
+        r.A.Posted(2, 12);
         r.A.Tick();
-        Assert.Equal([(2, 0xC)], posts);
+        Assert.Equal([(2, 12)], posts);
         bool flushed = false;
         r.A.Flush = () => flushed = true;
         r.A.Skip();
@@ -287,7 +288,7 @@ public class AdvisorRuntimeTests
         none.A.Post = (a, b) => posts.Add((a, b));
         none.Open();
         none.A.Tick();
-        Assert.Equal((2, 0xD), posts[^1]);
+        Assert.Equal((2, 13), posts[^1]);
         Assert.DoesNotContain(41, none.Played);
         var loaded = new Rig();
         Assert.False(loaded.A.Pending(41));
@@ -329,11 +330,11 @@ public class AdvisorRuntimeTests
         Assert.Equal(0, Advisor.Voice([3, 11, 22, 33, 2], Rand));
         Assert.Equal([3, 3], rolls);
         var game = NewGame.Create(new GameSettings(Owner.Alliance, 1, 0, 0, 532947196), OpenSWR.Data.Dat.GameDefinitions.Load(GameDir.Path));
-        var luke = game.Characters.First(c => c.Type == Refs.Luke);
-        Command To(uint system) => new(0x201, Owner.Alliance) { Targets = [(luke, 0)], ArgRef = new GameObject(system, Owner.Neutral, 0) };
-        Assert.True(Messages.DagobahFirst(To(0x920000F9)));
-        Assert.True(Messages.DagobahFirst(To(0x900000F9)));
-        Assert.False(Messages.DagobahFirst(To(0x920000F8)));
+        var luke = game.Known.Luke!;
+        Command To(uint system) => new(CommandType.Move, Owner.Alliance) { Targets = [(luke, GroupMode.Object)], ArgRef = new GameObject(system, Owner.Neutral, 0) };
+        Assert.True(Messages.DagobahFirst(To(SdRef.Make(Families.RimSystem, 249))));
+        Assert.True(Messages.DagobahFirst(To(SdRef.Make(Families.CoreSystem, 249))));
+        Assert.False(Messages.DagobahFirst(To(SdRef.Make(Families.RimSystem, 248))));
     }
 
     // Kind-7 burst at build (largest key first, so ids ascend in descending key order), each topic
@@ -344,10 +345,10 @@ public class AdvisorRuntimeTests
         var game = NewGame.Create(new GameSettings(Owner.Alliance, 1, 0, 0, 532947196), OpenSWR.Data.Dat.GameDefinitions.Load(GameDir.Path));
         var r = new Rig(tips: true) { Now = 1 };
         r.A.TopicSource = () => [new(1, 7, 20), new(2, 7, 10), new(3, 1, 140), new(4, 3, 120), new(5, 2, 110), new(6, 1, 150)];
-        int Title(GameMessage m) => (m.Title!.Template - 0x6001) / 3;
+        int Title(GameMessage m) => (m.Title!.Template - (TextId.AdviceAllianceBase + 1)) / 3;
         var burst = r.A.BuildTopics(game);
         Assert.Equal([1, 2], burst.Select(Title));
-        Assert.True(burst[0].Id < burst[1].Id && burst.All(m => (m.Type, m.Kind, m.Category, m.AdvisorCode, m.Picture) == (0x2A, 8, MessageCategory.Advice, 0x2A, 1071)));
+        Assert.True(burst[0].Id < burst[1].Id && burst.All(m => (m.Type, m.Kind, m.Category, m.AdvisorCode, m.Picture) == (MessageType.Tip, 8, MessageCategory.Advice, AdvisorCode.Tip, 1071)));
         Assert.Empty(r.A.BuildTopics(game));
         Assert.Empty(r.A.TipTimer(game)); // 1 < 0 + 300
         r.Now = 300;
@@ -358,15 +359,15 @@ public class AdvisorRuntimeTests
         Assert.Empty(r.A.TipTimer(game));
         r.Now = 600;
         Assert.Equal([6], r.A.TipTimer(game).Select(Title));
-        r.A.Toggle(0x11E);
+        r.A.Toggle(286);
         r.Now = 2000;
         Assert.Empty(r.A.TipTimer(game));
         Assert.Equal([5], r.A.Topics.Select(t => t.N));
     }
 
     // Build helper: kind by row, target rules, the producer search (nearest sector, then system, with an
-    // idle producer of the kind), the watched Build command -> HelperDone -> action 35 on its confirmation; the helper resets after
-    // every pick; no idle producer -> (0xA0, 3) -> 24
+    // idle producer of the kind), the watched Build command gives HelperDone gives action 35 on its confirmation; the helper resets after
+    // every pick; no idle producer gives Refusal.AllSuspended gives 24
     [GameFact]
     public void BuildHelper()
     {
@@ -375,12 +376,12 @@ public class AdvisorRuntimeTests
         var manager = game.Systems.Where(s => s.Owner == Owner.Alliance && s.Populated && s.Explored).SelectMany(s => s.Managers)
             .First(m => m is not null && Economy.Members(m).Count > 0 && m.Orders.Count == 0);
         var own = manager.System;
-        var (row, type) = manager.Kind switch { ManufacturingKind.Ship => (0x110, 0x211), ManufacturingKind.Training => (0x111, 0x212), _ => (0x112, 0x210) };
+        var (row, type) = manager.Kind switch { ManufacturingKind.Ship => (272, CommandType.ProduceShip), ManufacturingKind.Training => (273, CommandType.ProduceTroop), _ => (274, CommandType.ProduceFacility) };
         r.A.HelperStart(row);
-        Assert.NotEqual(0, r.A.HelperKind);
+        Assert.NotEqual(BuildHelperKind.None, r.A.HelperKind);
         var (destination, build) = r.A.HelperPick(game, own)!.Value;
-        Assert.Equal(0, r.A.HelperKind);
-        Assert.Equal((0x214, (GameObject)manager, (GameObject?)own), (destination.Type, destination.Targets[0].Target, destination.ArgRef));
+        Assert.Equal(BuildHelperKind.None, r.A.HelperKind);
+        Assert.Equal((CommandType.SetProductionTarget, (GameObject)manager, (GameObject?)own), (destination.Type, destination.Targets[0].Target, destination.ArgRef));
         Assert.Equal(type, build.Type);
         Assert.True(Orders.Validate(game, destination).Success);
         r.A.Watch(build);
@@ -388,25 +389,25 @@ public class AdvisorRuntimeTests
         r.A.Tick();
         Assert.True(r.A.Pending(35));
 
-        r.A.HelperStart(0x110);
+        r.A.HelperStart(272);
         Assert.Null(r.A.HelperPick(game, game.Characters.First(c => c.Owner == Owner.Alliance && c.Placed)));
-        Assert.True(r.A.Pending(23)); // (1, 0x27) without a fleet ArgRef -> C 23
+        Assert.True(r.A.Pending(23)); // Refusal.WrongDestinationKind without a fleet ArgRef gives C 23
         var enemy = game.Systems.First(s => s.Owner == Owner.Empire);
-        r.A.HelperStart(0x111);
-        Assert.Null(r.A.HelperPick(game, enemy)); // troops to a system the player does not own: (1, 0x24) -> 2
+        r.A.HelperStart(273);
+        Assert.Null(r.A.HelperPick(game, enemy)); // troops to a system the player does not own: Refusal.DestinationOtherOwner gives 2
         Assert.True(r.A.Pending(2));
-        r.A.HelperStart(0x111);
+        r.A.HelperStart(273);
         Assert.Null(r.A.HelperPick(game, null));
-        Assert.Equal(0, r.A.HelperKind);
+        Assert.Equal(BuildHelperKind.None, r.A.HelperKind);
         foreach (var s in game.Systems.Where(s => s.Owner == Owner.Alliance)) s.Uprising = true; // no idle producer anywhere
         r.Now += 100;
-        r.A.HelperStart(0x110);
+        r.A.HelperStart(272);
         Assert.Null(r.A.HelperPick(game, own));
         Assert.True(r.A.Pending(24));
     }
 
     // The advisor rides in the human controller's save entry: due[], flags, counters, topics, records;
-    // save -> load -> save byte-equal; a save without one loads with none (the screen then builds one without a briefing)
+    // save gives load gives save byte-equal; a save without one loads with none (the screen then builds one without a briefing)
     [GameFact]
     public void SaveRoundTrip()
     {
@@ -424,8 +425,8 @@ public class AdvisorRuntimeTests
             TopicSource = () => [new(1, 7, 10), new(2, 1, 140), new(3, 2, 110)],
         };
         human.Advisor.BuildTopics(game);
-        human.Advisor.MessageCode(4);
-        human.Advisor.Toggle(0x116);
+        human.Advisor.MessageCode(AdvisorCode.ResearchComplete);
+        human.Advisor.Toggle(278);
         human.Advisor.MenuOpen();
         human.Advisor.MusicTrack();
         var bytes = Save(game);
@@ -445,7 +446,7 @@ public class AdvisorRuntimeTests
     }
 
     // A shipyard manager with a non-empty queue is busy: with every own shipyard busy the build helper
-    // finds no producer and refuses (0xA0, 3)
+    // finds no producer and refuses Refusal.AllSuspended
     [GameFact]
     public void BuildHelperRefusesBusyShipyards()
     {
@@ -453,11 +454,11 @@ public class AdvisorRuntimeTests
         var game = NewGame.Create(new GameSettings(Owner.Empire, 1, 0, 0, 532947196), definitions);
         var a = new Advisor(Owner.Empire, () => 0, briefing: false, tips: false, rand: _ => 0);
         var target = game.Systems.First(x => x.Owner == Owner.Empire);
-        Assert.NotNull(a.Producer(game, 2, target));
+        Assert.NotNull(a.Producer(game, BuildHelperKind.Ships, target));
         foreach (var m in game.Systems.Where(x => x.Owner == Owner.Empire).Select(x => x.Managers[(int)ManufacturingKind.Ship]).OfType<ManufacturingManager>())
-            m.Orders.Add(new GameObject(0x14000046, Owner.Empire, game.NextId()));
-        Assert.Null(a.Producer(game, 2, target));
-        a.HelperStart(0x110);
+            m.Orders.Add(new GameObject(SdRef.Make(Families.CapitalShip, 70), Owner.Empire, game.NextId()));
+        Assert.Null(a.Producer(game, BuildHelperKind.Ships, target));
+        a.HelperStart(272);
         Assert.Null(a.HelperPick(game, target));
     }
 
@@ -488,7 +489,7 @@ public class AdvisorRuntimeTests
 
     static int Sq(Sector a, Sector b) => (a.Definition.X - b.Definition.X) * (a.Definition.X - b.Definition.X) + (a.Definition.Y - b.Definition.Y) * (a.Definition.Y - b.Definition.Y);
 
-    // System bits (idle producers, HQ), troop need (support 55 -> 2, Uprising x 2) and surplus
+    // System bits (idle producers, HQ), troop need (support 55 gives 2, Uprising x 2) and surplus
     // (facility need f), sector sums, model totals, cap / dem
     [GameFact]
     public void AdvisorModelRecords()
@@ -498,8 +499,8 @@ public class AdvisorRuntimeTests
         foreach (var r in m.Systems.Values.Where(r => r.Own && r.Populated))
         {
             var s = r.System;
-            foreach (var (kind, bit, family) in new (ManufacturingKind, Func<AdvisorSystem, bool>, uint)[] { (ManufacturingKind.Ship, x => x.IdleShipyard, 0x28u),
-                (ManufacturingKind.Training, x => x.IdleTraining, 0x29u), (ManufacturingKind.Construction, x => x.IdleConstruction, 0x2Au) })
+            foreach (var (kind, bit, family) in new (ManufacturingKind, Func<AdvisorSystem, bool>, uint)[] { (ManufacturingKind.Ship, x => x.IdleShipyard, Families.Shipyard),
+                (ManufacturingKind.Training, x => x.IdleTraining, Families.TrainingFacility), (ManufacturingKind.Construction, x => x.IdleConstruction, Families.ConstructionYard) })
             {
                 bool idle = !s.Uprising && !s.Blockade && s.Managers[(int)kind] is { Orders.Count: 0 } && s.Contents.Any(x => Family.Of(x.Type) == family && x.Usable);
                 Assert.Equal(idle, bit(r));
@@ -511,7 +512,7 @@ public class AdvisorRuntimeTests
         }
         Assert.Contains(m.Systems.Values, r => r.IdleConstruction); // an idle construction yard
         Assert.Contains(m.Systems.Values, r => r.Headquarters); // the HQ
-        // support 55 -> need (69 - 55) div 10 + 1 = 2; Uprising doubles it
+        // support 55 gives need (69 - 55) div 10 + 1 = 2; Uprising doubles it
         var own = m.Systems.Values.First(r => r.Own && r.Populated && r[AdvisorValue.Support] < 100).System;
         own.Support = 55;
         m.Update(game);
@@ -535,9 +536,9 @@ public class AdvisorRuntimeTests
         Assert.Equal((game.Sides[Owner.Alliance].MaintenanceCapacity, game.Sides[Owner.Alliance].Demand), (m.MaintenanceCapacity, m.MaintenanceDemand));
     }
 
-    // Producer = an idle construction manager, product Mine only while Mines < Refineries (equal -> Refinery),
-    // site = own unblockaded system with free energy (and raw material for a Mine) in the sector nearest the producer; 0x214 then
-    // 0x210 count 1; no idle construction manager -> fail without a command
+    // Producer = an idle construction manager, product Mine only while Mines < Refineries (equal gives Refinery),
+    // site = own unblockaded system with free energy (and raw material for a Mine) in the sector nearest the producer; SetProductionTarget then
+    // ProduceFacility count 1; no idle construction manager gives fail without a command
     [GameFact]
     public void ManageProductionPicks()
     {
@@ -550,7 +551,7 @@ public class AdvisorRuntimeTests
             var destination = Run(p, game, m)!;
             var manager = (ManufacturingManager)destination.Targets[0].Target;
             var site = (StarSystem)destination.ArgRef!;
-            Assert.Equal((0x214, ManufacturingKind.Construction, 4, 1), (destination.Type, manager.Kind, p.Machine, p.Priority));
+            Assert.Equal((CommandType.SetProductionTarget, ManufacturingKind.Construction, 4, 1), (destination.Type, manager.Kind, p.Machine, p.Priority));
             Assert.True(m.Systems[manager.System] is { IdleConstruction: true, Own: true });
             var sr = m.Systems[site];
             Assert.True(sr.Own && sr[AdvisorValue.FreeEnergy] > 0 && (!mine || sr[AdvisorValue.FreeRaw] > 0)
@@ -560,24 +561,24 @@ public class AdvisorRuntimeTests
                 .Min(x => Sq(x.Sector, manager.System.Sector));
             Assert.Equal(near, Sq(site.Sector, manager.System.Sector));
             var build = Run(p, game, m)!;
-            Assert.Equal((0x210, (GameObject)manager, mine ? 0x2C000001u : 0x2D000002u, 1u, 0), (build.Type, build.Targets[0].Target, build.Fields[0], build.Fields[1], p.Machine));
+            Assert.Equal((CommandType.ProduceFacility, (GameObject)manager, mine ? Refs.Mine : Refs.Refinery, 1u, 0), (build.Type, build.Targets[0].Target, build.Fields[0], build.Fields[1], p.Machine));
             Assert.True(Orders.Validate(game, build).Success);
         }
         foreach (var mm in game.Systems.Select(s => s.Managers[(int)ManufacturingKind.Construction]).OfType<ManufacturingManager>())
-            mm.Orders.Add(new GameObject(0x2C000001, Owner.Alliance, game.NextId()));
+            mm.Orders.Add(new GameObject(Refs.Mine, Owner.Alliance, game.NextId()));
         var busy = new ProductionDelegate();
         Assert.Null(Run(busy, game, Model(game, Owner.Alliance)));
         Assert.Equal(0, busy.Machine);
     }
 
     // Uprising systems first; producer = an idle training manager; strongest defence troops (cheapest
-    // maintenance for an Uprising target); 0x214 then 0x212 count 1; no free maintenance -> fail without a command
+    // maintenance for an Uprising target); SetProductionTarget then ProduceTroop count 1; no free maintenance gives fail without a command
     [GameFact]
     public void ManageGarrisonsPicks()
     {
         var game = Delegation(Owner.Alliance);
         var catalogue = new OpenSWR.Sim.Ai.Catalogue(game.Definitions);
-        var classes = OpenSWR.Sim.Research.Buildable(game, Owner.Alliance, 0x29).Select(r => catalogue[r.Common.Ref]).OfType<OpenSWR.Sim.Ai.Product>()
+        var classes = OpenSWR.Sim.Research.Buildable(game, Owner.Alliance, Families.TrainingFacility).Select(r => catalogue[r.Common.Ref]).OfType<OpenSWR.Sim.Ai.Product>()
             .Where(x => x.DefenseTroop).ToList();
         Assert.NotEmpty(classes);
         foreach (bool uprising in new[] { false, true })
@@ -596,12 +597,12 @@ public class AdvisorRuntimeTests
             var destination = Run(p, game, m)!;
             var manager = (ManufacturingManager)destination.Targets[0].Target;
             var target = (StarSystem)destination.ArgRef!;
-            Assert.Equal((0x214, ManufacturingKind.Training, 5, 1), (destination.Type, manager.Kind, p.Machine, p.Priority));
+            Assert.Equal((CommandType.SetProductionTarget, ManufacturingKind.Training, 5, 1), (destination.Type, manager.Kind, p.Machine, p.Priority));
             Assert.True(m.Systems[manager.System] is { IdleTraining: true, Own: true });
             Assert.True(m.Systems[target] is { TroopShortfall: true, Own: true });
             if (expected is not null) Assert.Same(expected, target);
             var build = Run(p, game, m)!;
-            Assert.Equal((0x212, (GameObject)manager, 1u, 0), (build.Type, build.Targets[0].Target, build.Fields[1], p.Machine));
+            Assert.Equal((CommandType.ProduceTroop, (GameObject)manager, 1u, 0), (build.Type, build.Targets[0].Target, build.Fields[1], p.Machine));
             var product = catalogue[build.Fields[0]]!;
             if (uprising) Assert.Equal(classes.Min(x => x.MaintenanceCost), product.MaintenanceCost); // cheapest
             else Assert.Equal(classes.Max(x => x.DefenseStrength), product.DefenseStrength);           // strongest
@@ -624,10 +625,10 @@ public class AdvisorRuntimeTests
         Assert.Equal((0, 0), (none.Machine, none.Count));
     }
 
-    // 0x216 toggles Reserved over the selection (any reserved -> clear all, else set
-    // all); a reserved construction manager is no delegated producer (model ReservedConstruction): with the only idle one reserved planner 0x14
-    // fails without a command; 0x216 again clears it. Validation: the production manager checks (foreign (1, 0x14)); the field
-    // survives save -> load
+    // SetReserved toggles Reserved over the selection (any reserved gives clear all, else set
+    // all); a reserved construction manager is no delegated producer (model ReservedConstruction): with the only idle one reserved planner Production
+    // fails without a command; SetReserved again clears it. Validation: the production manager checks (foreign Refusal.NotOwner); the field
+    // survives save gives load
     [GameFact]
     public void ReservedManagerIsSkipped()
     {
@@ -641,11 +642,11 @@ public class AdvisorRuntimeTests
         var yards = game.Systems.Select(s => s.Managers[(int)ManufacturingKind.Construction]).OfType<ManufacturingManager>()
             .Where(m => m.Owner == Owner.Alliance && m.Existing).ToList();
         var producer = (ManufacturingManager)Run(new ProductionDelegate(), game, Model(game, Owner.Alliance))!.Targets[0].Target;
-        foreach (var mm in yards.Where(m => m != producer)) mm.Orders.Add(new GameObject(0x2C000001, Owner.Alliance, game.NextId()));
+        foreach (var mm in yards.Where(m => m != producer)) mm.Orders.Add(new GameObject(Refs.Mine, Owner.Alliance, game.NextId()));
         Assert.Same(producer, Run(new ProductionDelegate(), game, Model(game, Owner.Alliance))!.Targets[0].Target); // the only idle one
         var other = game.Systems.SelectMany(s => s.Managers).OfType<ManufacturingManager>().First(m => m != producer && m.Owner == Owner.Alliance && Economy.Members(m).Count > 0); // a training or ship manager
-        Command Reserve(params ManufacturingManager[] ms) => new(0x216, Owner.Alliance) { Targets = [.. ms.Select(m => ((GameObject)m, 0))] };
-        Assert.Equal(new OrderResult(1, 0x14), Orders.Validate(game, new Command(0x216, Owner.Empire) { Targets = [(producer, 0)] }));
+        Command Reserve(params ManufacturingManager[] ms) => new(CommandType.SetReserved, Owner.Alliance) { Targets = [.. ms.Select(m => ((GameObject)m, GroupMode.Object))] };
+        Assert.Equal(Refusal.NotOwner, Orders.Validate(game, new Command(CommandType.SetReserved, Owner.Empire) { Targets = [(producer, GroupMode.Object)] }));
         Assert.True(Exec(game, Reserve(producer)).Success);
         Assert.True(producer.Reserved);
         var m = Model(game, Owner.Alliance);
@@ -653,7 +654,7 @@ public class AdvisorRuntimeTests
         var p = new ProductionDelegate();
         Assert.Null(Run(p, game, m));
         Assert.Equal(0, p.Machine);
-        // save -> load keeps it
+        // save gives load keeps it
         using (var stream = new MemoryStream())
         {
             SaveGame.Save(game, stream);
@@ -671,8 +672,8 @@ public class AdvisorRuntimeTests
         Assert.Same(producer, Run(new ProductionDelegate(), game, Model(game, Owner.Alliance))!.Targets[0].Target);
     }
 
-    // The cycle: the 0x214 goes out through the human's outbox, runs in the next tick's stage 3, and
-    // that tick's cycle sends the Build (its record has the higher priority); a refused 0x214 resets the machine and the priority;
+    // The cycle: the SetProductionTarget goes out through the human's outbox, runs in the next tick's stage 3, and
+    // that tick's cycle sends the Build (its record has the higher priority); a refused SetProductionTarget resets the machine and the priority;
     // 5 delegated commands per day (the record stays current, DayDue resets); a record turned off issues nothing
     [GameFact]
     public void DelegationCycle()
@@ -685,15 +686,15 @@ public class AdvisorRuntimeTests
         game.Clock.CommandTrace = [];
         OpenSWR.Sim.Ai.Controller.StartGame(game);
         game.Clock.Step(game);
-        Assert.DoesNotContain(human.Outbox, c => c.Type != 1); // nothing enabled
-        a.Toggle(0x116);
+        Assert.DoesNotContain(human.Outbox, c => c.Type != CommandType.TickToken); // nothing enabled
+        a.Toggle(278);
         game.Clock.Step(game);
-        var destination = Assert.Single(human.Outbox, c => c.Type != 1);
-        Assert.Equal((0x214, 1, 1), (destination.Type, a.Issued, a.Planners[Advisor.Production].Priority));
+        var destination = Assert.Single(human.Outbox, c => c.Type != CommandType.TickToken);
+        Assert.Equal((CommandType.SetProductionTarget, 1, 1), (destination.Type, a.Issued, a.Planners[Advisor.Production].Priority));
         game.Clock.Step(game);
         Assert.Contains(game.Clock.CommandTrace, c => c == destination && c.Serial != 0); // executed in stage 3
-        var build = Assert.Single(human.Outbox, c => c.Type != 1);
-        Assert.Equal((0x210, destination.Targets[0].Target, 2), (build.Type, build.Targets[0].Target, a.Issued));
+        var build = Assert.Single(human.Outbox, c => c.Type != CommandType.TickToken);
+        Assert.Equal((CommandType.ProduceFacility, destination.Targets[0].Target, 2), (build.Type, build.Targets[0].Target, a.Issued));
         Assert.True(destination.Sequence < build.Sequence);
         game.Clock.Step(game);
         Assert.Contains(game.Clock.CommandTrace, c => c == build && c.Serial != 0);
@@ -701,7 +702,7 @@ public class AdvisorRuntimeTests
         Assert.Single(yard.Orders);
         Assert.Same(destination.ArgRef, yard.TargetKey);
 
-        // a refused 0x214: the site turns foreign before the command is asked for ((1, 0x24)) -> the failure slot
+        // a refused SetProductionTarget: the site turns foreign before the command is asked for (Refusal.DestinationOtherOwner) gives the failure slot
         var p = a.Planners[Advisor.Production];
         yard.Orders.Clear();
         var m = Model(game, Owner.Alliance);
@@ -721,20 +722,20 @@ public class AdvisorRuntimeTests
         Assert.Equal((Advisor.Production, queued), (a.Current, human.Outbox.Count));
         a.DayDue();
         a.Delegate(game, human);
-        Assert.Equal((0x214, 1, queued + 1), (human.Outbox[^1].Type, a.Issued, human.Outbox.Count));
-        // turned off between the 0x214 and the Build: nothing is issued; not the current record, so its machine, keys and priority
+        Assert.Equal((CommandType.SetProductionTarget, 1, queued + 1), (human.Outbox[^1].Type, a.Issued, human.Outbox.Count));
+        // turned off between the SetProductionTarget and the Build: nothing is issued; not the current record, so its machine, keys and priority
         // wait; turned on again it is the urgent pick and sends the pending Build
-        a.Toggle(0x116);
+        a.Toggle(278);
         a.Delegate(game, human);
         Assert.Equal((queued + 1, 4, 1), (human.Outbox.Count, p.Machine, p.Priority));
-        ((ManufacturingManager)p.Producer!).TargetKey = ((AdvisorSystem)p.Target!).System; // its 0x214 executed meanwhile (stage 3)
-        a.Toggle(0x116);
+        ((ManufacturingManager)p.Producer!).TargetKey = ((AdvisorSystem)p.Target!).System; // its SetProductionTarget executed meanwhile (stage 3)
+        a.Toggle(278);
         a.Delegate(game, human);
-        Assert.Equal((0x210, queued + 2, 0, 0), (human.Outbox[^1].Type, human.Outbox.Count, p.Machine, p.Priority));
+        Assert.Equal((CommandType.ProduceFacility, queued + 2, 0, 0), (human.Outbox[^1].Type, human.Outbox.Count, p.Machine, p.Priority));
     }
 
     // Both toggles on: the issue phase zeroes the asked record's priority, so after each
-    // 0x214 + Build pair the round-robin pick moves to the other planner (0x14 and 0x15 alternate)
+    // SetProductionTarget + Build pair the round-robin pick moves to the other planner (Production and Garrisons alternate)
     [GameFact]
     public void DelegationAlternatesWithBothToggles()
     {
@@ -743,9 +744,9 @@ public class AdvisorRuntimeTests
         var a = human.Advisor = new Advisor(Owner.Alliance, () => game.Clock.Tick, briefing: null, tips: false, rand: _ => 0);
         game.Controllers[Owner.Alliance] = human;
         OpenSWR.Sim.Ai.Controller.StartGame(game);
-        a.Toggle(0x116);
-        a.Toggle(0x115);
-        var sent = new List<int>();
+        a.Toggle(278);
+        a.Toggle(277);
+        var sent = new List<CommandType>();
         for (int i = 0; i < 8; i++)
         {
             a.DayDue(); // keep the budget out of the way
@@ -754,11 +755,11 @@ public class AdvisorRuntimeTests
             Assert.Equal(before + 1, human.Outbox.Count); // one command per cycle
             sent.Add(human.Outbox[^1].Type);
         }
-        int first = sent[0] == 0x214 && sent[1] == 0x210 ? 0x210 : 0x212, second = first == 0x210 ? 0x212 : 0x210;
-        Assert.Equal([0x214, first, 0x214, second, 0x214, first, 0x214, second], sent);
+        CommandType first = sent[0] == CommandType.SetProductionTarget && sent[1] == CommandType.ProduceFacility ? CommandType.ProduceFacility : CommandType.ProduceTroop, second = first == CommandType.ProduceFacility ? CommandType.ProduceTroop : CommandType.ProduceFacility;
+        Assert.Equal([CommandType.SetProductionTarget, first, CommandType.SetProductionTarget, second, CommandType.SetProductionTarget, first, CommandType.SetProductionTarget, second], sent);
     }
 
-    // The planners' fields ride in the advisor entry; save -> load -> save byte-equal; the Build follows after the load
+    // The planners' fields ride in the advisor entry; save gives load gives save byte-equal; the Build follows after the load
     [GameFact]
     public void DelegationSaveRoundTrip()
     {
@@ -768,8 +769,8 @@ public class AdvisorRuntimeTests
         human.Advisor = new Advisor(Owner.Alliance, () => game.Clock.Tick, briefing: null, tips: false, rand: _ => 0);
         game.Controllers[Owner.Alliance] = human;
         OpenSWR.Sim.Ai.Controller.StartGame(game);
-        human.Advisor.Toggle(0x115);
-        game.Clock.Step(game); // the 0x214 decided
+        human.Advisor.Toggle(277);
+        game.Clock.Step(game); // the SetProductionTarget decided
         var p = human.Advisor.Planners[Advisor.Garrisons];
         Assert.Equal(5, p.Machine);
         static byte[] Save(GameState g) { using var s = new MemoryStream(); SaveGame.Save(g, s); return s.ToArray(); }
@@ -784,18 +785,18 @@ public class AdvisorRuntimeTests
         Assert.Equal((p.Machine, p.Priority, p.Count, p.Product, human.Advisor.Issued), (q.Machine, q.Priority, q.Count, q.Product, a.Issued));
         OpenSWR.Sim.Ai.Controller.StartGame(loaded);
         loaded.Clock.Step(loaded);
-        var build = lh.Outbox.Single(c => c.Type == 0x212);
+        var build = lh.Outbox.Single(c => c.Type == CommandType.ProduceTroop);
         Assert.Equal(((GameObject)p.Producer!).Ref, build.Targets[0].Target.Ref);
     }
 
-    // Mood worked examples (d = 0): (12, 30) -> 0x10 -> MDATA.310, (25, 10) -> 4 -> .306, (18, 9) -> 4, (31, 0)
-    // -> 2 -> .305, (15, 10) -> 8 -> rand(3) + 1, (5, 0) -> 0x10; the d branches; the mood pick (counter 0) takes no draw except for 8
+    // Mood worked examples (d = 0): (12, 30) gives 16 gives MDATA.310, (25, 10) gives 4 gives .306, (18, 9) gives 4, (31, 0)
+    // gives 2 gives .305, (15, 10) gives 8 gives rand(3) + 1, (5, 0) gives 16; the d branches; the mood pick (counter 0) takes no draw except for 8
     [Fact]
     public void MoodWorkedExamples()
     {
-        Assert.Equal([0x10, 4, 4, 2, 8, 0x10], new[] { (12, 30), (25, 10), (18, 9), (31, 0), (15, 10), (5, 0) }.Select(x => Advisor.MoodByte(x.Item1, x.Item2)));
-        Assert.Equal([1, 1, 2, 0x20, 0x40, 0x40], new[] { 2, 5, 1, -1, -2, -9 }.Select(d => Advisor.MoodByte(31, 0, d)));
-        foreach (var (mood, track) in new[] { (0x10, 310), (4, 306), (2, 305) })
+        Assert.Equal([AdvisorMood.Weak, AdvisorMood.Strong, AdvisorMood.Strong, AdvisorMood.SlightlyAhead, AdvisorMood.Neutral, AdvisorMood.Weak], new[] { (12, 30), (25, 10), (18, 9), (31, 0), (15, 10), (5, 0) }.Select(x => Advisor.MoodByte(x.Item1, x.Item2)));
+        Assert.Equal([AdvisorMood.Ahead, AdvisorMood.Ahead, AdvisorMood.SlightlyAhead, AdvisorMood.SlightlyBehind, AdvisorMood.Behind, AdvisorMood.Behind], new[] { 2, 5, 1, -1, -2, -9 }.Select(d => Advisor.MoodByte(31, 0, d)));
+        foreach (var (mood, track) in new[] { (AdvisorMood.Weak, 310), (AdvisorMood.Strong, 306), (AdvisorMood.SlightlyAhead, 305) })
         {
             var r = new Rig();
             r.A.Mood = mood;
@@ -818,7 +819,7 @@ public class AdvisorRuntimeTests
         var a = human.Advisor = new Advisor(Owner.Alliance, () => game.Clock.Tick, briefing: null, tips: false, rand: _ => 0);
         game.Controllers[Owner.Alliance] = human;
         OpenSWR.Sim.Ai.Controller.StartGame(game);
-        Assert.Equal(8, a.Mood);
+        Assert.Equal(AdvisorMood.Neutral, a.Mood);
         int day = game.Day;
         while (game.Day == day) game.Clock.Step(game);
         int own = game.Systems.Count(s => Knowledge.See(game, s, Owner.Alliance).Owner == Owner.Alliance);
@@ -828,8 +829,8 @@ public class AdvisorRuntimeTests
         Assert.Equal(Advisor.MoodByte(own, enemy), a.Mood);
     }
 
-    // The victory word with game over reaches the advisors once: Empire wins -> C3PO 87 / IMP 84, validity
-    // 40000, game-over UI flag; Alliance wins -> C3PO 86 / IMP 85; no game over -> nothing
+    // The victory word with game over reaches the advisors once: Empire wins gives C3PO 87 / IMP 84, validity
+    // 40000, game-over UI flag; Alliance wins gives C3PO 86 / IMP 85; no game over gives nothing
     [GameFact]
     public void StatusMaskAtGameOver()
     {
@@ -842,8 +843,8 @@ public class AdvisorRuntimeTests
             return h.Advisor = new Advisor(side, () => game.Clock.Tick, briefing: null, tips: false, rand: _ => 0);
         }
         var (c3po, imp) = (Human(Owner.Alliance), Human(Owner.Empire));
-        var hq = game.Created.Where(o => Family.Of(o.Type) is >= 0x20 and < 0x22).MinBy(o => o.Key)!;
-        Objects.Destroy(game, hq, 0x14);
+        var hq = game.Created.Where(o => Family.Of(o.Type) is >= Families.Headquarters and < Families.IonCannon).MinBy(o => o.Key)!;
+        Objects.Destroy(game, hq, DestroyedReason.Scrapped);
         game.Clock.Flush(game);
         Assert.True(game.GameOver);
         Assert.Equal((game.Clock.Tick + 40000, game.Clock.Tick + 40000, true, true), (c3po.Due(87), imp.Due(84), c3po.GameOverUi, imp.GameOverUi));
@@ -864,12 +865,12 @@ public class AdvisorRuntimeTests
 
     // End state from the victory word and the player side, then the end movie
     [Theory]
-    [InlineData(true, false, Owner.Alliance, 0x11, "MDATA.106")]
-    [InlineData(true, false, Owner.Empire, 0x12, "MDATA.107")]
-    [InlineData(false, true, Owner.Alliance, 0x10, "MDATA.105")]
-    [InlineData(false, true, Owner.Empire, 0x13, "MDATA.108")]
-    [InlineData(false, false, Owner.Alliance, 0, null)]
-    public void EndStateAndMovie(bool empireWins, bool allianceWins, Owner player, int state, string? movie)
+    [InlineData(true, false, Owner.Alliance, AdvisorEndState.EmpireWinsPlayerAlliance, "MDATA.106")]
+    [InlineData(true, false, Owner.Empire, AdvisorEndState.EmpireWinsPlayerEmpire, "MDATA.107")]
+    [InlineData(false, true, Owner.Alliance, AdvisorEndState.AllianceWinsPlayerAlliance, "MDATA.105")]
+    [InlineData(false, true, Owner.Empire, AdvisorEndState.AllianceWinsPlayerEmpire, "MDATA.108")]
+    [InlineData(false, false, Owner.Alliance, null, null)]
+    public void EndStateAndMovie(bool empireWins, bool allianceWins, Owner player, AdvisorEndState? state, string? movie)
     {
         Assert.Equal(state, Advisor.EndState(new VictoryStatus { EmpireWins = empireWins, AllianceWins = allianceWins, GameOver = true }, player));
         Assert.Equal(movie, Advisor.EndMovie(state));

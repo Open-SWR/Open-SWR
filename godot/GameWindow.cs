@@ -6,11 +6,11 @@ using SimOwner = OpenSWR.Sim.Owner;
 
 /// <summary>
 /// Window id: the kind of window and, for kinds with one window per object (sector, system sub-windows) or per dialog, the
-/// index of that object or dialog (0 for the single windows). A plain number is a kind with index 0.
+/// index of that object or dialog (0 for the single windows). A bare kind stands for index 0.
 /// </summary>
-public readonly record struct WindowAddress(int Kind, int Index = 0)
+public readonly record struct WindowAddress(WindowKind Kind, int Index = 0)
 {
-    public static implicit operator WindowAddress(int kind) => new(kind);
+    public static implicit operator WindowAddress(WindowKind kind) => new(kind);
 }
 
 /// <summary>
@@ -23,7 +23,7 @@ public readonly record struct WindowAddress(int Kind, int Index = 0)
 public abstract partial class GameWindow : Control
 {
     public WindowAddress Id { get; }
-    public int Kind => Id.Kind;
+    public WindowKind Kind => Id.Kind;
     protected readonly MainScreen Screen;
     protected GameState Game => Screen.Game!;
     protected SimOwner Side => Screen.Side;
@@ -43,7 +43,7 @@ public abstract partial class GameWindow : Control
     public virtual ushort Icon => 0;
     public virtual GameObject? Subject => System;
     /// <summary>The window's selection: (object, group mode).</summary>
-    public virtual List<(GameObject Object, int Mode)> Selection => [];
+    public virtual List<(GameObject Object, GroupMode Mode)> Selection => [];
     /// <summary>Drop / targeting targets at a window-local point: T_dest and T_move.</summary>
     public virtual GameObject? DestAt(Vector2 local) => null;
     public virtual GameObject? MoveAt(Vector2 local) => null;
@@ -65,10 +65,10 @@ public abstract partial class GameWindow : Control
     public override void _Ready()
     {
         if (!Framed) return;
-        var close = Button(10108, 10109, (int)Size.X - 14 - 3, 3, () => Screen.Windows.Close(this));
+        var close = Button(StrategyBitmaps.WindowCloseUp, StrategyBitmaps.WindowCloseDown, (int)Size.X - 14 - 3, 3, () => Screen.Windows.Close(this));
         if (!SubWindow) return;
-        Button(10253, 10254, close - 14, 3, () => Screen.Windows.Minimise(this));
-        Button(10209, 10208, 3, 3, () => { if (System is { } s) Screen.Windows.OpenSector(s.Sector); });
+        Button(StrategyBitmaps.MinimiseUp, StrategyBitmaps.MinimiseDown, close - 14, 3, () => Screen.Windows.Minimise(this));
+        Button(StrategyBitmaps.GoToSectorUp, StrategyBitmaps.GoToSectorDown, 3, 3, () => { if (System is { } s) Screen.Windows.OpenSector(s.Sector); });
     }
 
     protected int Button(ushort up, ushort down, int x, int y, global::System.Action command, int w = 14, int h = 14, AudioStream? sound = null)
@@ -93,7 +93,7 @@ public abstract partial class GameWindow : Control
         switch (e)
         {
             case InputEventMouseButton { Pressed: true } b:
-                Screen.Windows.Focus(this); // 0x467
+                Screen.Windows.Focus(this);
                 if (Draggable && b.ButtonIndex == MouseButton.Left && b.Position.Y < 19) _drag = b.Position;
                 break;
             case InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left }:

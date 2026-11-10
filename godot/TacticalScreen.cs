@@ -12,7 +12,7 @@ using OpenSWR.Sim;
 /// pages, boxes and cameras. Mouse picks go to it: left uses 5 points, right uses 13 (Inferred: a ray against each shown unit's model
 /// box, a fighter's decal or a nav marker, nearest hit wins). Buttons and keys go to it too. Esc and P do nothing. Selection boxes and
 /// nav markers are drawn here, with the orbit and follow cameras. Presentation and sound are in TacticalScreen.Presentation.cs. The
-/// jump-in intro has no turns, the local side observes, and Pause is disabled. While the Death Star targets, the cursor is 0x2A. The
+/// jump-in intro has no turns, the local side observes, and Pause is disabled. While the Death Star targets, the cursor is the cross. The
 /// run's outcome movie plays with the battle paused, after every sound has stopped.
 /// <see cref="Finished"/> runs when the battle is done.
 /// </summary>
@@ -40,10 +40,10 @@ public partial class TacticalScreen : Control
     MoviePlayer? _movie;
     TacticalHud _hud = null!;
     TacticalPanel _panel = null!;
-    (int Op, double Next)? _held;
+    (TacticalCameraOperation Op, double Next)? _held;
 
     public Action? Finished { get; set; }
-    /// <summary>Page 0x1B Game Options (0xDD04) asks for the options screen (host state 0xB).</summary>
+    /// <summary>Game Options page asks for the options screen (host state 11).</summary>
     public Action? OptionsRequested { get; set; }
 
     public TacticalScreen(TacticalBattle battle, OpenSWR.Data.Dat.GameDefinitions definitions)
@@ -103,7 +103,7 @@ public partial class TacticalScreen : Control
 
     public override void _Draw()
     {
-        var frame = Assets.Bitmap(1000, Dll);
+        var frame = Assets.Bitmap(TacticalBitmaps.Frame, Dll);
         DrawTextureRect(frame, new Rect2(0, 0, 640, 480), false);
         DrawLog.Bitmap(this, frame, new Rect2(0, 0, 640, 480));
     }
@@ -172,7 +172,7 @@ public partial class TacticalScreen : Control
         bool high = _high; // "Use High Detail Models", read at battle start
         foreach (var (u, node) in _nodes)
         {
-            node.Visible = (u.State is not (1 or 5 or 8 or 9 or 11) || DeadShown(u)) && !u.Hidden; // a run member is hidden (state 10)
+            node.Visible = (u.State is not (TacticalUnitState.Docked or TacticalUnitState.Recovered or TacticalUnitState.InHyperspace or TacticalUnitState.Withdrawn or TacticalUnitState.Destroyed) || DeadShown(u)) && !u.Hidden; // a run member is hidden (state 10)
             var p = Shown(u);
             node.Position = p;
             var h = G(u.Facing);
@@ -248,7 +248,7 @@ public partial class TacticalScreen : Control
         _camera.SetFrustum((float)(2 * field * near), Vector2.Zero, near, (float)(2.5 * Ui.Camera.Distance));
     }
 
-    internal string Label(OpenSWR.Sim.GameObject o) => Definitions.Resolve(o.Type) is { } r && Assets.Stra(r.Common.StringId) is { Length: > 0 } n ? n : $"{o.Type:X8}";
+    internal string Label(OpenSWR.Sim.GameObject o) => Definitions.Resolve(o.Type) is { } r && Assets.Stra(r.Common.StringId) is { Length: > 0 } n ? n : $"{o.Type}";
 
     internal static string Text(int id) => Assets.Text("TEXTTACT.DLL", id);
 
@@ -258,7 +258,7 @@ public partial class TacticalScreen : Control
         PlayMovie();
         Ui.Frame(); // the UI queues are drained before the turn logic, so orders take the current stamp base
         Battle.Advance(delta * 1000);
-        MouseDefaultCursorShape = Ui.TargetCursor ? CursorShape.Cross : CursorShape.Arrow; // cursors 0x2A / 0x2B (RT_CURSOR not decoded: Godot shapes)
+        MouseDefaultCursorShape = Ui.TargetCursor ? CursorShape.Cross : CursorShape.Arrow; // cross and arrow cursors (RT_CURSOR not decoded: Godot shapes)
         if (_held is { } h && Time.GetTicksMsec() >= h.Next)
         {
             Operate(h.Op);
@@ -274,10 +274,10 @@ public partial class TacticalScreen : Control
     }
 
     /// <summary>A camera operation: 9 takes the current mode's subject.</summary>
-    internal void Operate(int op) => Ui.Camera.Operate(op, Ui.Current.Subject);
+    internal void Operate(TacticalCameraOperation op) => Ui.Camera.Operate(op, Ui.Current.Subject);
 
     /// <summary>A repeating camera button or key pressed (the operation at once, then every 100 ms) / released.</summary>
-    internal void Hold(int op)
+    internal void Hold(TacticalCameraOperation op)
     {
         Operate(op);
         _held = (op, Time.GetTicksMsec() + 100);
@@ -285,7 +285,7 @@ public partial class TacticalScreen : Control
 
     internal void Release() => _held = null;
 
-    /// <summary>Pause button 0xAD22: paused: resume, else pause; both only after the intro (world state &gt; 2).</summary>
+    /// <summary>Pause button: paused: resume, else pause; both only after the intro (world state &gt; 2).</summary>
     internal void TogglePause()
     {
         if (!Battle.InIntro) Battle.Paused = !Battle.Paused;
@@ -332,8 +332,8 @@ public partial class TacticalScreen : Control
     void DrawOverlay()
     {
         var line = new Rect2(0, 0, View.Size.X, Assets.LineHeight(6));
-        if (Battle.Paused) Assets.DrawText(_overlay, line, Text(56816), 6, Battle.Local == 0 ? new Color(1, 0, 0) : new Color(0, 1, 0), TextFormat.TopLeft);
-        if (!Ui.InCommand && !Battle.Done) Assets.DrawText(_overlay, line, Text(56818), 6, new Color(0, 1, 1), new TextFormat { Right = true });
+        if (Battle.Paused) Assets.DrawText(_overlay, line, Text(TacticalTexts.BattlePaused), 6, Battle.Local == 0 ? new Color(1, 0, 0) : new Color(0, 1, 0), TextFormat.TopLeft);
+        if (!Ui.InCommand && !Battle.Done) Assets.DrawText(_overlay, line, Text(TacticalTexts.ObservingBattle), 6, new Color(0, 1, 1), new TextFormat { Right = true });
     }
 
     // ---- input ----
@@ -405,14 +405,14 @@ public partial class TacticalScreen : Control
     public override void _UnhandledKeyInput(InputEvent e)
     {
         if (e is not InputEventKey k) return;
-        int? op = k.Keycode switch
+        TacticalCameraOperation? op = k.Keycode switch
         {
-            Key.Pageup or Key.Kp9 or Key.KpAdd => TacticalCamera.ZoomIn,
-            Key.Pagedown or Key.Kp3 or Key.KpSubtract => TacticalCamera.ZoomOut,
-            Key.Left or Key.Kp4 => TacticalCamera.RotateLeft,
-            Key.Right or Key.Kp6 => TacticalCamera.RotateRight,
-            Key.Up or Key.Kp8 => TacticalCamera.TiltUp,
-            Key.Down or Key.Kp2 => TacticalCamera.TiltDown,
+            Key.Pageup or Key.Kp9 or Key.KpAdd => TacticalCameraOperation.ZoomIn,
+            Key.Pagedown or Key.Kp3 or Key.KpSubtract => TacticalCameraOperation.ZoomOut,
+            Key.Left or Key.Kp4 => TacticalCameraOperation.RotateLeft,
+            Key.Right or Key.Kp6 => TacticalCameraOperation.RotateRight,
+            Key.Up or Key.Kp8 => TacticalCameraOperation.TiltUp,
+            Key.Down or Key.Kp2 => TacticalCameraOperation.TiltDown,
             _ => null,
         };
         if (op is { } repeat)
@@ -426,12 +426,12 @@ public partial class TacticalScreen : Control
         switch (k.Keycode)
         {
             case >= Key.Key1 and <= Key.Key8: Ui.PressTaskForce((int)(k.Keycode - Key.Key1)); break;
-            case Key.Space: Ui.Command(0x20); break;
-            case Key.Enter or Key.KpEnter or Key.KpPeriod: Operate(TacticalCamera.ResetSubject); break;
-            case Key.Home or Key.Kp7: Operate(TacticalCamera.Remember); break;
-            case Key.End or Key.Kp1: Operate(TacticalCamera.ResetView); break;
+            case Key.Space: Ui.Command(TacticalCommand.Space); break;
+            case Key.Enter or Key.KpEnter or Key.KpPeriod: Operate(TacticalCameraOperation.ResetSubject); break;
+            case Key.Home or Key.Kp7: Operate(TacticalCameraOperation.Remember); break;
+            case Key.End or Key.Kp1: Operate(TacticalCameraOperation.ResetView); break;
             case >= Key.F1 and <= Key.F12: Ui.Camera.FollowGroup((int)(k.Keycode - Key.F1), Ui); break;
-            case Key.Tab when Ui.Page is 0x16 or 0x18: Ui.Cycle(!k.ShiftPressed); break;
+            case Key.Tab when Ui.Page is TacticalPage.Ship or TacticalPage.TaskForceShip: Ui.Cycle(!k.ShiftPressed); break;
             default: return;
         }
         GetViewport().SetInputAsHandled();
@@ -442,9 +442,9 @@ public partial class TacticalScreen : Control
     /// force of the own ships sent at the nearest enemy, 25 s) | fire (the same until an own shot shows) | select (own-ship mode of
     /// the first ship) | tf (a numbered task force of every own ship, slot 1, targets the nearest enemy and a second one) | multi |
     /// enemy | fighter (fighter group Red) | nav (all four nav sets shown, the shown group's nav points set) | follow (F1) | close / close&lt;N&gt;
-    /// (orbit around the first own ship, zoomed in 12 / N steps) | missions | maneuvers | options | withdraw (pages 0x19 / 0x1A / 0x1B / 0x1C) |
+    /// (orbit around the first own ship, zoomed in 12 / N steps) | missions | maneuvers | options | withdraw |
     /// highlight | pause | observe | zoom&lt;N&gt; (the mode's subject, N zoom steps) | launch (until an enemy fighter launches) | tractor (closing until a tractor hold) | retreat (the
-    /// own withdraw until the first jump) | superlaser (Empire player: mode 0x11 and a right click on the first enemy ship, else
+    /// own withdraw until the first jump) | superlaser (Empire player: the Superlaser mode and a right click on the first enemy ship, else
     /// the computer's; until the beam) | dsrun (Alliance player: fighter group Red on Attack Death Star until the run starts) |
     /// run (10 s) | run&lt;N&gt; (N s) | intro&lt;N&gt; (N wall ms into the jump-in intro; without an intro step the demo skips the intro) | spark / hull / explode[&lt;N&gt;] (an effect on the first
     /// enemy ship, close up, N zoom steps) | turn&lt;N&gt; / tilt&lt;N&gt; (N orbit steps left / down). Both sides as in play.
@@ -498,16 +498,16 @@ public partial class TacticalScreen : Control
                 foreach (var u in own.Skip(1)) Click(u, false, ctrl: true);
                 Ui.PressTaskForce(0);
                 Ui.Frame();
-                Ui.Command(0x20);
+                Ui.Command(TacticalCommand.Space);
                 Ui.Frame();
                 if (mode == "tf") Click(enemies.Skip(1).FirstOrDefault(), true, ctrl: true);
                 if (mode == "closing") Run(25);
                 if (mode == "fire") Run(240, () => Battle.Shots.Any(s => s.From.Side == Battle.Local));
                 if (mode == "fire") _shotsSeen = Math.Max(0, Battle.Shots.FindLastIndex(s => s.From.Side == Battle.Local)); // that turn's beams drawn
                 break;
-            case "fighter": Ui.Command(0xB); Ui.Frame(); break;
+            case "fighter": Ui.Command(TacticalCommand.FighterGroup1); Ui.Frame(); break;
             case "nav":
-                for (int id = 0x10; id <= 0x13; id++) Ui.Command(id);
+                foreach (var id in TacticalUi.NavListCommands) Ui.Command(id);
                 Ui.Frame();
                 var pts = Battle.NavPoints.Where(p => p.Set == 2 && p.Layer == 2).Take(2).ToList();
                 Ui.RightDown(pts[0], false);
@@ -519,21 +519,21 @@ public partial class TacticalScreen : Control
                 if (own.FirstOrDefault() is { } first)
                 {
                     Click(first, false);
-                    Operate(TacticalCamera.ResetSubject);
-                    for (int i = 0, n = int.TryParse(z, out int k) ? k : 12; i < n; i++) Operate(TacticalCamera.ZoomIn);
+                    Operate(TacticalCameraOperation.ResetSubject);
+                    for (int i = 0, n = int.TryParse(z, out int k) ? k : 12; i < n; i++) Operate(TacticalCameraOperation.ZoomIn);
                 }
                 break;
-            case "missions": Ui.ShowPage(0x19, Ui.PageObject); break;
-            case "maneuvers": Ui.ShowPage(0x1A, Ui.PageObject); break;
-            case "options": Ui.ShowPage(0x1B); break;
+            case "missions": Ui.ShowPage(TacticalPage.Missions, Ui.PageObject); break;
+            case "maneuvers": Ui.ShowPage(TacticalPage.Tactics, Ui.PageObject); break;
+            case "options": Ui.ShowPage(TacticalPage.Options); break;
             case "gameoptions": if (!Battle.Paused) TogglePause(); OptionsRequested?.Invoke(); break; // the Game Options button (front end only)
-            case "withdraw": Ui.ShowPage(0x1B); Ui.WithdrawPressed(); break;
-            case "highlight": Ui.Command(0x14); Ui.Command(0x15); Ui.Frame(); break;
+            case "withdraw": Ui.ShowPage(TacticalPage.Options); Ui.WithdrawPressed(); break;
+            case "highlight": Ui.Command(TacticalCommand.HighlightAlliance); Ui.Command(TacticalCommand.HighlightEmpire); Ui.Frame(); break;
             case "pause": TogglePause(); break;
-            case "observe": Ui.Command(0x7B); Ui.Frame(); break;
+            case "observe": Ui.Command(TacticalCommand.ComputerControl); Ui.Frame(); break;
             case ['z', 'o', 'o', 'm', .. var zn] when int.TryParse(zn, out int steps): // the current mode's subject, zoomed in N steps
-                Operate(TacticalCamera.ResetSubject);
-                for (int i = 0; i < steps; i++) Operate(TacticalCamera.ZoomIn);
+                Operate(TacticalCameraOperation.ResetSubject);
+                for (int i = 0; i < steps; i++) Operate(TacticalCameraOperation.ZoomIn);
                 break;
             case "launch": // until an enemy fighter launches from its carrier
                 Run(60, () => Battle.Units.Any(u => u.Fighter && u.Side != Battle.Local && u.Active && u.Carrier is not null));
@@ -544,16 +544,16 @@ public partial class TacticalScreen : Control
                 Run(240, () => Battle.Units.Any(u => u.Holding is not null));
                 GD.Print($"demo tractor: turn {Battle.Turn}, " + string.Join(", ", Battle.Units.Where(u => u.Holding is not null).Select(u => $"{Label(u.Object)} holds {Label(u.Holding!.Object)}, speed {Battle.Speed(u.Holding!):0.00}")));
                 break;
-            case "retreat": // the local side's world withdraw (0x7A), then until its first jump
-                Ui.Command(0x7A);
+            case "retreat": // the local side's world withdraw, then until its first jump
+                Ui.Command(TacticalCommand.Withdraw);
                 Ui.Frame();
-                Run(60, () => Battle.Units.Any(u => u.Side == Battle.Local && u.State is 6 or 7 or 8 or 9));
-                GD.Print($"demo retreat: turn {Battle.Turn}, side state {Battle.SideState(Battle.Local)}, states " + string.Join(" ", Battle.Units.Where(u => u.Side == Battle.Local).Select(u => u.State)));
+                Run(60, () => Battle.Units.Any(u => u.Side == Battle.Local && u.State is TacticalUnitState.JumpOrdered or TacticalUnitState.Accelerating or TacticalUnitState.InHyperspace or TacticalUnitState.Withdrawn));
+                GD.Print($"demo retreat: turn {Battle.Turn}, side state {Battle.SideState(Battle.Local)}, states " + string.Join(" ", Battle.Units.Where(u => u.Side == Battle.Local).Select(u => (int)u.State)));
                 break;
             case "superlaser":
                 if (Battle.Local == 1)
                 {
-                    Ui.Command(0xF);
+                    Ui.Command(TacticalCommand.Superlaser);
                     Ui.Frame();
                     Click(enemies.FirstOrDefault() ?? Battle.Units.FirstOrDefault(u => u.Side != Battle.Local && u.Active), true);
                 }
@@ -563,9 +563,9 @@ public partial class TacticalScreen : Control
                 break;
             case "dsrun":
                 GD.Print($"demo dsrun: fighters {Battle.Taking.Count(u => u.Fighter && u.Side == 0)} / {Battle.Taking.Count(u => u.Fighter && u.Side == 1)}, scene alive {Battle.SceneAlive}, attack possible {Battle.AttackPossible}");
-                Ui.Command(0xB);
+                Ui.Command(TacticalCommand.FighterGroup1);
                 Ui.Frame();
-                Ui.AssignMission(6);
+                Ui.AssignMission(TacticalMissionNumber.AttackDeathStar);
                 Ui.Frame();
                 Run(120, () => Battle.Units.Any(u => u.Hidden));
                 GD.Print($"demo dsrun: turn {Battle.Turn}, attack possible {Battle.AttackPossible}, run {Battle.DeathStarRun}, hidden {Battle.Units.Count(u => u.Hidden)}");
@@ -576,16 +576,16 @@ public partial class TacticalScreen : Control
                 {
                     var kind = fx.TrimEnd("0123456789".ToCharArray());
                     Click(victim, false);
-                    Battle.Effects.Add(new TacticalEffect(victim, kind == "spark" ? 2 : 1, kind switch { "spark" => 0, "hull" => 1, _ => 2 }));
-                    Operate(TacticalCamera.ResetSubject);
-                    for (int i = 0, n = int.TryParse(fx[kind.Length..], out int k) ? k : 14; i < n; i++) Operate(TacticalCamera.ZoomIn);
+                    Battle.Effects.Add(new TacticalEffect(victim, kind == "spark" ? TacticalWeapon.Ion : TacticalWeapon.Turbolaser, kind switch { "spark" => TacticalEffectKind.Spark, "hull" => TacticalEffectKind.HullExplosion, _ => TacticalEffectKind.Death }));
+                    Operate(TacticalCameraOperation.ResetSubject);
+                    for (int i = 0, n = int.TryParse(fx[kind.Length..], out int k) ? k : 14; i < n; i++) Operate(TacticalCameraOperation.ZoomIn);
                 }
                 break;
             case ['t', 'u', 'r', 'n', .. var tn] when int.TryParse(tn, out int turns): // orbit N steps to the left (background check)
-                for (int i = 0; i < turns; i++) Operate(TacticalCamera.RotateLeft);
+                for (int i = 0; i < turns; i++) Operate(TacticalCameraOperation.RotateLeft);
                 break;
             case ['t', 'i', 'l', 't', .. var tl] when int.TryParse(tl, out int tilts): // orbit N steps down
-                for (int i = 0; i < tilts; i++) Operate(TacticalCamera.TiltDown);
+                for (int i = 0; i < tilts; i++) Operate(TacticalCameraOperation.TiltDown);
                 break;
             case ['i', 'n', 't', 'r', 'o', .. var ims] when int.TryParse(ims, out int wall): // N ms of the jump-in intro
                 for (int t = 0; t < wall && Battle.InIntro; t += 50) Battle.Advance(50);

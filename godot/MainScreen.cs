@@ -8,9 +8,9 @@ using SimOwner = OpenSWR.Sim.Owner;
 /// <summary>
 /// Strategy main screen. Side frame bitmap (STRATEGY.DLL 900 / 901) drawn over the galaxy map;
 /// pure blue (0,0,255) in the frame is a colour key and shows the map through. Runs a new game: days advance on demand or
-/// automatically (until game over), the player's fleets take move orders (command 0x201, the replays' path). Battles: the battle
+/// automatically (until game over), the player's fleets take move orders (the move command, the replays' path). Battles: the battle
 /// request window (answer = the human side's decision float) holds the clock, then the post-battle report; the selected fleet
-/// bombards (B, 0x220) or assaults (V, 0x234) its system and the result window opens.
+/// bombards (B) or assaults (V) its system and the result window opens.
 /// </summary>
 public partial class MainScreen : Node2D
 {
@@ -21,7 +21,7 @@ public partial class MainScreen : Node2D
 
     // Frame bitmaps per side (STRATEGY.DLL 900 Alliance, 901 Empire; verified). Galaxy bitmap origin and map rect per side.
     static readonly (string Side, ushort Bitmap, Vector2 Origin, Rect2 MapRect)[] Frames =
-        [("Alliance", 900, new(21, 25), new(55, 40, 485, 350)), ("Empire", 901, new(84, 27), new(120, 40, 480, 355))];
+        [("Alliance", StrategyBitmaps.FrameAlliance, new(21, 25), new(55, 40, 485, 350)), ("Empire", StrategyBitmaps.FrameEmpire, new(84, 27), new(120, 40, 480, 355))];
 
     /// <summary>Original game folder. Empty = OPENSWR_GAME_DIR, then the folder remembered in user://settings.cfg, else ask.</summary>
     [Export] public string GameDir { get; set; } = "";
@@ -61,7 +61,7 @@ public partial class MainScreen : Node2D
     List<GameObject> _battleUnits = [];
     string _message = "";
     GameMenu? _menu;
-    (int Id, List<(GameObject Object, int Mode)> Selection)? _pending; // targeting state: the command waiting for its target
+    (int Id, List<(GameObject Object, GroupMode Mode)> Selection)? _pending; // targeting state: the command waiting for its target
 
     public override void _Ready()
     {
@@ -137,7 +137,7 @@ public partial class MainScreen : Node2D
     /// <summary>
     /// Steps the clock towards the target day. A battle report or a battle request (host waiting) opens its window
     /// and stops here; closing the window resumes the run. The clock stays stopped from the battle start until its report is closed
-    /// (host states 5-0xB): the report of a battle comes before the next battle's request, and nothing steps the clock
+    /// (host states 5-11): the report of a battle comes before the next battle's request, and nothing steps the clock
     /// while a battle window is open. Before a battle window the messages so far are built and an event movie handed out first; while
     /// one plays or waits no battle window opens, so the movie comes first; the run resumes after the last movie. Every
     /// hosted battle opens its report. openswr deviation: also when the original would build none and wait for ever).
@@ -211,7 +211,7 @@ public partial class MainScreen : Node2D
                     EndGame();
                     return;
                 }
-                PickMusic(); // main-screen message 0x402 after an event movie: the music is picked again
+                PickMusic(); // main-screen message after an event movie: the music is picked again
                 PlayEvent();
                 if (MovieBusy) return;
                 foreach (var strike in _waitingStrikes.ToList()) OpenStrike(strike); // strikes held back by the movie
@@ -292,7 +292,7 @@ public partial class MainScreen : Node2D
     internal bool InTactical => _tactical is not null;
 
     /// <summary>
-    /// Host state 0x14: the tactical screen over everything; the clock waits. When the battle is done the screen
+    /// Host state 20: the tactical screen over everything; the clock waits. When the battle is done the screen
     /// goes and the run resumes (the host applies the result, state 8 if withdrawn, then the report).
     /// </summary>
     void OpenTactical(TacticalBattle battle)
@@ -331,17 +331,17 @@ public partial class MainScreen : Node2D
         [.. Combat.Units(s), .. All(s).Where(o => (o is Character || Family.IsSpecialForce(o.Type)) && o.Usable && o.Owner is SimOwner.Alliance or SimOwner.Empire)];
 
     /// <summary>
-    /// Bombardment (0x220) / assault (0x234) by the selected fleet on its system, dispatched at once like a move. The result window
-    /// is not opened here: the strike's type-0xF message (<see cref="Messages"/>) is the attacker's kind 7, whose
+    /// Bombardment / assault by the selected fleet on its system, dispatched at once like a move. The result window
+    /// is not opened here: the strike's message (<see cref="Messages"/>) is the attacker's kind 7, whose
     /// add opens it.
     /// </summary>
     void Strike(Fleet fleet, int type)
     {
         if (fleet.System is not { } s) return;
-        var result = Submit(new Command(type, _map.Side) { Targets = [(fleet, 0)], ArgRef = s });
+        var result = Submit(new Command((CommandType)type, _map.Side) { Targets = [(fleet, GroupMode.Object)], ArgRef = s });
         if (result is not { Success: true })
         {
-            _message = $"order refused ({result?.Category:X}, {result?.Code:X})";
+            _message = $"order refused ({result?.Category}, {result?.Code})";
             UpdateStatus();
             return;
         }
@@ -358,8 +358,8 @@ public partial class MainScreen : Node2D
         var added = _log!.Update();
         UprisingAlarm(_game!);
         MessagesArrived(added);
-        foreach (var m in added.Where(m => m.Kind == 6)) _events.Enqueue(m);
-        foreach (var strike in added.Where(m => m.Kind == 7))
+        foreach (var m in added.Where(m => m.Kind == MessageKinds.Event)) _events.Enqueue(m);
+        foreach (var strike in added.Where(m => m.Kind == MessageKinds.Strike))
             if (MovieBusy) _waitingStrikes.Add(strike); // after the last queued event movie
             else OpenStrike(strike); // each kind-7 add opens its own window
         return added;
@@ -371,7 +371,7 @@ public partial class MainScreen : Node2D
     StrikeResultWindow? NewestStrike => _strikeWindows.LastOrDefault();
 
     /// <summary>
-    /// The strike window (type 0x1C) on a type-0xF message; <paramref name="reopen"/> = the message window's memory. Not a
+    /// The strike window on a strike message; <paramref name="reopen"/> = the message window's memory. Not a
     /// battle window: it does not hold the clock. Every call opens a new window on top (no search);
     /// the others stay. The memory is single: a window opened with it takes it from the older ones.
     /// </summary>
@@ -382,11 +382,11 @@ public partial class MainScreen : Node2D
         StrikeResultWindow window = null!;
         window = new StrikeResultWindow(_game, _map.DisplayName, _map.Side, m, (s, fleets) =>
         {
-            Windows.OpenSector(s.Sector); // 0xB: sector window
-            if (fleets) // 0xC: the fleet sub-window (kind 4, mode 0x10)
+            Windows.OpenSector(s.Sector); // sector window
+            if (fleets) // the fleet sub-window (fleets mode)
             {
                 var sector = Windows.OpenSector(s.Sector);
-                OpenSystemWindow(s, 0x10, sector.GetGlobalRect().Position + new Vector2(ScreenViews.PicturePosition(s).X + 37, ScreenViews.PicturePosition(s).Y));
+                OpenSystemWindow(s, GroupMode.Fleets, sector.GetGlobalRect().Position + new Vector2(ScreenViews.PicturePosition(s).X + 37, ScreenViews.PicturePosition(s).Y));
             }
         }) { Reopen = reopen };
         window.Closed = () => _strikeWindows.Remove(window);
@@ -406,7 +406,7 @@ public partial class MainScreen : Node2D
     {
         if (_game is null) return;
         string state = _game.GameOver ? $"GAME OVER: {_game.Winner} wins" : _auto ? "auto" : "paused";
-        string selected = _map.Selected is { } f ? $"   selected: fleet {f.Id:X} at {f.System?.Definition.Common.Index:X} (click a destination)" : "";
+        string selected = _map.Selected is { } f ? $"   selected: fleet {f.Id} at {f.System?.Definition.Common.Index} (click a destination)" : "";
         _status.Text = $"{Frames[_side].Side}   day {_game.Day}   {state}{selected}   {_message}";
         UpdateTopBar();
     }
@@ -424,14 +424,14 @@ public partial class MainScreen : Node2D
     }
 
     /// <summary>
-    /// Move order: command 0x201 (targets [(fleet, mode 0)], ArgRef = the destination system), submitted to the clock's pending
+    /// Move order: move command (targets [(fleet, object mode)], ArgRef = the destination system), submitted to the clock's pending
     /// list like a player order; it runs when the queues are empty, i.e. at once here.
     /// </summary>
     void Move(Fleet fleet, StarSystem target)
     {
-        var result = Submit(new Command(0x201, _map.Side) { Targets = [(fleet, 0)], ArgRef = target }); // the command, then its order events (the travel starts there)
-        _message = result is { Success: true } ? $"fleet {fleet.Id:X} en route, ETA day {fleet.Eta}"
-            : $"order refused ({result?.Category:X}, {result?.Code:X})";
+        var result = Submit(new Command(CommandType.Move, _map.Side) { Targets = [(fleet, GroupMode.Object)], ArgRef = target }); // the command, then its order events (the travel starts there)
+        _message = result is { Success: true } ? $"fleet {fleet.Id} en route, ETA day {fleet.Eta}"
+            : $"order refused ({result?.Category}, {result?.Code})";
         UpdateStatus();
     }
 
@@ -473,9 +473,9 @@ public partial class MainScreen : Node2D
             // production: the first own shipyard (else any manager) with members orders one unit of its first product (production window, Done);
             // not with OPENSWR_DEMO_ADVISOR=build, whose helper refuses a busy shipyard
             var manager = System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_ADVISOR") == "build" ? null : DemoProduction("order");
-            // env OPENSWR_DEMO_TARGET=1: move that queue to the fleet's destination (0x214 over a non-empty queue)
+            // env OPENSWR_DEMO_TARGET=1: move that queue to the fleet's destination (destination order over a non-empty queue)
             if (manager is not null && to is not null && System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_TARGET") == "1")
-                Dispatch(0x214, [(manager, 0)], to, confirm: false);
+                Dispatch((int)CommandType.SetProductionTarget, [(manager, GroupMode.Object)], to, confirm: false);
             // env OPENSWR_DEMO_MISSION=1: the own system with the most free characters sends them on a diplomacy mission to the nearest
             // neutral populated system it knows (mission window, Begin)
             if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_MISSION") == "1") DemoMission("send");
@@ -514,15 +514,15 @@ public partial class MainScreen : Node2D
         for (int i = 0; i < 100 && _window is null && !(strike && OwnFleets(target).Count > 0); i++) NextDay(); // the arriving fleet may be a new object
         if (strike)
         {
-            if (_window is null && OwnFleets(target).FirstOrDefault() is { } arrived) Strike(arrived, mode.StartsWith("assault") ? 0x234 : 0x220);
-            // strikeunits / assaultunits: the system tab 0x67 (+1: the attacker tab 0x66, +3: the display page 0x68)
+            if (_window is null && OwnFleets(target).FirstOrDefault() is { } arrived) Strike(arrived, mode.StartsWith("assault") ? (int)CommandType.Assault : (int)CommandType.Bombard);
+            // strikeunits / assaultunits: the system tab (+1: the attacker tab, +3: the display page)
             if (mode.Split('+')[0] is "strikeunits" or "assaultunits")
                 for (int i = 0, n = mode.EndsWith("+1") ? 1 : mode.EndsWith("+3") ? 3 : 2; i < n; i++) NewestStrike?.HandleKey(Key.Right);
             if (mode.EndsWith("+msg") || mode.EndsWith("+reopen")) // the strike window again from the message window's Conflict tab
             {
                 NewestStrike?.HandleKey(Key.Escape);
-                OpenMessages(0x80);
-                (Windows.Find(0xD) as MessageWindow)?.DemoDisplay();
+                OpenMessages(MessageTab.Conflict);
+                (Windows.Find(WindowKind.Messages) as MessageWindow)?.DemoDisplay();
                 if (mode.EndsWith("+reopen")) NewestStrike?.HandleKey(Key.Escape); // back to the list on the remembered tab
             }
             return;
@@ -552,9 +552,9 @@ public partial class MainScreen : Node2D
     {
         var game = _game!;
         Fleet? Of(SimOwner o) => at.Contents.OfType<Fleet>().FirstOrDefault(f => f.Owner == o && f.Usable && f.Contents.Any(x => Family.IsCapitalShip(x.Type)));
-        Of(SimOwner.Empire)?.Add(new OpenSWR.Sim.GameObject(0x18000088, SimOwner.Empire, game.NextId()));
+        Of(SimOwner.Empire)?.Add(new OpenSWR.Sim.GameObject(Refs.DeathStarType, SimOwner.Empire, game.NextId()));
         if (Of(SimOwner.Alliance)?.Contents.FirstOrDefault(x => Family.IsCapitalShip(x.Type)) is { } ship)
-            for (int i = 0; i < 4; i++) ship.Add(new OpenSWR.Sim.GameObject(0x1C000003, SimOwner.Alliance, game.NextId()));
+            for (int i = 0; i < 4; i++) ship.Add(new OpenSWR.Sim.GameObject(Refs.XWingSquadron, SimOwner.Alliance, game.NextId()));
     }
 
     /// <summary>Env OPENSWR_DEMO_RESEARCH=1 / OPENSWR_DEMO_LOG=1: open the research panel / event log after the demo days.</summary>
@@ -565,32 +565,32 @@ public partial class MainScreen : Node2D
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_LOG") == "1") OpenLog();
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_MENU") is { Length: > 0 } menu) DemoMenu(menu);
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_FILTER") is { Length: > 0 } filter) DemoFilter(filter);
-        // OPENSWR_DEMO_SPEED=menu: the speed menu at the speed box; OPENSWR_DEMO_MESSAGES=<hex category>: the filtered event log
+        // OPENSWR_DEMO_SPEED=menu: the speed menu at the speed box
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_SPEED") == "menu") OpenSpeedMenu(SpeedRect.GetCenter());
-        // OPENSWR_DEMO_MESSAGES=<hex tab 79-82>[+display]: the message window on that tab (display: the newest message shown)
+        // OPENSWR_DEMO_MESSAGES=<tab id 121-130>[+display]: the message window on that tab (display: the newest message shown)
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_MESSAGES") is { Length: > 0 } messages
-            && int.TryParse(messages.Split('+')[0], System.Globalization.NumberStyles.HexNumber, null, out int tab))
+            && int.TryParse(messages.Split('+')[0], out int tab))
         {
             OpenMessages(tab);
-            if (messages.EndsWith("+display")) (Windows.Find(0xD) as MessageWindow)?.DemoDisplay();
+            if (messages.EndsWith("+display")) (Windows.Find(WindowKind.Messages) as MessageWindow)?.DemoDisplay();
         }
         DemoWindows();
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_PRODUCTION") is { Length: > 0 } production) DemoProduction(production);
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_MISSIONWINDOW") is { Length: > 0 } mission) DemoMission(mission);
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_STATUS") is { Length: > 0 } status) DemoStatus(status);
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_ADVISOR") is { Length: > 0 } advisor) DemoAdvisor(advisor);
-        // OPENSWR_DEMO_MOVIE=<hex scene 6F / 72 / 73 / 74>: that kind-6 event's movie with its caption
-        if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_MOVIE") is { Length: > 0 } movie && uint.TryParse(movie, System.Globalization.NumberStyles.HexNumber, null, out uint scene))
+        // OPENSWR_DEMO_MOVIE=<scene 111 / 114 / 115 / 116>: that kind-6 event's movie with its caption
+        if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_MOVIE") is { Length: > 0 } movie && uint.TryParse(movie, out uint scene))
         {
-            var cor = _game!.Systems.First(s => s.Type == Refs.Coruscant);
+            var cor = _game!.Known.Coruscant!;
             MessageText body = scene switch
             {
-                0x6F => new(0x70C9, [MessageArg.Of(SimOwner.Empire), "", _map.DisplayName(cor.Definition.Common)]),
-                0x72 => new(0x71BE, [_map.DisplayName(cor.Definition.Common)]),
-                0x73 => new(0x7189, []),
-                _ => new(0x7171, []),
+                EventScene.PlanetDestroyed => new(TextId.DeathStarDestroyedSystem, [MessageArg.Of(SimOwner.Empire), "", _map.DisplayName(cor.Definition.Common)]),
+                EventScene.DeathStarSabotaged => new(TextId.RebelAllianceSabotagedDeath, [_map.DisplayName(cor.Definition.Common)]),
+                EventScene.HeadquartersDestroyed => new(TextId.EmpireDestroyedAllianceHeadquarters, []),
+                _ => new(TextId.AllianceSeizedImperialCapital, []),
             };
-            _events.Enqueue(new GameMessage { Kind = 6, Subject = scene, Body = [body] });
+            _events.Enqueue(new GameMessage { Kind = MessageKinds.Event, Subject = scene, Body = [body] });
             PlayEvent();
         }
         // OPENSWR_DEMO_ENCY = index | entry: the encyclopedia index, or the entry of the first own capital ship
@@ -599,7 +599,7 @@ public partial class MainScreen : Node2D
         // OPENSWR_DEMO_FINDER = system | fleet | ships | troop | personnel | specforces [+empire filter "2"]: that finder open; OPENSWR_DEMO_TYPE=<text> typed into its name box
         if (System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_FINDER") is { Length: > 0 } finder)
         {
-            int id = finder switch { "fleet" or "ships" => Finders.FleetFinder, "troop" => Finders.TroopFinder, "personnel" or "specforces" => Finders.PersonnelFinder, _ => Finders.SystemFinder };
+            WindowKind id = finder switch { "fleet" or "ships" => WindowKind.FleetFinder, "troop" => WindowKind.TroopFinder, "personnel" or "specforces" => WindowKind.PersonnelFinder, _ => WindowKind.SystemFinder };
             OpenFinder(id);
             if (Windows.Find(id) is FinderWindow w)
             {
@@ -616,7 +616,7 @@ public partial class MainScreen : Node2D
     }
 
     /// <summary>The message window on the All tab (F6, Alt+Y, env OPENSWR_DEMO_LOG=1).</summary>
-    void OpenLog() => OpenMessages(0x79);
+    void OpenLog() => OpenMessages(MessageTab.All);
 
     ZoomOutline? _zoom;
 
@@ -684,7 +684,7 @@ public partial class MainScreen : Node2D
                 Click(clicked); // anywhere in a sector's box opens its sector window (openswr: single systems are not click targets)
                 break;
             case InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } adv when _game is not null && (AdvisorRect(0).HasPoint(adv.Position) || AdvisorRect(1).HasPoint(adv.Position)):
-                OpenMessages(0x79); // advisor hotspot click
+                OpenMessages(MessageTab.All); // advisor hotspot click
                 break;
             case InputEventKey { Pressed: true, Keycode: Key.R } when _game is not null:
                 OpenResearch();
@@ -771,7 +771,7 @@ public partial class MainScreen : Node2D
             UpdateStatus();
             return false;
         }
-        int shown = _filter; // the mode shown before the load (a fresh screen: 0x80)
+        int shown = _filter; // the mode shown before the load (a fresh screen: 128)
         Only(null);
         Windows.Clear();
         ShowSide(game.Settings.PlayerSide == SimOwner.Alliance ? 0 : 1, start: false);
@@ -781,15 +781,19 @@ public partial class MainScreen : Node2D
         PickMusic(); // screen entry
         _galaxySize = game.Settings.GalaxySize;
         _auto = false;
-        _speed = game.Sides[game.Settings.PlayerSide].Speed switch { 600 => 1, 12 => 3, 4 => 4, _ => 2 }; // the saved ticks per day
+        _speed = game.Sides[game.Settings.PlayerSide].Speed switch
+        {
+            SpeedLevel.SlowestTicks => SpeedLevel.Slowest, SpeedLevel.FastTicks => SpeedLevel.Fast, SpeedLevel.FastestTicks => SpeedLevel.Fastest,
+            _ => SpeedLevel.Normal,
+        }; // the saved ticks per day
         _log = new Messages(game, game.Settings.PlayerSide, _map.DisplayName, VoicePick); // the saved messages come with the game
         LightMessageButtons();
         _map.Side = game.Settings.PlayerSide;
         _map.Selected = null;
         _map.Game = game;
-        // the saved filter mode alone: 0x92 / 0x93 come back with an empty list and no title;
-        // 601 once when it differs from the mode shown before the load and is not 0x80. ShowSide has reset the map to
-        // 0x80 already, so an equal mode is re-applied silently (Inferred: the original screen keeps what it shows)
+        // the saved filter mode alone: the one-system modes come back with an empty list and no title;
+        // 601 once when it differs from the mode shown before the load and is not 128. ShowSide has reset the map to
+        // 128 already, so an equal mode is re-applied silently (Inferred: the original screen keeps what it shows)
         if (game.FilterMode != MapFilter.Off) SetFilter(game.FilterMode, sound: MapFilter.LoadSound(shown, game.FilterMode));
         HideLegend(); // openswr: the legend starts collapsed into its button
         Windows.Reopen(game.Windows, ReopenWindow); // the saved windows, silently
@@ -803,7 +807,7 @@ public partial class MainScreen : Node2D
         _side = side;
         var (texture, viewport) = Frame(Frames[side].Bitmap);
         _frame.Texture = texture;
-        _frame.Scale = LogicalSize / texture.GetSize(); // upscaled frames still cover 640x480
+        _frame.Scale = LogicalSize / texture.GetSize(); // upscaled frames still cover 640 x 480
         _clip.Position = viewport.Position;
         _clip.Size = viewport.Size;
         _map.Position = Frames[side].Origin - _clip.Position; // galaxy bitmap 1:1 at the side's origin under the frame
@@ -878,12 +882,12 @@ public partial class MainScreen : Node2D
         _window = null;
     }
 
-    // Random seed in [1, 0x7FFFFFFE]. The original derives it from the C runtime rand(), seeded by time.
+    // Random seed in [1, 2147483646]. The original derives it from the C runtime rand(), seeded by time.
     void StartGame(GameSettings? settings = null)
     {
         // env OPENSWR_DEMO_SEED: a fixed seed for headless renders
         if (!int.TryParse(System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_SEED"), out int fixedSeed)) fixedSeed = 0;
-        settings ??= new GameSettings(_side == 0 ? SimOwner.Alliance : SimOwner.Empire, _galaxySize, Difficulty: 1, VictoryFlag: 0, fixedSeed > 0 ? fixedSeed : (int)GD.RandRange(1, 0x7FFFFFFE), Opponent: FrontSettings.Opponent);
+        settings ??= new GameSettings(_side == 0 ? SimOwner.Alliance : SimOwner.Empire, _galaxySize, Difficulty: 1, VictoryFlag: 0, fixedSeed > 0 ? fixedSeed : (int)GD.RandRange(1, 2147483646), Opponent: FrontSettings.Opponent);
         var side = settings.PlayerSide;
         int seed = settings.Seed;
         _galaxySize = settings.GalaxySize;
@@ -898,14 +902,14 @@ public partial class MainScreen : Node2D
         Only(null);
         Windows.Clear();
         _auto = false;
-        _speed = 2; // speed 2 at game start, sent as command 0x280 (60 ticks per day)
+        _speed = SpeedLevel.Normal; // game start, sent as the speed command (60 ticks per day)
         _map.Side = side;
         SendSpeed();
         _message = $"new game, galaxy size {_galaxySize} ({game.Systems.Count} systems), seed {seed}";
         _map.Side = side;
         _map.Selected = null;
         _map.Game = game;
-        SetFilter(0x11, sound: false); // openswr choice: a new game opens on the Loyalty filter (original: the plain map)
+        SetFilter(FilterModes.PopularSupportVariant, sound: false); // openswr choice: a new game opens on the Loyalty filter (original: the plain map)
         HideLegend(); // openswr: the legend starts collapsed into its button
         _info.Text = Help;
         UpdateStatus();

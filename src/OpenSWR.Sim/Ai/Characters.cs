@@ -1,15 +1,66 @@
 namespace OpenSWR.Sim.Ai;
 
 /// <summary>
+/// Character op types (the op's type field, an int in the save format). The fleet types (3, 4 and 5) are attached to fleet ops.
+/// </summary>
+public enum CharacterOpType
+{
+    /// <summary>Not set (the default value).</summary>
+    None,
+    /// <summary>General at an own key system (kind 2, counted in the model's count).</summary>
+    GeneralAtSystem,
+    /// <summary>Fleet admiral (CanBe Admiral, command MakeAdmiral), attached to a fleet op.</summary>
+    FleetAdmiral,
+    /// <summary>Fleet general (CanBe General, command MakeGeneral), attached to a fleet op.</summary>
+    FleetGeneral,
+    /// <summary>Fleet commander (CanBe Commander, command MakeCommander), attached to a fleet op.</summary>
+    FleetCommander,
+    /// <summary>Palpatine to Coruscant, created once the model counter reaches 0.</summary>
+    PalpatineToCoruscant,
+}
+
+/// <summary>Produce states of a character op (the op's state field, an int in the save format). Types 3-5 use the same numbers.</summary>
+public enum CharacterOpState
+{
+    /// <summary>Entry: the first call only sets the check state.</summary>
+    Start,
+    /// <summary>Retired check: a retired op is cleaned up, else the op goes on.</summary>
+    Check,
+    /// <summary>Team pick: no team ends the op with no command.</summary>
+    Team,
+    /// <summary>Target (types 1 / 6); for types 3-5 the flagship and gather system are read.</summary>
+    Target,
+    /// <summary>Command for the character's current position (the default state).</summary>
+    Command,
+}
+
+/// <summary>Planner 12's states (the planner's state field, an int in the save format).</summary>
+public enum CharacterPlannerState
+{
+    /// <summary>First call: only moves to the counts state.</summary>
+    Start,
+    /// <summary>Retire and create the requested counts.</summary>
+    Counts,
+    /// <summary>The first fleet op from the cursor with a character request (no wrap).</summary>
+    FleetRequest,
+    /// <summary>Retire, create and attach the fleet op's character request.</summary>
+    FleetAttach,
+    /// <summary>The next selectable character op from the cursor.</summary>
+    NextOp,
+    /// <summary>Produce the chosen character op.</summary>
+    Produce,
+}
+
+/// <summary>
 /// Character operation: type 1 general at an own key system (kind 2, counted in the model's count), 3 / 4 / 5 fleet
 /// commander / general / commander (fleet-attached, need fleet operations), 6 Palpatine to Coruscant (created once
 /// model counter reaches 0). State, flags (character assigned, target valid, kind issued, at the ship, waiting, retired),
 /// target, character.
 /// </summary>
-public sealed class CharacterOp(int key, int type)
+public sealed class CharacterOp(int key, CharacterOpType type)
 {
     public int Key { get; } = key;
-    public int Type { get; } = type;
+    public CharacterOpType Type { get; } = type;
     public int State { get; set; }
     /// <summary>A character is assigned.</summary>
     public bool Assigned { get; set; }
@@ -30,11 +81,17 @@ public sealed class CharacterOp(int key, int type)
     /// <summary>The assignment priority, for types 3-5 (the fleet op's priority).</summary>
     public int Priority { get; set; }
     /// <summary>The agent has the CanBe role of the type, for types 3-5.</summary>
-    public bool CanBe(AiAgent a) => Type switch { 3 => a.Can.Admiral, 5 => a.Can.Commander, _ => a.Can.General };
+    public bool CanBe(AiAgent a) => Type switch { CharacterOpType.FleetAdmiral => a.Can.Admiral, CharacterOpType.FleetCommander => a.Can.Commander, _ => a.Can.General };
     /// <summary>The owning fleet op, for types 3-5.</summary>
     public FleetOp? Owner { get; set; }
-    /// <summary>Command of the type: 0x263 / 0x262 / 0x263 / 0x261; type 6 none.</summary>
-    public int Command => Type switch { 1 or 4 => 0x263, 3 => 0x262, 5 => 0x261, _ => 0 };
+    /// <summary>Command of the type: MakeGeneral / MakeAdmiral / MakeGeneral / MakeCommander; type 6 none.</summary>
+    public CommandType Command => Type switch
+    {
+        CharacterOpType.GeneralAtSystem or CharacterOpType.FleetGeneral => CommandType.MakeGeneral,
+        CharacterOpType.FleetAdmiral => CommandType.MakeAdmiral,
+        CharacterOpType.FleetCommander => CommandType.MakeCommander,
+        _ => 0,
+    };
 }
 
 /// <summary>
@@ -42,7 +99,7 @@ public sealed class CharacterOp(int key, int type)
 /// (none without fleet operations); 4 the next selectable op (its character neither OnMission nor Enroute); 5 its produce
 /// (exits as planner 4 state 6). Produce for types 1 / 6; types 3-5 are attached to fleet operations (not built).
 /// </summary>
-public sealed class CharacterOpPlanner() : Planner(12)
+public sealed class CharacterOpPlanner() : Planner(PlannerType.CharacterOperation)
 {
     static bool OwnAgent(AiAgent a) => a.Own && a.Unassigned;
     /// <summary>Agents a character op does not take: moving or busy, victory characters, specialists.</summary>
@@ -52,68 +109,68 @@ public sealed class CharacterOpPlanner() : Planner(12)
 
     public override Command? Step(GameState game, ComputerController controller)
     {
-        if (Status != 1) { Done = true; return null; }
+        if (Status != PlannerStatus.Active) { Done = true; return null; }
         var m = controller.Model;
-        switch (State)
+        switch ((CharacterPlannerState)State)
         {
-            case 0:
-                State = 1;
+            case CharacterPlannerState.Start:
+                State = (int)CharacterPlannerState.Counts;
                 return null;
-            case 1:
-                if (m.CharacterRetireKey != 0 && m.CharacterOps.TryGetValue(m.CharacterRetireKey, out var old)) Retire(m, old);
-                m.CharacterRetireKey = 0;
-                if (m.CharacterRequestType is 1 or 6) Create(m, m.CharacterRequestType);
-                m.CharacterRequestType = 0;
-                State = 2;
+            case CharacterPlannerState.Counts:
+                if (m.CharacterRetireKey != OpCodes.NoOp && m.CharacterOps.TryGetValue(m.CharacterRetireKey, out var old)) Retire(m, old);
+                m.CharacterRetireKey = OpCodes.NoOp;
+                if (m.CharacterRequestType is CharacterOpType.GeneralAtSystem or CharacterOpType.PalpatineToCoruscant) Create(m, m.CharacterRequestType);
+                m.CharacterRequestType = CharacterOpType.None;
+                State = (int)CharacterPlannerState.FleetRequest;
                 return null;
-            case 2: // the first fleet op from the cursor with a request (no wrap)
+            case CharacterPlannerState.FleetRequest: // the first fleet op from the cursor with a request (no wrap)
             {
-                var fo = m.FleetOps.Values.FirstOrDefault(o => (_fleetNext == 0 || o.Key >= _fleetNext) && (o.CharacterRequest != 0 || o.RetireRequest is not null));
-                if (fo is null) { (State, _fleetNext) = (4, 0); return null; }
+                var fo = m.FleetOps.Values.FirstOrDefault(o => (_fleetNext == 0 || o.Key >= _fleetNext) && (o.CharacterRequest != CharacterOpType.None || o.RetireRequest is not null));
+                if (fo is null) { (State, _fleetNext) = ((int)CharacterPlannerState.NextOp, 0); return null; }
                 _fleet = fo.Key;
                 _fleetNext = m.FleetOps.Keys.FirstOrDefault(k => k > fo.Key);
-                State = 3;
+                State = (int)CharacterPlannerState.FleetAttach;
                 return null;
             }
-            case 3: // retire, create and attach it
+            case CharacterPlannerState.FleetAttach: // retire, create and attach it
                 if (m.FleetOps.TryGetValue(_fleet, out var owner))
                 {
                     if (owner.RetireRequest is { } gone) Retire(m, gone);
                     owner.RetireRequest = null;
-                    if (owner.CharacterRequest is 3 or 4 or 5)
+                    if (owner.CharacterRequest is CharacterOpType.FleetAdmiral or CharacterOpType.FleetGeneral or CharacterOpType.FleetCommander)
                     {
                         var op = new CharacterOp(m.NextCharacterOpKey++, owner.CharacterRequest) { Owner = owner, Priority = owner.Entry };
                         m.CharacterOps[op.Key] = op;
                         owner.CharacterOps.Add(op);
                         owner.CharacterOpCount(op.Type)++;
                     }
-                    owner.CharacterRequest = 0;
+                    owner.CharacterRequest = CharacterOpType.None;
                 }
-                State = 4;
+                State = (int)CharacterPlannerState.NextOp;
                 return null;
-            case 4:
+            case CharacterPlannerState.NextOp:
             {
                 var op = m.CharacterOps.Values.FirstOrDefault(o => (_next == 0 || o.Key >= _next) && Selectable(m, o));
-                if (op is null) { (State, Done, _next) = (0, true, 0); return null; }
+                if (op is null) { (State, Done, _next) = ((int)CharacterPlannerState.Start, true, 0); return null; }
                 _current = op.Key;
                 _next = m.CharacterOps.Keys.FirstOrDefault(k => k > op.Key);
-                State = 5;
+                State = (int)CharacterPlannerState.Produce;
                 return null;
             }
-            default:
+            default: // Produce
             {
-                if (!m.CharacterOps.TryGetValue(_current, out var op)) { (State, Done) = (0, true); return null; }
+                if (!m.CharacterOps.TryGetValue(_current, out var op)) { (State, Done) = ((int)CharacterPlannerState.Start, true); return null; }
                 var (c, finished) = Produce(m, op, controller.Side);
                 if (c is not null && !finished) { Priority++; Done = true; }
-                else if (finished) (State, Done) = (0, true);
+                else if (finished) (State, Done) = ((int)CharacterPlannerState.Start, true);
                 return c;
             }
         }
     }
 
     /// <summary>
-    /// Selectable when its character is neither OnMission (0x80) nor Enroute (0x20); without one it is. The character
-    /// is a key resolved every call, so a detached (0x302) record counts as none.
+    /// Selectable when its character is neither OnMission nor Enroute; without one it is. The character
+    /// is a key resolved every call, so a detached record counts as none.
     /// </summary>
     internal static bool Selectable(WorldModel m, CharacterOp op) => Record(m, op) is not { } a || !(a.OnMission || a.Enroute);
 
@@ -121,11 +178,11 @@ public sealed class CharacterOpPlanner() : Planner(12)
     static AiAgent? Record(WorldModel m, CharacterOp op) =>
         op.Character is { } a && m.Agents.TryGetValue(a.Agent.Ref, out var r) ? r : null;
 
-    static void Create(WorldModel m, int type)
+    static void Create(WorldModel m, CharacterOpType type)
     {
         var op = new CharacterOp(m.NextCharacterOpKey++, type);
         m.CharacterOps[op.Key] = op;
-        if (type == 1) m.Type1CharacterOps++; else m.Type6CharacterOps++;
+        if (type == CharacterOpType.GeneralAtSystem) m.Type1CharacterOps++; else m.Type6CharacterOps++;
     }
 
     /// <summary>
@@ -148,7 +205,7 @@ public sealed class CharacterOpPlanner() : Planner(12)
 
     static void Assign(WorldModel m, CharacterOp op, AiAgent a)
     {
-        (a.CharacterOpKey, a.Priority, a.MissionOpKey) = (op.Key, op.Type is 1 or 6 ? 0 : op.Priority, 0); // type 1 / 6 priority 0 (Inferred)
+        (a.CharacterOpKey, a.Priority, a.MissionOpKey) = (op.Key, op.Type is CharacterOpType.GeneralAtSystem or CharacterOpType.PalpatineToCoruscant ? 0 : op.Priority, 0); // type 1 / 6 priority 0 (Inferred)
         a.Unassigned = false;
         m.DirtyAgent(a);
         op.Character = a;
@@ -156,10 +213,10 @@ public sealed class CharacterOpPlanner() : Planner(12)
     }
 
     /// <summary>
-    /// Team keep: no agent record -> nothing (op keeps its character, not assigned,
-    /// the pick runs); agent's op = this op and healthy -> keep (true); = this op but Injured / Captured (0x50) -> Unassigned set,
+    /// Team keep: no agent record gives nothing (op keeps its character, not assigned,
+    /// the pick runs); agent's op = this op and healthy gives keep (true); = this op but Injured / Captured gives Unassigned set,
     /// its fields := 0, op drops it, no dirty; type 1 then releases its target claim; another
-    /// owner -> only the op's reference is dropped. Type 6 keeps only Palpatine.
+    /// owner gives only the op's reference is dropped. Type 6 keeps only Palpatine.
     /// </summary>
     internal static bool KeepCheck(WorldModel m, CharacterOp op)
     {
@@ -168,64 +225,64 @@ public sealed class CharacterOpPlanner() : Planner(12)
         op.Character = a; // the key's current record
         if (a.CharacterOpKey == op.Key)
         {
-            if (!(a.Captured || a.Injured) && (op.Type != 6 || a.Palpatine)) return true;
+            if (!(a.Captured || a.Injured) && (op.Type != CharacterOpType.PalpatineToCoruscant || a.Palpatine)) return true;
             a.Unassigned = true;
             (a.MissionOpKey, a.CharacterOpKey, a.Priority) = (0, 0, 0);
-            if (op.Type == 1 && m.Record(op.Target) is { } claimed) claimed.CharacterClaim = false;
+            if (op.Type == CharacterOpType.GeneralAtSystem && m.Record(op.Target) is { } claimed) claimed.CharacterClaim = false;
         }
         op.Character = null;
         op.Assigned = false;
         return false;
     }
 
-    /// <summary>Produce (types 1 / 6): 0 empty, 1 retired -> cleanup, 3 target, 2 team, 4 command; types 3-5 as below.</summary>
+    /// <summary>Produce (types 1 / 6): start, check (retired gives cleanup), target, team, command; types 3-5 as below.</summary>
     static (Command?, bool) Produce(WorldModel m, CharacterOp op, Owner side)
     {
-        if (op.Type is 3 or 4 or 5) return FleetProduce(m, op, side);
-        switch (op.State)
+        if (op.Type is CharacterOpType.FleetAdmiral or CharacterOpType.FleetGeneral or CharacterOpType.FleetCommander) return FleetProduce(m, op, side);
+        switch ((CharacterOpState)op.State)
         {
-            case 0:
-                op.State = 1;
+            case CharacterOpState.Start:
+                op.State = (int)CharacterOpState.Check;
                 return (null, false);
-            case 1:
-                if (op.Retired) { op.State = 0; return (Cleanup(m, op, side), true); }
-                op.State = 3;
+            case CharacterOpState.Check:
+                if (op.Retired) { op.State = (int)CharacterOpState.Start; return (Cleanup(m, op, side), true); }
+                op.State = (int)CharacterOpState.Target;
                 return (null, false);
-            case 3:
+            case CharacterOpState.Target:
                 Target(m, op);
-                op.State = 2;
+                op.State = (int)CharacterOpState.Team;
                 return (null, false);
-            case 2:
-                if (Team(m, op)) { op.State = 4; return (null, false); }
-                op.State = 0;
+            case CharacterOpState.Team:
+                if (Team(m, op)) { op.State = (int)CharacterOpState.Command; return (null, false); }
+                op.State = (int)CharacterOpState.Start;
                 return (null, true);
-            default:
-                op.State = 0;
+            default: // Command
+                op.State = (int)CharacterOpState.Start;
                 return (CommandFor(op, side), true);
         }
     }
 
     /// <summary>
     /// Retire (types 1 / 6, types 3-5): uncount; only when the agent's op is the op key:
-    /// Unassigned set, character := 0, then 0x260 when it has a command kind and is free to act. Its other fields are not written and
+    /// Unassigned set, character := 0, then a ClearCommand command when it has a command kind and is free to act. Its other fields are not written and
     /// the agent record is not dirtied (as the team keep). The op drops its character; types 1 / 6 drop the claim.
     /// </summary>
     static Command? Cleanup(WorldModel m, CharacterOp op, Owner side)
     {
         m.CharacterOps.Remove(op.Key);
-        if (op.Type == 1) m.Type1CharacterOps--;
-        else if (op.Type == 6) m.Type6CharacterOps--;
+        if (op.Type == CharacterOpType.GeneralAtSystem) m.Type1CharacterOps--;
+        else if (op.Type == CharacterOpType.PalpatineToCoruscant) m.Type6CharacterOps--;
         m.Dirty = true; // retire move
         Command? c = null;
         if (Record(m, op) is { } a && a.CharacterOpKey == op.Key) // detached record: nothing (Inferred from op holds a key)
         {
             a.Unassigned = true;
             a.Priority = 0;
-            if (a.HasCommandKind && !(a.OnMission || a.Enroute)) c = new Command(0x260, side) { Targets = [(a.Agent, 0)] };
+            if (a.HasCommandKind && !(a.OnMission || a.Enroute)) c = new Command(CommandType.ClearCommand, side) { Targets = [(a.Agent, GroupMode.Object)] };
         }
         op.Character = null;
         op.Assigned = false;
-        if (op.Type is 1 or 6)
+        if (op.Type is CharacterOpType.GeneralAtSystem or CharacterOpType.PalpatineToCoruscant)
         {
             if (m.Record(op.Target) is { } claimed) claimed.CharacterClaim = false;
             op.Target = null;
@@ -236,12 +293,12 @@ public sealed class CharacterOpPlanner() : Planner(12)
     /// <summary>
     /// Type 1 target: target valid cleared on entry; keep while the system is a hub; else drop the claim and search: sectors with an own
     /// key system and the mark by a rank value, systems key + marked, not claimed, by a rank value; fallback without the key requirements
-    /// (Inferred dir 1). Type 6: <see cref="Target6"/>.
+    /// (Inferred dir Ascending). Type 6: <see cref="Target6"/>.
     /// </summary>
     static void Target(WorldModel m, CharacterOp op)
     {
-        if (op.Type == 6) { Target6(m, op); return; }
-        if (op.Type != 1) return;
+        if (op.Type == CharacterOpType.PalpatineToCoruscant) { Target6(m, op); return; }
+        if (op.Type != CharacterOpType.GeneralAtSystem) return;
         op.TargetValid = false; // set again only by the keep or a found system
         if (m.Record(op.Target) is { } kept && kept.Hub) { op.TargetValid = true; return; }
         if (m.Record(op.Target) is { } claimed) claimed.CharacterClaim = false;
@@ -249,10 +306,10 @@ public sealed class CharacterOpPlanner() : Planner(12)
         AiSystem? Search(Func<AiSector, bool> sectorReq, Func<AiSystem, bool> systemReq)
         {
             var sectors = new ListStack();
-            sectors.Push(m.SectorList(x => sectorReq(x), x => x.ProducerMaintenance, 1));
+            sectors.Push(m.SectorList(x => sectorReq(x), x => x.ProducerMaintenance, RankOrder.Ascending));
             if (sectors.Pick() is not AiSector s) return null;
             var systems = new ListStack();
-            systems.Push(m.SystemList(s, r => systemReq(r) && !r.CharacterClaim, r => r.ProducerMaintenance, 1));
+            systems.Push(m.SystemList(s, r => systemReq(r) && !r.CharacterClaim, r => r.ProducerMaintenance, RankOrder.Ascending));
             return systems.Pick() as AiSystem;
         }
         var found = Search(x => x.KeySystem && x.Hub, r => r.KeySystem && r.Hub)
@@ -271,10 +328,10 @@ public sealed class CharacterOpPlanner() : Planner(12)
         if (m.Record(op.Target) is { } kept && (kept.Own && kept.Coruscant)) { op.TargetValid = true; return; }
         op.Target = null;
         var sectors = new ListStack();
-        sectors.Push(m.SectorRandomList(x => x.KeySystem && x.Coruscant, 1));
+        sectors.Push(m.SectorRandomList(x => x.KeySystem && x.Coruscant, RankOrder.Ascending));
         if (sectors.Pick() is not AiSector s) return;
         var systems = new ListStack();
-        systems.Push(m.SystemRandomList(s, r => r.KeySystem && r.Coruscant, 1));
+        systems.Push(m.SystemRandomList(s, r => r.KeySystem && r.Coruscant, RankOrder.Ascending));
         if (systems.Pick() is AiSystem found) { op.Target = found.System; op.TargetValid = true; }
     }
 
@@ -288,14 +345,14 @@ public sealed class CharacterOpPlanner() : Planner(12)
     /// </summary>
     static bool Team(WorldModel m, CharacterOp op)
     {
-        if (op.Type == 6) return Team6(m, op);
+        if (op.Type == CharacterOpType.PalpatineToCoruscant) return Team6(m, op);
         if (KeepCheck(m, op)) return true;
         if (op.Target is not { } target) return false;
-        // no record, or claimed by another op -> target := none; no claim release, no dirty, target valid kept.
+        // no record, or claimed by another op gives target := none; no claim release, no dirty, target valid kept.
         if (m.Record(target) is not { } tr || tr.CharacterClaim) { op.Target = null; return false; }
         var stack = new ListStack();
-        stack.Push(m.AgentList(a => OwnAgent(a) && a.Can.General && !NotFree(a), Leadership, 50, 10000, 1));
-        stack.Push(m.AgentDistanceList(target, a => OwnAgent(a) && a.Can.General && !NotFree(a), 2));
+        stack.Push(m.AgentList(a => OwnAgent(a) && a.Can.General && !NotFree(a), Leadership, 50, 10000, RankOrder.Ascending));
+        stack.Push(m.AgentDistanceList(target, a => OwnAgent(a) && a.Can.General && !NotFree(a), RankOrder.Descending));
         while (stack.Pick() is AiAgent pick)
         {
             if (Blocked(m, pick)) continue;
@@ -307,7 +364,7 @@ public sealed class CharacterOpPlanner() : Planner(12)
     }
 
     /// <summary>
-    /// Type 6 team: keep (0x400, healthy); else with an own target record (else target := none) one list (0x402, by
+    /// Type 6 team: keep (healthy); else with an own target record (else target := none) one list (by
     /// Leadership, lo 0), one pick, Blockade test, assign with priority 0; no target claim.
     /// </summary>
     static bool Team6(WorldModel m, CharacterOp op)
@@ -315,44 +372,44 @@ public sealed class CharacterOpPlanner() : Planner(12)
         if (KeepCheck(m, op)) return true;
         if (m.Record(op.Target) is not { } tr || !tr.Own) { op.Target = null; return false; }
         var stack = new ListStack();
-        stack.Push(m.AgentList(a => a.Own && a.Palpatine && !MissionOps.Moving(a), Leadership, 0, 10000, 1));
+        stack.Push(m.AgentList(a => a.Own && a.Palpatine && !MissionOps.Moving(a), Leadership, 0, 10000, RankOrder.Ascending));
         if (stack.Pick() is not AiAgent pick || Blocked(m, pick)) return false;
         Assign(m, op, pick);
         return true;
     }
 
-    /// <summary>A usable character at the target (the agent's location) without a command kind -> 0x26x; not there -> 0x201 -> the target.</summary>
+    /// <summary>A usable character at the target (the agent's location) without a command kind gives a Make command (MakeCommander, MakeAdmiral or MakeGeneral); not there gives Move gives the target.</summary>
     static Command? CommandFor(CharacterOp op, Owner side)
     {
         if (op.Character is not { } a || MissionOps.Moving(a) || op.Target is null) return null;
-        if (a.Location == op.Target) return !a.HasCommandKind && op.Command != 0 ? new Command(op.Command, side) { Targets = [(a.Agent, 0)] } : null;
-        return new Command(0x201, side) { Targets = [(a.Agent, 0)], ArgRef = op.Target };
+        if (a.Location == op.Target) return !a.HasCommandKind && op.Command != 0 ? new Command(op.Command, side) { Targets = [(a.Agent, GroupMode.Object)] } : null;
+        return new Command(CommandType.Move, side) { Targets = [(a.Agent, GroupMode.Object)], ArgRef = op.Target };
     }
 
     // ---- types 3-5 ----
 
     static (Command?, bool) FleetProduce(WorldModel m, CharacterOp op, Owner side)
     {
-        switch (op.State)
+        switch ((CharacterOpState)op.State)
         {
-            case 0:
-                op.State = 1;
+            case CharacterOpState.Start:
+                op.State = (int)CharacterOpState.Check;
                 return (null, false);
-            case 1: // retired -> release, 0x260 as for types 1 / 6
-                if (op.Retired) { op.State = 0; return (Cleanup(m, op, side), true); }
-                op.State = 3;
+            case CharacterOpState.Check: // retired gives release, ClearCommand as for types 1 / 6
+                if (op.Retired) { op.State = (int)CharacterOpState.Start; return (Cleanup(m, op, side), true); }
+                op.State = (int)CharacterOpState.Target;
                 return (null, false);
-            case 3:
+            case CharacterOpState.Target:
                 (op.Flagship, op.Gather) = (op.Owner?.Flagship, op.Owner?.Gather);
                 op.TargetValid = op.Flagship is not null && op.Gather is not null;
-                op.State = 2;
+                op.State = (int)CharacterOpState.Team;
                 return (null, false);
-            case 2:
-                if (FleetTeam(m, op)) { op.State = 4; return (null, false); }
-                op.State = 0;
+            case CharacterOpState.Team:
+                if (FleetTeam(m, op)) { op.State = (int)CharacterOpState.Command; return (null, false); }
+                op.State = (int)CharacterOpState.Start;
                 return (null, true);
-            default:
-                op.State = 0;
+            default: // Command
+                op.State = (int)CharacterOpState.Start;
                 return (FleetCommand(m, op, side), true);
         }
     }
@@ -376,19 +433,19 @@ public sealed class CharacterOpPlanner() : Planner(12)
             return true;
         }
         var reference = op.Gather ?? op.Owner?.Theater?.Systems.FirstOrDefault()?.System;
-        Func<AiAgent, bool> pass = op.Type == 4 ? a => OwnAgent(a) && op.CanBe(a) && !MissionOps.Moving(a) && !a.VictoryCharacter
+        Func<AiAgent, bool> pass = op.Type == CharacterOpType.FleetGeneral ? a => OwnAgent(a) && op.CanBe(a) && !MissionOps.Moving(a) && !a.VictoryCharacter
             : a => OwnAgent(a) && op.CanBe(a) && !NotFree(a);
         var stack = new ListStack();
-        stack.Push(m.AgentList(pass, Leadership, 50, 10000, 1));
-        if (reference is not null) stack.Push(m.AgentDistanceList(reference, pass, 2));
+        stack.Push(m.AgentList(pass, Leadership, 50, 10000, RankOrder.Ascending));
+        if (reference is not null) stack.Push(m.AgentDistanceList(reference, pass, RankOrder.Descending));
         if (stack.Pick() is not AiAgent pick) return false;
         Assign(m, op, pick);
         return true;
     }
 
     /// <summary>
-    /// A usable character: aboard the flagship without a kind -> 0x26x; aboard another ship of the flagship's fleet, or
-    /// on the flagship's system -> 0x201 -> the flagship (not Enroute); elsewhere -> the gather system (none: nothing; at it: wait).
+    /// A usable character: aboard the flagship without a kind gives a Make command; aboard another ship of the flagship's fleet, or
+    /// on the flagship's system gives Move gives the flagship (not Enroute); elsewhere gives the gather system (none: nothing; at it: wait).
     /// No flagship: the gather rule alone.
     /// </summary>
     static Command? FleetCommand(WorldModel m, CharacterOp op, Owner side)
@@ -398,35 +455,35 @@ public sealed class CharacterOpPlanner() : Planner(12)
         {
             if (op.Gather is not { } gather) return null;
             if (a.Location == gather) { op.Waiting = true; return null; }
-            return new Command(0x201, side) { Targets = [(a.Agent, 0)], ArgRef = gather };
+            return new Command(CommandType.Move, side) { Targets = [(a.Agent, GroupMode.Object)], ArgRef = gather };
         }
         bool ready = !fs.Enroute;
         if (a.Location == fs.Ship)
         {
             if (a.HasCommandKind) return null;
             op.KindIssued = true;
-            return new Command(op.Command, side) { Targets = [(a.Agent, 0)] };
+            return new Command(op.Command, side) { Targets = [(a.Agent, GroupMode.Object)] };
         }
         if (a.Location is { } at && Family.IsCapitalShip(at.Type))
         {
             if (fs.Fleet is not null && m.ViewParent(at) == fs.Fleet)
             {
                 op.AtShip = true;
-                return ready ? new Command(0x201, side) { Targets = [(a.Agent, 0)], ArgRef = fs.Ship } : null;
+                return ready ? new Command(CommandType.Move, side) { Targets = [(a.Agent, GroupMode.Object)], ArgRef = fs.Ship } : null;
             }
-            return op.Gather is { } g ? new Command(0x201, side) { Targets = [(a.Agent, 0)], ArgRef = g } : null;
+            return op.Gather is { } g ? new Command(CommandType.Move, side) { Targets = [(a.Agent, GroupMode.Object)], ArgRef = g } : null;
         }
         if (a.Location is StarSystem here)
         {
             if (here != m.Where(fs.Ship))
             {
                 if (here == op.Gather) { op.Waiting = true; return null; }
-                return op.Gather is { } g ? new Command(0x201, side) { Targets = [(a.Agent, 0)], ArgRef = g } : null;
+                return op.Gather is { } g ? new Command(CommandType.Move, side) { Targets = [(a.Agent, GroupMode.Object)], ArgRef = g } : null;
             }
             if (ready)
             {
                 op.AtShip = true;
-                return new Command(0x201, side) { Targets = [(a.Agent, 0)], ArgRef = fs.Ship };
+                return new Command(CommandType.Move, side) { Targets = [(a.Agent, GroupMode.Object)], ArgRef = fs.Ship };
             }
         }
         return null;

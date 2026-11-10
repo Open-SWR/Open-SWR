@@ -1,7 +1,9 @@
+using OpenSWR.Data.Dat;
+
 namespace OpenSWR.Sim.Ai;
 
 /// <summary>
-/// Step 37 (`RimFirst`): expansion prefers rim systems (sector Group != 1) more than
+/// Rim-first expansion: prefers rim systems (sector Group != 1) more than
 /// <see cref="ReachDays"/> (speed 100) from every known enemy system and fleet. Populated ones go first in the diplomacy
 /// expansion; explored unpopulated ones with energy get one troop unit dropped from the weakest idle fleet (one drop at a time),
 /// keep it as their garrison, and then want a shield and a gun ahead of other facilities. Views only for the enemy; no draws.
@@ -68,17 +70,17 @@ public sealed partial class OpenSWRController
     }
 
     /// <summary>
-    /// The rim defence sites: each own unpopulated rim system wants a shield (family 0x24), then a gun (family 0x23), where its
+    /// The rim defence sites: each own unpopulated rim system wants a shield (family 36), then a gun (family 35), where its
     /// energy has room and the construction yards can build them. Appended after the threat-driven sites.
     /// </summary>
     internal List<(StarSystem? Site, Data.Dat.SdRecord? Product)> RimDefenceSites(GameState game)
     {
-        var buildable = Research.Buildable(game, Side, 0x2A);
+        var buildable = Research.Buildable(game, Side, Families.ConstructionYard);
         var result = new List<(StarSystem?, Data.Dat.SdRecord?)>();
         foreach (var s in Own(game).Where(s => !s.Populated && !s.Sector.IsCore))
         {
             int room = s.Energy - s.UsedEnergy;
-            foreach (uint family in new uint[] { 0x24, 0x23 })
+            foreach (uint family in new uint[] { Families.PlanetaryShield, Families.Gun })
             {
                 if (room <= 0) break;
                 if (s.Contents.Any(x => x.Owner == Side && x.Existing && Family.Of(x.Type) == family)) continue;

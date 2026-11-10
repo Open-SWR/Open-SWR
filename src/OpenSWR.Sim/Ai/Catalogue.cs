@@ -31,18 +31,18 @@ public enum Criterion
     /// <summary>Nothing: every product ranks 0.</summary>
     None,
     MaintenanceCost,
-    /// <summary>Troop and fighter detection (Inferred); capital ships rank their squadron size, 0.</summary>
+    /// <summary>Troop and fighter detection (Inferred); capital ships rank their squadron size, 0. Meaning in the original is unknown.</summary>
     Detection,
     RefinedMaterialCost,
     /// <summary>Capital ships (fighter capacity).</summary>
     FighterCapacity,
     /// <summary>Capital ships (troop capacity).</summary>
     TroopCapacity,
-    /// <summary>Fighters and capital ships (score vs ships).</summary>
+    /// <summary>Fighters and capital ships (score vs ships). Meaning in the original is unknown.</summary>
     Firepower,
-    /// <summary>Fighters and capital ships (score vs fighters).</summary>
+    /// <summary>Fighters and capital ships (score vs fighters). Meaning in the original is unknown.</summary>
     AntiFighterFirepower,
-    /// <summary>Fighters and capital ships.</summary>
+    /// <summary>Fighters and capital ships. Meaning in the original is unknown.</summary>
     Bombardment,
     /// <summary>Troops (AttackStrength).</summary>
     TroopAttack,
@@ -50,9 +50,9 @@ public enum Criterion
     TroopDefense,
     /// <summary>Production facilities (ProcessingRate).</summary>
     ProcessingRate,
-    /// <summary>Fighters.</summary>
+    /// <summary>Fighters. Meaning in the original is unknown.</summary>
     Torpedoes,
-    /// <summary>Defences (ShieldStrength), fighters and capital ships.</summary>
+    /// <summary>Defences (ShieldStrength), fighters and capital ships. Meaning in the original is unknown.</summary>
     Shields,
     /// <summary>Fighters (Maneuverability).</summary>
     Maneuverability,
@@ -84,7 +84,7 @@ public sealed class Product(SdRecord record)
     public bool AntiFighter { get; set; }
     /// <summary>A capital ship with troop capacity that is neither armed, anti-fighter nor an interdictor.</summary>
     public bool TroopCarrier { get; set; }
-    /// <summary>An armed ship with troop capacity.</summary>
+    /// <summary>An armed ship with troop capacity. Meaning in the original is unknown.</summary>
     public bool ArmedTroopCarrier { get; set; }
     /// <summary>Hull &lt; 1100.</summary>
     public bool SmallHull { get; set; }
@@ -137,13 +137,13 @@ public sealed class Product(SdRecord record)
     public int ResearchOrder { get; set; }
     /// <summary>1 / 2 side flag, 0 both.</summary>
     public int Side { get; set; }
-    /// <summary>Production facility ProcessingRate; defence / troop AttackStrength; fighter / capital-ship score vs ships; special-force Diplomacy.</summary>
+    /// <summary>Production facility ProcessingRate; defence / troop AttackStrength; fighter / capital-ship score vs ships; special-force Diplomacy. Meaning in the original is unknown.</summary>
     public int Firepower { get; set; }
-    /// <summary>Defence ShieldStrength; troop DefenseStrength; fighter / capital-ship score vs fighters; special-force Espionage.</summary>
+    /// <summary>Defence ShieldStrength; troop DefenseStrength; fighter / capital-ship score vs fighters; special-force Espionage. Meaning in the original is unknown.</summary>
     public int AntiFighterFirepower { get; set; }
-    /// <summary>Capital ship: 1 with a Bombardment value, else 0. Fighter: the SD value that is 2 on the bomber types.</summary>
+    /// <summary>Capital ship: 1 with a Bombardment value, else 0. Fighter: the SD value that is 2 on the bomber types. Meaning in the original is unknown.</summary>
     public int Bombardment { get; set; }
-    /// <summary>Fighter: 25 * squadron div 10. Capital ship: 100 * ShieldRechargeRate.</summary>
+    /// <summary>Fighter: 25 * squadron div 10. Capital ship: 100 * ShieldRechargeRate. Meaning in the original is unknown.</summary>
     public int Shields { get; set; }
     /// <summary>Troop BombardmentDefense.</summary>
     public int BombardmentDefense { get; set; }
@@ -155,7 +155,7 @@ public sealed class Product(SdRecord record)
     public int Maneuverability { get; set; }
     /// <summary>Troop and fighter SD value the OpenSWR AI reads as detection. Meaning in the original is unknown.</summary>
     public int Detection { get; set; }
-    /// <summary>Fighter: the SD torpedo value times the squadron size (Inferred: torpedoes).</summary>
+    /// <summary>Fighter: the SD torpedo value times the squadron size (Inferred: torpedoes). Meaning in the original is unknown.</summary>
     public int Torpedoes { get; set; }
     /// <summary>Capital-ship Hull.</summary>
     public int Hull { get; set; }
@@ -176,7 +176,7 @@ public sealed class Product(SdRecord record)
     public int ProcessingRate => Firepower;
     public int DefenseStrength => AntiFighterFirepower;
 
-    /// <summary>Criterion -> value, for the criteria the product's class ranks by.</summary>
+    /// <summary>Criterion gives value, for the criteria the product's class ranks by.</summary>
     internal (Criterion Criterion, Func<Product, int> Value)[] Criteria { get; set; } = [];
 
     /// <summary>The value the pick ranks by for a criterion (0 when the class has none).</summary>
@@ -208,32 +208,32 @@ public sealed class Catalogue
     static Product? Build(SdRecord r, List<SpecialForceRecord> forces)
     {
         uint family = Family.Of(r.Common.Ref);
-        bool facility = family is >= 0x22 and < 0x2C;
-        if (!(facility || family is >= 0x10 and < 0x20 || family is >= 0x3C and < 0x40) || r.Body.Length < 6) return null;
+        bool facility = family is >= Families.IonCannon and < Families.Mine;
+        if (!(facility || family is >= Families.Troop and < Families.Headquarters || family is >= Families.SpecialForce and < Families.Mission) || r.Body.Length < 6) return null;
         int I(SdField field) => r.GetOrZero(field);
         var p = new Product(r) { RefinedMaterialCost = I(SdField.RefinedMaterialCost), MaintenanceCost = I(SdField.MaintenanceCost), ResearchOrder = I(SdField.ResearchOrder) };
         p.Side = facility ? I(SdField.Empire) == 0 ? 1 : I(SdField.Alliance) == 0 ? 2 : 0 : I(SdField.Empire) != 0 ? 2 : 1;
         switch (family)
         {
-            case >= 0x28 and < 0x2C: // production facilities
+            case >= Families.Shipyard and < Families.Mine: // production facilities
                 p.Firepower = I(SdField.ProcessingRate);
-                (p.Shipyard, p.TrainingFacility, p.ConstructionYard) = (family == 0x28, family == 0x29, family == 0x2A);
+                (p.Shipyard, p.TrainingFacility, p.ConstructionYard) = (family == Families.Shipyard, family == Families.TrainingFacility, family == Families.ConstructionYard);
                 p.Criteria = [(Criterion.ProcessingRate, x => x.Firepower), (Criterion.MaintenanceCost, Maintenance), (Criterion.RefinedMaterialCost, Refined)];
                 break;
-            case >= 0x22 and < 0x28: // defences
+            case >= Families.IonCannon and < Families.Shipyard: // defences
                 (p.Firepower, p.AntiFighterFirepower) = (I(SdField.DefenseAttackStrength), I(SdField.DefenseShieldStrength));
-                (p.GenCore, p.DeathStarShield, p.Battery) = (family == 0x24, family == 0x25, family is 0x22 or 0x23);
+                (p.GenCore, p.DeathStarShield, p.Battery) = (family == Families.PlanetaryShield, family == Families.DeathStarShield, family is Families.IonCannon or Families.Gun);
                 p.Criteria = [(Criterion.Shields, x => x.AntiFighterFirepower), (Criterion.DefenceAttack, x => x.Firepower), (Criterion.MaintenanceCost, Maintenance),
                     (Criterion.RefinedMaterialCost, Refined)];
                 break;
-            case >= 0x10 and < 0x14: // troops
+            case >= Families.Troop and < Families.CapitalShip: // troops
                 (p.Firepower, p.AntiFighterFirepower, p.BombardmentDefense, p.Detection) = (I(SdField.TroopAttackStrength), I(SdField.TroopDefenseStrength), I(SdField.TroopBombardmentDefense), I(SdField.Detection));
                 p.AttackTroop = p.AntiFighterFirepower <= p.Firepower;
                 p.DefenseTroop = p.Firepower <= p.AntiFighterFirepower;
                 p.Criteria = [(Criterion.TroopAttack, x => x.Firepower), (Criterion.TroopDefense, x => x.AntiFighterFirepower), (Criterion.MaintenanceCost, Maintenance),
                     (Criterion.Detection, x => x.Detection), (Criterion.RefinedMaterialCost, Refined)];
                 break;
-            case >= 0x1C and < 0x20: // fighters
+            case >= Families.Fighter and < Families.Headquarters: // fighters
             {
                 int squad = I(SdField.SquadronSize);
                 (p.SquadronSize, p.Shields, p.Maneuverability, p.Bombardment, p.Detection) = (squad, 25 * squad / 10, I(SdField.Maneuverability), I(SdField.FighterBombardment), I(SdField.Detection));
@@ -251,14 +251,14 @@ public sealed class Catalogue
                     (Criterion.Shields, x => x.Shields), (Criterion.Torpedoes, x => x.Torpedoes), (Criterion.Maneuverability, x => x.Maneuverability)];
                 break;
             }
-            case >= 0x14 and < 0x1C: // capital ships
+            case >= Families.CapitalShip and < Families.Fighter: // capital ships
             {
                 (p.Hull, p.FighterCapacity, p.TroopCapacity, p.WeaponRechargeRate, p.ShieldRechargeRate) = (I(SdField.Hull), I(SdField.FighterCapacity),
                     I(SdField.TroopCapacity), I(SdField.WeaponRechargeRate), I(SdField.ShieldRechargeRate));
                 p.Bombardment = I(SdField.Bombardment) != 0 ? 1 : 0;
                 p.Shields = 100 * I(SdField.ShieldRechargeRate);
                 bool interdictor = I(SdField.GravityWell) > 0;
-                if (family < 0x18) // weapon scores, not for the Death Star class; arcs fore, aft, port, starboard
+                if (family < Families.DeathStar) // weapon scores, not for the Death Star class; arcs fore, aft, port, starboard
                 {
                     (int Turbolaser, int Ion, int Laser)[] arcs =
                     [
@@ -283,7 +283,7 @@ public sealed class Catalogue
                 }
                 if (p.MaintenanceCost != 0) p.StrengthPerMaintenance = 10 * p.Firepower / p.MaintenanceCost;
                 if (p.RefinedMaterialCost != 0) p.StrengthPerCost = 10 * p.Firepower / p.RefinedMaterialCost;
-                if (family >= 0x18) p.DeathStar = true;
+                if (family >= Families.DeathStar) p.DeathStar = true;
                 else
                 {
                     p.CapitalShip = true;

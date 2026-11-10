@@ -21,36 +21,36 @@ public sealed partial class OpenSWRController
     bool TeamsOn => On(V7.Teams) || On(V7.Agents);
 
     /// <summary>The mission kinds a special force may serve in (espionage, reconnaissance and the covert kinds).</summary>
-    static readonly uint[] AgentKinds = [0x52, 0x54, 0x56, 0x61, 0x62, 0x63, 0x69];
+    static readonly MissionKind[] AgentKinds = [MissionKind.Espionage, MissionKind.Reconnaissance, MissionKind.InciteUprising, MissionKind.Rescue, MissionKind.Abduction, MissionKind.Assassination, MissionKind.Sabotage];
 
     /// <summary>
     /// Rule 1: the mission kinds whose playable type accepts the special-force type for the side (MissionMask within the mission's
     /// SpecialForceMask, the side's flag; as <see cref="MissionEligibility"/>). Never by name.
     /// </summary>
-    internal static List<uint> KindsFor(GameState game, Owner side, SpecialForceRecord f) =>
+    internal static List<MissionKind> KindsFor(GameState game, Owner side, SpecialForceRecord f) =>
         (side == Owner.Alliance ? f.Alliance : f.Empire) == 0 || f.MissionMask == 0 ? []
         : [.. AgentKinds.Where(kind => TypeOf(game, kind) is { } m && m.AllowsSpecialForce(f.MissionMask))];
 
     /// <summary>A special-force type's skill for a kind.</summary>
-    static int SkillFor(SpecialForceRecord f, uint kind) => kind switch
+    static int SkillFor(SpecialForceRecord f, MissionKind kind) => kind switch
     {
-        0x52 or 0x54 => (int)f.Skills.Espionage.Base,
-        0x56 => (int)f.Skills.Leadership.Base,
-        0x69 => (int)(f.Skills.Espionage.Base + f.Skills.Combat.Base) / 2,
+        MissionKind.Espionage or MissionKind.Reconnaissance => (int)f.Skills.Espionage.Base,
+        MissionKind.InciteUprising => (int)f.Skills.Leadership.Base,
+        MissionKind.Sabotage => (int)(f.Skills.Espionage.Base + f.Skills.Combat.Base) / 2,
         _ => (int)f.Skills.Combat.Base,
     };
 
     /// <summary>One buildable own special-force type: its record, the kinds it serves, its pool weight (espionage or reconnaissance 2, else 1).</summary>
-    internal sealed record AgentType(SpecialForceRecord Record, List<uint> Kinds)
+    internal sealed record AgentType(SpecialForceRecord Record, List<MissionKind> Kinds)
     {
-        public int Weight => Kinds.Contains(0x52u) || Kinds.Contains(0x54u) ? 2 : 1;
-        public bool Espionage => Kinds.Contains(0x52u);
+        public int Weight => Kinds.Contains(MissionKind.Espionage) || Kinds.Contains(MissionKind.Reconnaissance) ? 2 : 1;
+        public bool Espionage => Kinds.Contains(MissionKind.Espionage);
     }
 
     /// <summary>Rule 1: the buildable own special-force types with their kinds, in ascending ref order.</summary>
     internal List<AgentType> AgentTypes(GameState game)
     {
-        var buildable = Research.Buildable(game, Side, 0x29).Where(r => Family.IsSpecialForce(r.Common.Ref)).Select(r => r.Common.Ref).ToHashSet();
+        var buildable = Research.Buildable(game, Side, Families.TrainingFacility).Where(r => Family.IsSpecialForce(r.Common.Ref)).Select(r => r.Common.Ref).ToHashSet();
         return [.. game.Definitions.SpecialForces.Where(f => buildable.Contains(f.Common.Ref)).OrderBy(f => f.Common.Ref)
             .Select(f => new AgentType(f, KindsFor(game, Side, f))).Where(t => t.Kinds.Count > 0)];
     }
@@ -112,7 +112,7 @@ public sealed partial class OpenSWRController
         if (shortfall.Count == 0) return false;
         var (type, missing) = shortfall.FirstOrDefault(x => !ordered.Contains(x.Type.Record.Common.Ref)) is { Type: not null } x ? x : shortfall[0];
         if (game.Definitions.Resolve(type.Record.Common.Ref) is not { } product) return false;
-        int built = Build(game, 0x212, m, product, missing, ref free, used);
+        int built = Build(game, CommandType.ProduceTroop, m, product, missing, ref free, used);
         if (built <= 0) return false;
         ordered.Add(type.Record.Common.Ref);
         NoteTrained(game); // measurement only
@@ -127,7 +127,7 @@ public sealed partial class OpenSWRController
     /// <summary>Rule 6 for one espionage at a system the side does not own: within the budget, and not seen within <see cref="CoverDays"/> unless a target is planned there.</summary>
     string? EspionageBlock(GameState game, StarSystem target, List<Mission> running, int sent, int budget)
     {
-        int spying = running.Count(m => m.Kind == 0x52 && (m.TargetLocation ?? m.Objective) is StarSystem s && Knowledge.See(game, s, Side).Owner != Side) + sent;
+        int spying = running.Count(m => m.Kind == MissionKind.Espionage && (m.TargetLocation ?? m.Objective) is StarSystem s && Knowledge.See(game, s, Side).Owner != Side) + sent;
         if (spying >= budget) return "budget";
         int window = EspionageIdleOn(game) ? CoverDays / 2 : CoverDays; // EspionageIdle
         return ViewAge(game, target) > window || _plannedAt.Contains(target.Ref) || Targets().Contains(target) ? null : "coverdays";
@@ -136,7 +136,7 @@ public sealed partial class OpenSWRController
     /// <summary>The decoys missing at the last decision (rule 4); saved.</summary>
     int _decoyShort;
 
-    /// <summary>Targets of foiled own missions (rule 4, from the side's own 0x1F1 messages; Agents only; saved).</summary>
+    /// <summary>Targets of foiled own missions (rule 4, from the side's own CompletionStatus messages; Agents only; saved).</summary>
     readonly SortedSet<uint> _foiledTargets = [];
 
     /// <summary>Test hook / measurement: the decoys missing at the last decision.</summary>
@@ -150,19 +150,19 @@ public sealed partial class OpenSWRController
     internal IReadOnlyCollection<uint> PlannedAt => _plannedAt;
 
     /// <summary>A running pivot (rule 3): kind, target, the target's system at the start, start day, team (with decoys).</summary>
-    internal sealed record Pivot(uint Kind, uint Target, uint System, int Start, int Team);
+    internal sealed record Pivot(MissionKind Kind, uint Target, uint System, int Start, int Team);
     readonly List<Pivot> _pivots = [];
     internal IReadOnlyList<Pivot> Pivots => _pivots;
 
     /// <summary>Pivot measurement (aimatch): started / ended with the reason; null = off.</summary>
-    public sealed record PivotEvent(int Day, uint Kind, uint Target, bool Started, string Reason);
+    public sealed record PivotEvent(int Day, MissionKind Kind, uint Target, bool Started, string Reason);
     public List<PivotEvent>? PivotEvents { get; set; }
 
     /// <summary>Retry measurement (aimatch): a covert mission at a target with an earlier foil, its decoys, and its outcome (null while running); null = off.</summary>
-    public sealed class RetryRecord(int day, uint kind, uint target, int decoys)
+    public sealed class RetryRecord(int day, MissionKind kind, uint target, int decoys)
     {
         public int Day { get; } = day;
-        public uint Kind { get; } = kind;
+        public MissionKind Kind { get; } = kind;
         public uint Target { get; } = target;
         public int Decoys { get; } = decoys;
         public bool Succeeded { get; set; }
@@ -170,8 +170,8 @@ public sealed partial class OpenSWRController
     }
     public List<RetryRecord>? RetryRecords { get; set; }
 
-    /// <summary>A major character (family 0x30-0x37).</summary>
-    static bool Major(GameObject o) => o is Character && Family.Of(o.Type) is >= 0x30 and < 0x38;
+    /// <summary>A major character (families 48 to 55).</summary>
+    static bool Major(GameObject o) => o is Character && Family.Of(o.Type) is >= Families.MajorCharacter and < Families.MinorCharacter;
 
     /// <summary>Rule 5's success band: 0 for at least 60 %, 1 for 40-60 %, 2 below.</summary>
     internal static int Band(double success) => success >= 0.6 ? 0 : success >= 0.4 ? 1 : 2;
@@ -197,7 +197,7 @@ public sealed partial class OpenSWRController
     internal void StartPivots(GameState game, IReadOnlyList<Covert> candidates)
     {
         double top = TopWorth(candidates);
-        foreach (var x in candidates.Where(x => x.Kind is 0x62 or 0x63 && Major(x.Target) && x.Success >= MinChance / 100.0 && x.Worth >= top))
+        foreach (var x in candidates.Where(x => x.Kind is MissionKind.Abduction or MissionKind.Assassination && Major(x.Target) && x.Success >= MinChance / 100.0 && x.Worth >= top))
         {
             if (_pivots.Any(p => p.Target == x.Target.Ref) || Knowledge.Location(game, x.Target, Side) is not StarSystem at) continue;
             _pivots.Add(new(x.Kind, x.Target.Ref, at.Ref, game.Day, x.Team.Count + (x.Decoys?.Count ?? 0)));
@@ -214,7 +214,7 @@ public sealed partial class OpenSWRController
             var seen = target is null ? default : Knowledge.See(game, target, Side);
             string? reason = game.Day - p.Start >= PivotDays ? "days"
                 : target is null || seen.Destroyed || seen.Captured || (Knowledge.Location(game, target, Side) as StarSystem)?.Ref != p.System ? "target left"
-                : game.Missions.Any(m => m.Owner == Side && m.Kind == p.Kind && m.Objective == target && m.CompletionStatus != 0) ? "mission ended"
+                : game.Missions.Any(m => m.Owner == Side && m.Kind == p.Kind && m.Objective == target && m.CompletionStatus != MissionCompletion.None) ? "mission ended"
                 : null;
             if (reason is null) continue;
             _pivots.Remove(p);
@@ -227,7 +227,7 @@ public sealed partial class OpenSWRController
     /// detector is known; a retry at a foiled target needs max(1, known detectors) decoys (within the team cap). Null: not enough
     /// free special forces (the mission waits; <paramref name="shortBy"/> the decoys missing).
     /// </summary>
-    internal (List<Agent> Team, List<Agent> Decoys)? AgentDecoys(GameState game, uint kind, GameObject target, CovertKnown known, List<Agent> team,
+    internal (List<Agent> Team, List<Agent> Decoys)? AgentDecoys(GameState game, MissionKind kind, GameObject target, CovertKnown known, List<Agent> team,
         List<Agent> decoys, IEnumerable<Agent> pool, Func<List<Agent>, List<Agent>, bool> valid, out int shortBy,
         Known? k = null, int value = 0, double? successCap = null)
     {
@@ -252,7 +252,7 @@ public sealed partial class OpenSWRController
     }
 
     /// <summary>p_success of a team with its decoys (the CovertExperience cap included): (1 - foil) * (1 - product (1 - p_i)).</summary>
-    internal double TeamSuccess(GameState game, Known k, uint kind, GameObject target, IReadOnlyList<Agent> team, IReadOnlyList<Agent> decoys, CovertKnown known, double? cap)
+    internal double TeamSuccess(GameState game, Known k, MissionKind kind, GameObject target, IReadOnlyList<Agent> team, IReadOnlyList<Agent> decoys, CovertKnown known, double? cap)
     {
         double none = team.Aggregate(1.0, (x, a) => x * (1 - Math.Clamp(Attempt(game, k, kind, a, target), 0, 100) / 100.0));
         return Math.Min((1 - FoilChance(game, team, known, decoys)) * (1 - none), cap ?? 1);
@@ -264,8 +264,8 @@ public sealed partial class OpenSWRController
         if (RetryRecords is null || m.Objective is not { } o) return;
         var r = RetryRecords.FirstOrDefault(x => x.Outcome is null && x.Kind == m.Kind && x.Target == o.Ref);
         if (r is null) return;
-        if (m.TaskStatus == 3) r.Succeeded = true;
-        if (m.CompletionStatus != 0) r.Outcome = r.Succeeded ? "success" : m.CompletionStatus is 3 or 4 ? "foiled" : "failed";
+        if (m.TaskStatus == MissionTaskStatus.Succeeded) r.Succeeded = true;
+        if (m.CompletionStatus != MissionCompletion.None) r.Outcome = r.Succeeded ? "success" : m.CompletionStatus is MissionCompletion.FoiledEnRoute or MissionCompletion.Foiled ? "foiled" : "failed";
     }
 
     void SaveAgents(JsonObject j)
@@ -273,7 +273,7 @@ public sealed partial class OpenSWRController
         if (_decoyShort > 0) j["decoyShort"] = _decoyShort;
         if (_foiledTargets.Count > 0) j["foiledTargets"] = new JsonArray([.. _foiledTargets.Select(r => (JsonNode)r)]);
         if (_plannedAt.Count > 0) j["plannedAt"] = new JsonArray([.. _plannedAt.Select(r => (JsonNode)r)]);
-        if (_pivots.Count > 0) j["pivots"] = new JsonArray([.. _pivots.Select(p => (JsonNode)new JsonArray(p.Kind, p.Target, p.System, p.Start, p.Team))]);
+        if (_pivots.Count > 0) j["pivots"] = new JsonArray([.. _pivots.Select(p => (JsonNode)new JsonArray((uint)p.Kind, p.Target, p.System, p.Start, p.Team))]);
     }
 
     void LoadAgents(JsonObject j)
@@ -281,6 +281,6 @@ public sealed partial class OpenSWRController
         _decoyShort = (int?)j["decoyShort"] ?? 0;
         if (j["foiledTargets"] is JsonArray f) foreach (var r in f) _foiledTargets.Add((uint)r!);
         if (j["plannedAt"] is JsonArray p) foreach (var r in p) _plannedAt.Add((uint)r!);
-        if (j["pivots"] is JsonArray pv) foreach (var e in pv) _pivots.Add(new((uint)e![0]!, (uint)e[1]!, (uint)e[2]!, (int)e[3]!, (int)e[4]!));
+        if (j["pivots"] is JsonArray pv) foreach (var e in pv) _pivots.Add(new((MissionKind)(uint)e![0]!, (uint)e[1]!, (uint)e[2]!, (int)e[3]!, (int)e[4]!));
     }
 }

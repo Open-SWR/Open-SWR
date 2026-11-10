@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using OpenSWR.Data;
 using OpenSWR.Data.Advisor;
 using OpenSWR.Data.Dat;
@@ -54,7 +53,7 @@ public class AdvisorTests
         var frames = dll.ClipFrames(new AdvisorClip(0, 0, 9, 7, 2001));
         Assert.Equal((67, 116, 7), (frames.Width, frames.Height, frames.Frames.Count));
         // same reference as RleImageTests.DeltaChainMatchesReference (base 2001 + deltas 2002-2007)
-        Assert.Equal("a8645939a932f690386b0e32ffd78dd0", Convert.ToHexStringLower(MD5.HashData(frames.Frames[6])));
+        Assert.Equal("223831342680543915035766949218346307024", Digest.Md5(frames.Frames[6]));
         Assert.Equal(SpriteDll.TransparentIndex, frames.Frames[0][0]);
     }
 }

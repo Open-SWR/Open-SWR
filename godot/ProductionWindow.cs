@@ -8,8 +8,8 @@ using OpenSWR.Data.Dat;
 using OpenSWR.Sim;
 
 /// <summary>
-/// Production window "Build Selection" (window id 0x62, 210 x 261, background 10800, centred in the map rect,
-/// draggable by the title strip): chooses product and count for a pending 0x210 / 0x211 / 0x212 whose managers are fixed (the
+/// Production window "Build Selection" (210 x 261, background 10800, centred in the map rect,
+/// draggable by the title strip): chooses product and count for a pending production command whose managers are fixed (the
 /// destination is the managers' TargetKey). Product drop-down over `Research.Buildable` of the first manager's owner and
 /// family; per-class last product (<see cref="MainScreen.LastProduct"/>, not saved); count 1...255 (field, +/- with 500 ms repeat,
 /// numpad + / -); estimate (<see cref="Economy.ProductionEstimate"/>): "n/a" in the four boxes and Done greyed when the
@@ -19,7 +19,7 @@ using OpenSWR.Sim;
 /// </summary>
 public partial class ProductionWindow : GameWindow
 {
-    public const int WindowId = 0x62;
+    public const WindowKind WindowId = WindowKind.Production;
     readonly Command _command;
     readonly List<SdRecord> _products;
     DropDownBox _box = null!;
@@ -39,16 +39,16 @@ public partial class ProductionWindow : GameWindow
     public static ProductionWindow? Create(MainScreen screen, Command command)
     {
         if (command.Targets.Select(t => t.Target).OfType<ManufacturingManager>().FirstOrDefault() is not { } m) return null;
-        uint family = m.Kind switch { ManufacturingKind.Ship => 0x28, ManufacturingKind.Construction => 0x2A, _ => 0x29 };
+        uint family = m.Kind switch { ManufacturingKind.Ship => Families.Shipyard, ManufacturingKind.Construction => Families.ConstructionYard, _ => Families.TrainingFacility };
         var products = Research.Buildable(screen.Game!, m.Owner, family);
         return products.Count == 0 ? null : new ProductionWindow(screen, command, products);
     }
 
-    protected override string Title => Assets.Stra(14352);
+    protected override string Title => StrategyText.BuildSelection;
     protected override bool Draggable => true;
 
     /// <summary>Last-product slot of a product:0 facilities, 1 ships and fighters, 2 troops and special forces.</summary>
-    static int Slot(uint product) => Family.Of(product) switch { >= 0x20 and < 0x30 => 0, >= 0x14 and < 0x20 => 1, _ => 2 };
+    static int Slot(uint product) => Family.Of(product) switch { >= Families.Headquarters and < Families.MajorCharacter => 0, >= Families.CapitalShip and < Families.Headquarters => 1, _ => 2 };
 
     static int PictureId(SdRecord r) => ModArt.PictureNumber(r.Common.StringId); // Picture id is the string id (Inferred), as in ScreenViews.PictureId
 
@@ -63,19 +63,19 @@ public partial class ProductionWindow : GameWindow
         AddChild(_box);
         if (Screen.LastProduct[Slot(_products[0].Common.Ref)] is { } last && _products.FindIndex(p => PictureId(p) == PictureId(last) && (PictureId(p) != 0 || p.Common.Ref == last.Common.Ref)) is var i and >= 0)
             _box.Select(i);
-        Add(10606, 10607, 79, 90, 6406, () => _box.Open());
-        Add(10592, 10593, 5, 224, 6411, () => Screen.OpenEncyclopedia(null, _products[_box.Selected].Common.Ref));
-        _done = Add(10594, 10595, 73, 224, 6409, Done);
-        _done.DisabledImage = Assets.Strategy(11620);
-        Add(10596, 10597, 141, 224, 6410, () => Screen.Windows.Close(this));
-        AddChild(new RepeatButton { Up = Assets.Strategy(10610), Down = Assets.Strategy(10611), Command = () => Step(1), TooltipText = Assets.Tip(Assets.Stra(6407)), Position = new Vector2(189, 196), Size = Assets.BitmapSize(10610, "STRATEGY.DLL") });
-        AddChild(new RepeatButton { Up = Assets.Strategy(10612), Down = Assets.Strategy(10613), Command = () => Step(-1), TooltipText = Assets.Tip(Assets.Stra(6408)), Position = new Vector2(189, 205), Size = Assets.BitmapSize(10612, "STRATEGY.DLL") });
-        // numeric edit field 0x6B: font 4, white, at most 3 digits (a self-drawn field: a LineEdit grows past 45 x 17 over the +/- buttons)
+        Add(StrategyBitmaps.DropDownUp, StrategyBitmaps.DropDownDown, 79, 90, StrategyTexts.ItemsToBuild, () => _box.Open());
+        Add(StrategyBitmaps.EncyclopediaUp, StrategyBitmaps.EncyclopediaDown, 5, 224, StrategyTexts.ProductionEncyclopedia, () => Screen.OpenEncyclopedia(null, _products[_box.Selected].Common.Ref));
+        _done = Add(StrategyBitmaps.DoneUp, StrategyBitmaps.DoneDown, 73, 224, StrategyTexts.ProductionDone, Done);
+        _done.DisabledImage = StrategyArt.DoneDisabled;
+        Add(StrategyBitmaps.CancelUp, StrategyBitmaps.CancelDown, 141, 224, StrategyTexts.ProductionCancel, () => Screen.Windows.Close(this));
+        AddChild(new RepeatButton { Up = StrategyArt.IncreaseUp, Down = StrategyArt.IncreaseDown, Command = () => Step(1), TooltipText = Assets.Tip(StrategyText.Increase), Position = new Vector2(189, 196), Size = Assets.BitmapSize(StrategyBitmaps.IncreaseUp, "STRATEGY.DLL") });
+        AddChild(new RepeatButton { Up = StrategyArt.DecreaseUp, Down = StrategyArt.DecreaseDown, Command = () => Step(-1), TooltipText = Assets.Tip(StrategyText.Decrease), Position = new Vector2(189, 205), Size = Assets.BitmapSize(StrategyBitmaps.DecreaseUp, "STRATEGY.DLL") });
+        // numeric edit field: font 4, white, at most 3 digits (a self-drawn field: a LineEdit grows past 45 x 17 over the +/- buttons)
         _field = new NameField(new Vector2(141, 196), new Vector2(45, 17), 4, 3)
         {
-            Shadow = false, Accept = char.IsAsciiDigit, TooltipText = Assets.Tip(Assets.Stra(6412)),
-            TextChanged = _ => { _count = Parse(); Estimate(); },   // 0x408
-            Submitted = Done,                                       // 0x407
+            Shadow = false, Accept = char.IsAsciiDigit, TooltipText = Assets.Tip(StrategyText.EditNumber),
+            TextChanged = _ => { _count = Parse(); Estimate(); },   // text changed
+            Submitted = Done,                                       // submitted
             OtherKey = k =>
             {
                 if (k.Keycode is Key.KpAdd or Key.KpSubtract) Step(k.Keycode == Key.KpAdd ? 1 : -1);
@@ -162,26 +162,26 @@ public partial class ProductionWindow : GameWindow
 
     public override void _Draw()
     {
-        var back = Assets.Strategy(10800);
+        var back = StrategyArt.ProductionBackground;
         DrawTextureRect(back, new Rect2(Vector2.Zero, Size), false);
         DrawLog.Bitmap(this, back, new Rect2(Vector2.Zero, Size));
-        var strip = (ushort)(A ? 10801 : 10802);
+        var strip = (ushort)(A ? StrategyBitmaps.ProductionTitleStripAlliance : StrategyBitmaps.ProductionTitleStripEmpire);
         var (stripImage, stripAt) = (Assets.Strategy(strip), new Rect2(new Vector2(2, 2), Assets.BitmapSize(strip, "STRATEGY.DLL")));
         DrawTextureRect(stripImage, stripAt, false);
         DrawLog.Bitmap(this, stripImage, stripAt);
         Assets.DrawText(this, new Rect2(2, 2, 202, 14), Title, 5, Colors.Black, new TextFormat { Center = true, SingleLine = true });
         var e = _estimate;
-        string na = Assets.Stra(14358), days = Assets.Stra(14357);
+        string na = StrategyText.NotAvailable, days = StrategyText.Days;
         // value boxes = text items (one line, centred or right-aligned): unclipped; title and labels = direct window texts: clipped at
         // their rects, never ellipsized
         Assets.DrawText(this, new Rect2(36, 110, 64, 23), e.Valid ? Clamp(e.Refined) : na, 4, Colors.White, new TextFormat { Center = true, VCenter = true, SingleLine = true, NoClip = true });
         Assets.DrawText(this, new Rect2(138, 110, 64, 23), e.Valid ? Clamp(e.Maintenance) : na, 4, Colors.White, new TextFormat { Center = true, VCenter = true, SingleLine = true, NoClip = true });
         var label = Color.Color8(255, 251, 240);
-        Assets.DrawText(this, new Rect2(10, 145, 125, 15), Assets.Stra(14354), 10, label, TextFormat.Row);
+        Assets.DrawText(this, new Rect2(10, 145, 125, 15), StrategyText.BestTimeToCompletion, 10, label, TextFormat.Row);
         Assets.DrawText(this, new Rect2(140, 145, 60, 15), e.Valid ? Clamp(e.BuildDays) + days : na, 10, Colors.White, new TextFormat { Right = true, VCenter = true, SingleLine = true, NoClip = true });
-        Assets.DrawText(this, new Rect2(10, 165, 125, 15), Assets.Stra(14355), 10, label, TextFormat.Row);
+        Assets.DrawText(this, new Rect2(10, 165, 125, 15), StrategyText.BestTimeToDeployment, 10, label, TextFormat.Row);
         Assets.DrawText(this, new Rect2(140, 165, 60, 15), e.Valid ? Clamp(e.DeliveryDays) + days : na, 10, Colors.White, new TextFormat { Right = true, VCenter = true, SingleLine = true, NoClip = true });
-        Assets.DrawText(this, new Rect2(20, 196, 118, 15), Assets.Stra(14353), 4, label, new TextFormat { Right = true, SingleLine = true });
+        Assets.DrawText(this, new Rect2(20, 196, 118, 15), StrategyText.NumberToBuild, 4, label, new TextFormat { Right = true, SingleLine = true });
     }
 }
 

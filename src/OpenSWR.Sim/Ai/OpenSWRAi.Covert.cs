@@ -14,7 +14,7 @@ public sealed partial class OpenSWRController
     /// <summary>At most this many covert missions run at a time (at most one of them Jedi training).</summary>
     public const int MaxCovert = 3;
 
-    static readonly uint[] CovertKinds = [0x56, 0x58, 0x61, 0x62, 0x63, 0x69];
+    static readonly MissionKind[] CovertKinds = [MissionKind.InciteUprising, MissionKind.JediTraining, MissionKind.Rescue, MissionKind.Abduction, MissionKind.Assassination, MissionKind.Sabotage];
 
     /// <summary>Days a covert kind waits before it goes for the same objective again after a foil.</summary>
     public const int CovertRetryDays = 30;
@@ -24,7 +24,7 @@ public sealed partial class OpenSWRController
     /// views often do not show the guards that foiled it (a frozen view of the system), so the same estimate would send the
     /// next team into them at once.
     /// </summary>
-    readonly SortedDictionary<(uint Kind, uint Target), int> _foiled = [];
+    readonly SortedDictionary<(MissionKind Kind, uint Target), int> _foiled = [];
 
     /// <summary>
     /// One detecting unit the side's views show: its detection value (foil a4) and the defender for its kind
@@ -50,7 +50,7 @@ public sealed partial class OpenSWRController
     /// </summary>
     public static int CharacterValue(Character c, bool live)
     {
-        bool major = Family.Of(c.Type) is >= 0x30 and < 0x38;
+        bool major = Family.Of(c.Type) is >= Families.MajorCharacter and < Families.MinorCharacter;
         var d = c.Definition.Skills;
         int best = live ? c.Skills.Take(SkillIndex.Loyalty).Max()
             : (int)new[] { d.Diplomacy, d.Espionage, d.ShipDesign, d.TroopTraining, d.FacilityDesign, d.Combat, d.Leadership }.Max(s => s.Base + s.Variance / 2);
@@ -81,7 +81,7 @@ public sealed partial class OpenSWRController
     /// <summary>
     /// Chance (0-1) that a foiled member is lost: the evasion fails, T(RLEVADTB, EnhCombat - v) averaged over the
     /// pool units (the unit pick is uniform; v = the unit's defender's combat), or, for a minor character, the injury check then
-    /// the death test G 0xA11 kill it after an evasion. Inferred: the average over both pools.
+    /// the death test GeneralParam.MinorDeathChance kill it after an evasion. Inferred: the average over both pools.
     /// </summary>
     public static double LostChance(GameState game, Agent a, CovertKnown known)
     {
@@ -89,10 +89,10 @@ public sealed partial class OpenSWRController
         int combat = Missions.Enhanced(game, a, SkillIndex.Combat);
         double evade = units.Count == 0 ? 1 : units.Average(d => Math.Clamp(Missions.Table(game, "RLEVADTB", combat - d.DefenderCombat) ?? 0, 0, 100) / 100.0);
         double death = 0;
-        if (Family.Of(a.Type) is >= 0x38 and < 0x3C)
+        if (Family.Of(a.Type) is >= Families.MinorCharacter and < Families.SpecialForce)
         {
-            var g = game.Params;
-            death = Math.Max(g.General(0xA05), 100 - combat) / 100.0 * g.General(0xA11) / 100.0;
+            var g = game.Rules;
+            death = Math.Max(g.MissionInjuryMinChance, 100 - combat) / 100.0 * g.MinorDeathChance / 100.0;
         }
         return 1 - evade + evade * Math.Clamp(death, 0, 1);
     }
@@ -103,9 +103,9 @@ public sealed partial class OpenSWRController
     /// team's character value. A plain failed attempt costs nothing. Jedi training: no encounter (foil 0, loss 0). Pure arithmetic.
     /// <paramref name="attempt"/> = the success rule's p (0-100) for the team at the target, <paramref name="value"/> the target's.
     /// </summary>
-    public static double Worth(GameState game, uint kind, IReadOnlyList<Agent> team, int attempt, int value, CovertKnown known,
+    public static double Worth(GameState game, MissionKind kind, IReadOnlyList<Agent> team, int attempt, int value, CovertKnown known,
         IReadOnlyList<Agent>? decoys = null, double? cap = null) =>
-        kind == 0x58 ? Math.Clamp(attempt, 0, 100) / 100.0 * value : TeamWorth(game, team, [.. team.Select(_ => attempt)], value, known, decoys ?? [], cap);
+        kind == MissionKind.JediTraining ? Math.Clamp(attempt, 0, 100) / 100.0 * value : TeamWorth(game, team, [.. team.Select(_ => attempt)], value, known, decoys ?? [], cap);
 
     /// <summary>
     /// Worth of a team: every agent makes its own attempt in phase 10, so the
@@ -139,7 +139,7 @@ public sealed partial class OpenSWRController
     /// <summary>
     /// Decoy check p (0-1) of the decoys against one known unit: one decoy is picked at random
     /// per unit, so the mean over the decoys of T(TDECOYTB, or FDECOYTB through a fleet, EnhancedEspionage(decoy) - the unit's
-    /// value - pct(the defender's EnhancedEspionage, G 0xE04)) (<see cref="Missions.DecoyChance"/>). No decoy: 0.
+    /// value - pct(the defender's EnhancedEspionage, GeneralParam.DecoyKeyPercent)) (<see cref="Missions.DecoyChance"/>). No decoy: 0.
     /// </summary>
     public static double DecoyChance(GameState game, IReadOnlyList<Agent> decoys, Detector d) =>
         decoys.Count == 0 ? 0 : decoys.Average(x => Math.Clamp(Missions.DecoyChance(game, Missions.Enhanced(game, x, SkillIndex.Espionage), d.DefenderEspionage, d.Value, d.Fleet), 0, 100) / 100.0);
@@ -184,24 +184,24 @@ public sealed partial class OpenSWRController
     // ---- covert gate from experience, teams with special forces ----
 
     /// <summary>The covert kinds whose own observed success rate caps the chance (CovertExperience): incite, rescue, abduction.</summary>
-    static readonly uint[] ExperienceKinds = [0x56, 0x61, 0x62];
+    static readonly MissionKind[] ExperienceKinds = [MissionKind.InciteUprising, MissionKind.Rescue, MissionKind.Abduction];
 
     /// <summary>Until this many of a kind have ended, the observed rate is the prior <see cref="ExperiencePrior"/>.</summary>
     public const int ExperienceSeen = 5;
     public const double ExperiencePrior = 0.1;
 
     /// <summary>Own ended missions per experience kind, as (succeeded, ended): missions seen succeed (TaskStatus 3) until they end; missions counted.</summary>
-    readonly SortedDictionary<uint, (int Succeeded, int Ended)> _experience = [];
+    readonly SortedDictionary<MissionKind, (int Succeeded, int Ended)> _experience = [];
     readonly SortedSet<uint> _succeeding = [], _counted = [];
 
     /// <summary>The observed success rate of a kind (the prior until <see cref="ExperienceSeen"/> have ended).</summary>
-    internal double ObservedRate(uint kind) =>
+    internal double ObservedRate(MissionKind kind) =>
         _experience.TryGetValue(kind, out var e) && e.Ended >= ExperienceSeen ? (double)e.Succeeded / e.Ended : ExperiencePrior;
 
-    internal (int Succeeded, int Ended) Experience(uint kind) => _experience.GetValueOrDefault(kind);
+    internal (int Succeeded, int Ended) Experience(MissionKind kind) => _experience.GetValueOrDefault(kind);
 
     /// <summary>Test hook: one ended mission of the kind.</summary>
-    internal void RecordExperience(uint kind, bool succeeded)
+    internal void RecordExperience(MissionKind kind, bool succeeded)
     {
         var (s, n) = _experience.GetValueOrDefault(kind);
         _experience[kind] = (s + (succeeded ? 1 : 0), n + 1);
@@ -211,22 +211,22 @@ public sealed partial class OpenSWRController
     internal void ObserveMission(Mission m)
     {
         if (!ExperienceKinds.Contains(m.Kind) || m.Owner != Side) return;
-        if (m.TaskStatus == 3) _succeeding.Add(m.Ref);
-        if (m.CompletionStatus == 0 || !_counted.Add(m.Ref)) return;
+        if (m.TaskStatus == MissionTaskStatus.Succeeded) _succeeding.Add(m.Ref);
+        if (m.CompletionStatus == MissionCompletion.None || !_counted.Add(m.Ref)) return;
         var (s, n) = _experience.GetValueOrDefault(m.Kind);
         _experience[m.Kind] = (s + (_succeeding.Remove(m.Ref) ? 1 : 0), n + 1);
     }
 
     void SaveExperience(JsonObject j)
     {
-        if (_experience.Count > 0) j["covertSeen"] = new JsonArray([.. _experience.Select(e => (JsonNode)new JsonArray(e.Key, e.Value.Succeeded, e.Value.Ended))]);
+        if (_experience.Count > 0) j["covertSeen"] = new JsonArray([.. _experience.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value.Succeeded, e.Value.Ended))]);
         if (_succeeding.Count > 0) j["covertSucceeding"] = new JsonArray([.. _succeeding.Select(r => (JsonNode)r)]);
         if (_counted.Count > 0) j["covertCounted"] = new JsonArray([.. _counted.Select(r => (JsonNode)r)]);
     }
 
     void LoadExperience(JsonObject j)
     {
-        if (j["covertSeen"] is JsonArray seen) foreach (var e in seen) _experience[(uint)e![0]!] = ((int)e[1]!, (int)e[2]!);
+        if (j["covertSeen"] is JsonArray seen) foreach (var e in seen) _experience[(MissionKind)(uint)e![0]!] = ((int)e[1]!, (int)e[2]!);
         if (j["covertSucceeding"] is JsonArray s) foreach (var r in s) _succeeding.Add((uint)r!);
         if (j["covertCounted"] is JsonArray c) foreach (var r in c) _counted.Add((uint)r!);
     }
@@ -236,7 +236,7 @@ public sealed partial class OpenSWRController
     /// <paramref name="pool"/> - a further agent, or a special force as a decoy (only with a known detecting unit) - whose addition
     /// raises <see cref="TeamWorth"/> most; stop when none raises it. <paramref name="valid"/> checks a team (eligibility).
     /// </summary>
-    internal (List<Agent> Team, List<Agent> Decoys, double Worth) GrowTeam(GameState game, Known k, uint kind, GameObject target, int value, CovertKnown known,
+    internal (List<Agent> Team, List<Agent> Decoys, double Worth) GrowTeam(GameState game, Known k, MissionKind kind, GameObject target, int value, CovertKnown known,
         double? cap, Agent first, IReadOnlyList<Agent> pool, Func<List<Agent>, List<Agent>, bool> valid)
     {
         var team = new List<Agent> { first };
@@ -282,8 +282,8 @@ public sealed partial class OpenSWRController
     /// The team cap: <see cref="MaxTeamSmall"/> for espionage, reconnaissance,
     /// sabotage, incite and the abduction, rescue or assassination of a minor character; none (worth only) for a major character's.
     /// </summary>
-    internal static int TeamCap(uint kind, GameObject target) =>
-        kind is 0x61 or 0x62 or 0x63 && Family.Of(target.Type) is >= 0x30 and < 0x38 ? int.MaxValue : MaxTeamSmall;
+    internal static int TeamCap(MissionKind kind, GameObject target) =>
+        kind is MissionKind.Rescue or MissionKind.Abduction or MissionKind.Assassination && Family.Of(target.Type) is >= Families.MajorCharacter and < Families.MinorCharacter ? int.MaxValue : MaxTeamSmall;
 
     /// <summary>Members in all of a team that is not after a major character.</summary>
     public const int MaxTeamSmall = 3;
@@ -293,7 +293,7 @@ public sealed partial class OpenSWRController
     /// stricter gate, has worth above 0 and is valid; and the same among <paramref name="forces"/>: the
     /// special force is chosen when its worth is at least the character's. Null: none.
     /// </summary>
-    internal Covert? FirstAgent(GameState game, Known k, uint kind, GameObject target, int value, CovertKnown known, double? cap,
+    internal Covert? FirstAgent(GameState game, Known k, MissionKind kind, GameObject target, int value, CovertKnown known, double? cap,
         IEnumerable<Agent> characters, IEnumerable<Agent> forces, Func<List<Agent>, bool> valid)
     {
         Covert? Try(Agent c)
@@ -318,7 +318,7 @@ public sealed partial class OpenSWRController
     }
 
     /// <summary>The kinds a special force may run as the agent (Teams; espionage goes through <c>Send</c>).</summary>
-    static readonly uint[] TeamKinds = [0x56, 0x61, 0x62, 0x63, 0x69];
+    static readonly MissionKind[] TeamKinds = [MissionKind.InciteUprising, MissionKind.Rescue, MissionKind.Abduction, MissionKind.Assassination, MissionKind.Sabotage];
 
     /// <summary>
     /// Covert special forces wanted (Teams): the special forces of the greedy teams of the last covert decision's candidates, plus
@@ -337,9 +337,9 @@ public sealed partial class OpenSWRController
     /// <summary>The special force to train for covert work: buildable, offered for the most team kinds (Intel: and espionage), then the highest (espionage + combat) base per maintenance.</summary>
     Data.Dat.SdRecord? CovertForce(GameState game)
     {
-        var buildable = Research.Buildable(game, Side, 0x29).Where(r => Family.IsSpecialForce(r.Common.Ref)).Select(r => r.Common.Ref).ToHashSet();
+        var buildable = Research.Buildable(game, Side, Families.TrainingFacility).Where(r => Family.IsSpecialForce(r.Common.Ref)).Select(r => r.Common.Ref).ToHashSet();
         // the type the eligibility lists offer for the most team kinds (a type's MissionMask within the mission's SpecialForceMask)
-        uint[] kinds = [.. On(V7.Teams) ? TeamKinds : [], .. On(V7.Intel) ? new uint[] { 0x52 } : []];
+        MissionKind[] kinds = [.. On(V7.Teams) ? TeamKinds : [], .. On(V7.Intel) ? new MissionKind[] { MissionKind.Espionage } : []];
         int Kinds(SpecialForceRecord f) => kinds.Count(kind => TypeOf(game, kind) is { } m && f.MissionMask != 0 && m.AllowsSpecialForce(f.MissionMask));
         var best = game.Definitions.SpecialForces.Where(f => buildable.Contains(f.Common.Ref) && Kinds(f) > 0)
             .OrderByDescending(Kinds).ThenByDescending(f => (double)(f.Skills.Espionage.Base + f.Skills.Combat.Base) / Math.Max(1, f.MaintenanceCost)).ThenBy(f => f.Common.Ref).FirstOrDefault();
@@ -349,17 +349,17 @@ public sealed partial class OpenSWRController
     // ---- stricter covert gate ----
 
     /// <summary>The covert kinds that need p_success of at least <see cref="MinCovertSuccess"/> (a major's rescue <see cref="MinMajorRescueSuccess"/>).</summary>
-    static readonly uint[] GatedKinds = [0x56, 0x61, 0x62, 0x63, 0x69];
+    static readonly MissionKind[] GatedKinds = [MissionKind.InciteUprising, MissionKind.Rescue, MissionKind.Abduction, MissionKind.Assassination, MissionKind.Sabotage];
     public const double MinCovertSuccess = 0.5, MinMajorRescueSuccess = 0.3;
     /// <summary>After <see cref="PauseFoils"/> foils of one kind within <see cref="PauseDays"/>, side-wide, that kind pauses <see cref="PauseDays"/>.</summary>
     public const int PauseFoils = 3, PauseDays = 90;
 
     /// <summary>Foil days per covert kind (within <see cref="PauseDays"/>), and the paused kinds, each with the first day it runs again.</summary>
-    readonly SortedDictionary<uint, List<int>> _kindFoils = [];
-    readonly SortedDictionary<uint, int> _paused = [];
+    readonly SortedDictionary<MissionKind, List<int>> _kindFoils = [];
+    readonly SortedDictionary<MissionKind, int> _paused = [];
 
     /// <summary>A foil of an own covert mission of this kind: counted; the third within <see cref="PauseDays"/> pauses the kind.</summary>
-    internal void KindFoiled(uint kind, int day)
+    internal void KindFoiled(MissionKind kind, int day)
     {
         if (!_kindFoils.TryGetValue(kind, out var days)) _kindFoils[kind] = days = [];
         days.RemoveAll(d => day - d >= PauseDays);
@@ -370,25 +370,25 @@ public sealed partial class OpenSWRController
     }
 
     /// <summary>The kind is paused on that day.</summary>
-    internal bool Paused(uint kind, int day) => _paused.TryGetValue(kind, out int until) && day < until;
+    internal bool Paused(MissionKind kind, int day) => _paused.TryGetValue(kind, out int until) && day < until;
 
     /// <summary>The minimum p_success of a covert kind for a target (0 = no gate).</summary>
-    internal static double MinSuccess(uint kind, GameObject target) =>
-        kind == 0x61 && Family.Of(target.Type) is >= 0x30 and < 0x38 ? MinMajorRescueSuccess : GatedKinds.Contains(kind) ? MinCovertSuccess : 0;
+    internal static double MinSuccess(MissionKind kind, GameObject target) =>
+        kind == MissionKind.Rescue && Family.Of(target.Type) is >= Families.MajorCharacter and < Families.MinorCharacter ? MinMajorRescueSuccess : GatedKinds.Contains(kind) ? MinCovertSuccess : 0;
 
     void SaveGate(JsonObject j)
     {
         if (_kindFoils.Any(e => e.Value.Count > 0))
             j["kindFoils"] = new JsonArray([.. _kindFoils.Where(e => e.Value.Count > 0)
-                .Select(e => (JsonNode)new JsonArray([e.Key, .. e.Value.Select(d => (JsonNode)d)]))]);
-        if (_paused.Count > 0) j["paused"] = new JsonArray([.. _paused.Select(e => (JsonNode)new JsonArray(e.Key, e.Value))]);
+                .Select(e => (JsonNode)new JsonArray([(uint)e.Key, .. e.Value.Select(d => (JsonNode)d)]))]);
+        if (_paused.Count > 0) j["paused"] = new JsonArray([.. _paused.Select(e => (JsonNode)new JsonArray((uint)e.Key, e.Value))]);
     }
 
     void LoadGate(JsonObject j)
     {
         if (j["kindFoils"] is JsonArray foils)
-            foreach (var e in foils) _kindFoils[(uint)e![0]!] = [.. e.AsArray().Skip(1).Select(d => (int)d!)];
-        if (j["paused"] is JsonArray paused) foreach (var e in paused) _paused[(uint)e![0]!] = (int)e[1]!;
+            foreach (var e in foils) _kindFoils[(MissionKind)(uint)e![0]!] = [.. e.AsArray().Skip(1).Select(d => (int)d!)];
+        if (j["paused"] is JsonArray paused) foreach (var e in paused) _paused[(MissionKind)(uint)e![0]!] = (int)e[1]!;
     }
 
     /// <summary>Pauses that ended are dropped at the decision.</summary>
@@ -406,7 +406,7 @@ public sealed partial class OpenSWRController
 
     /// <summary>
     /// The known pools at a system for an objective, from the side's views, Usable units only:
-    /// - phase 7 (`A`): with an enemy fleet there (`F`) and no own Usable ion cannon (family 0x22 Index 1, `C`): the enemy
+    /// - phase 7 (`A`): with an enemy fleet there (`F`) and no own Usable ion cannon (ion cannon family 34, Index 1, `C`): the enemy
     ///   fleets' capital ships and their fighters;
     /// - phase 9: an objective that is the system or sits directly in it (`T`): the system's own troops when the enemy
     ///   owns it (`O`; no fighters); else, with `F`: the fleets' capital ships and fighters again.
@@ -422,7 +422,7 @@ public sealed partial class OpenSWRController
     {
         var here = k.Contents(s);
         bool owned = Knowledge.See(game, s, Side).Owner == Enemy;
-        bool cannon = here.Any(v => v.Owner == Side && v.Usable && v.Object.Type == 0x22000001);
+        bool cannon = here.Any(v => v.Owner == Side && v.Usable && v.Object.Type == Refs.IonCannonType);
         var commanders = here.Where(v => v.Object is Character && ScreenViews.Sees(v.Object, Side)).Select(v => (Character)v.Object).Where(c => c.Owner == Enemy).ToList();
         Detector Unit(GameObject unit, int kind, IEnumerable<Character> aboard)
         {
@@ -437,12 +437,12 @@ public sealed partial class OpenSWRController
             foreach (var ship in ships)
             {
                 fleet.Add(Unit(ship.Object, 2, aboard) with { Fleet = true });
-                fleet.AddRange(k.Contents(ship.Object).Where(v => v.In(0x1C, 0x20) && v.Usable).Select(v => Unit(v.Object, 1, aboard) with { Fleet = true }));
+                fleet.AddRange(k.Contents(ship.Object).Where(v => v.In(Families.Fighter, Families.Headquarters) && v.Usable).Select(v => Unit(v.Object, 1, aboard) with { Fleet = true }));
             }
         }
         var phase7 = fleet.Count > 0 && !cannon ? fleet : [];
         var phase9 = objectiveInSystem
-            ? owned ? [.. here.Where(v => v.Owner == Enemy && v.Usable && v.In(0x10, 0x14)).Select(v => Unit(v.Object, 3, []))] : new List<Detector>()
+            ? owned ? [.. here.Where(v => v.Owner == Enemy && v.Usable && v.In(Families.Troop, Families.CapitalShip)).Select(v => Unit(v.Object, 3, []))] : new List<Detector>()
             : fleet;
         return new(phase7, phase9);
     }
@@ -478,35 +478,35 @@ public sealed partial class OpenSWRController
     internal void MarkSeen(StarSystem s, int day) => _seen[s.Ref] = day;
 
     /// <summary>The success rule's p for one member at the target, from the side's knowledge (enemy skills: live values, else the definition's).</summary>
-    internal int Attempt(GameState game, Known k, uint kind, Agent a, GameObject target)
+    internal int Attempt(GameState game, Known k, MissionKind kind, Agent a, GameObject target)
     {
         int E(int skill) => Missions.Enhanced(game, a, skill);
         int T(string table, int key) => Missions.Table(game, table, key) ?? 0;
         int Combat(Character c) => ScreenViews.Sees(c, Side) ? Missions.Enhanced(game, c, SkillIndex.Combat) : (int)c.Definition.Skills.Combat.Base;
         var sys = target as StarSystem;
         int opp = sys is null ? 0 : Side == Owner.Alliance ? 100 - Knowledge.See(game, sys, Side).Support : Knowledge.See(game, sys, Side).Support;
-        int st = sys is null ? 0 : k.Contents(sys).Count(v => v.Object.Type == 0x10000006 && v.Owner == Owner.Empire && v.Usable);
+        int st = sys is null ? 0 : k.Contents(sys).Count(v => v.Object.Type == Refs.Stormtroopers && v.Owner == Owner.Empire && v.Usable);
         return kind switch
         {
-            0x56 => T("INCTMSTB", E(SkillIndex.Leadership) - opp - st),
-            0x61 => T("RESCMSTB", E(SkillIndex.Combat)),
-            0x62 when target is Character c => T("ABDCMSTB", E(SkillIndex.Combat) - Combat(c)),
-            0x63 when target is Character c => T("ASSNMSTB", E(SkillIndex.Combat) - Combat(c)),
-            0x69 => T("SBTGMSTB", (E(SkillIndex.Espionage) + E(SkillIndex.Combat)) / 2),
+            MissionKind.InciteUprising => T("INCTMSTB", E(SkillIndex.Leadership) - opp - st),
+            MissionKind.Rescue => T("RESCMSTB", E(SkillIndex.Combat)),
+            MissionKind.Abduction when target is Character c => T("ABDCMSTB", E(SkillIndex.Combat) - Combat(c)),
+            MissionKind.Assassination when target is Character c => T("ASSNMSTB", E(SkillIndex.Combat) - Combat(c)),
+            MissionKind.Sabotage => T("SBTGMSTB", (E(SkillIndex.Espionage) + E(SkillIndex.Combat)) / 2),
             _ => 0,
         };
     }
 
     /// <summary>The covert skill of a kind, for choosing the best-suited member.</summary>
-    static int CovertSkill(GameState game, uint kind, Agent a) => kind switch
+    static int CovertSkill(GameState game, MissionKind kind, Agent a) => kind switch
     {
-        0x56 => Missions.Enhanced(game, a, SkillIndex.Leadership),
-        0x69 => (Missions.Enhanced(game, a, SkillIndex.Espionage) + Missions.Enhanced(game, a, SkillIndex.Combat)) / 2,
+        MissionKind.InciteUprising => Missions.Enhanced(game, a, SkillIndex.Leadership),
+        MissionKind.Sabotage => (Missions.Enhanced(game, a, SkillIndex.Espionage) + Missions.Enhanced(game, a, SkillIndex.Combat)) / 2,
         _ => Missions.Enhanced(game, a, SkillIndex.Combat),
     };
 
     /// <summary>One covert candidate: kind, target, team, the target's value, worth.</summary>
-    internal readonly record struct Covert(uint Kind, GameObject Target, List<Agent> Team, double Worth, double Success = -1, List<Agent>? Decoys = null, bool Trial = false);
+    internal readonly record struct Covert(MissionKind Kind, GameObject Target, List<Agent> Team, double Worth, double Success = -1, List<Agent>? Decoys = null, bool Trial = false);
 
     /// <summary>
     /// The covert candidates with worth above 0, highest first. Per target
@@ -536,12 +536,12 @@ public sealed partial class OpenSWRController
                 }
                 var pool = (chosen.Trial ? [] : free.Cast<Agent>()).Concat(freeForces).Where(a => !reserved.Contains(a) && !usedNow.Contains(a) && !chosen.Team.Contains(a)).Distinct().ToList();
                 var (team, decoys, worth) = GrowTeam(game, k, chosen.Kind, target, value, known, cap, chosen.Team[0], pool,
-                    (t, d) => MissionEligibility.Validate(game, 0x240, Side, typeRef, t, d, target) is null);
+                    (t, d) => MissionEligibility.Validate(game, CommandType.CreateMission, Side, typeRef, t, d, target) is null);
                 if (On(V7.Agents))
                 {
                     // Character agents take special-force decoys against a known detector; a retry needs decoys (rules 7, 4)
                     var left = pool.Where(a => !team.Contains(a) && !decoys.Contains(a));
-                    if (AgentDecoys(game, chosen.Kind, target, known, team, decoys, left, (t, d) => MissionEligibility.Validate(game, 0x240, Side, typeRef, t, d, target) is null, out int shortBy, k, value, cap) is not { } agents)
+                    if (AgentDecoys(game, chosen.Kind, target, known, team, decoys, left, (t, d) => MissionEligibility.Validate(game, CommandType.CreateMission, Side, typeRef, t, d, target) is null, out int shortBy, k, value, cap) is not { } agents)
                     {
                         _decoyShort += shortBy;
                         result[index] = chosen with { Worth = double.NegativeInfinity }; // waits for decoys
@@ -561,7 +561,7 @@ public sealed partial class OpenSWRController
         var median = MedianSystem(game, k); // stale targets take its pools; the foil is computed per candidate team
         bool Important(StarSystem s) => Targets().Contains(s) || map.PowerBase.Contains(s.Sector) || map.Frontier.Contains(s.Sector);
 
-        void Consider(uint kind, GameObject target, StarSystem at, int value)
+        void Consider(MissionKind kind, GameObject target, StarSystem at, int value)
         {
             void Note(string outcome) => Probe?.Considered.Add((kind, target, outcome)); // measurement only
             if (targeted.Contains(target) || value <= 0 || TypeOf(game, kind) is not { } type || Paused(kind, game.Day))
@@ -587,7 +587,7 @@ public sealed partial class OpenSWRController
             double? cap = On(V7.CovertExperience) && ExperienceKinds.Contains(kind) ? ObservedRate(kind) : null;
             bool teams = TeamsOn && TeamKinds.Contains(kind);
             var forces = teams ? freeForces.Where(a => !reserved.Contains(a)).ToList() : [];
-            bool Fits(List<Agent> team) => MissionEligibility.Validate(game, 0x240, Side, type.Common.Ref, team, [], target) is null;
+            bool Fits(List<Agent> team) => MissionEligibility.Validate(game, CommandType.CreateMission, Side, type.Common.Ref, team, [], target) is null;
             // ExploreTrial (no cap, a special-force agent) or ExplorePrior (the cap from the base estimate)
             bool trial = cap is not null && TrialOpen(kind, game.Day);
             if (trial) cap = null;
@@ -611,8 +611,8 @@ public sealed partial class OpenSWRController
         // rescue: own characters the side's views show captured and arrived (not Enroute) at a system
         foreach (var c in game.Characters.Where(c => Finders.DefinitionSide(c) == Side).OrderBy(c => c.Key))
             if (Knowledge.See(game, c, Side) is { Captured: true, Destroyed: false, Enroute: false, Location: StarSystem at }
-                && (!rescueOnly || Family.Of(c.Type) is >= 0x30 and < 0x38))
-                Consider(0x61, c, at, CharacterValue(c, live: true));
+                && (!rescueOnly || Family.Of(c.Type) is >= Families.MajorCharacter and < Families.MinorCharacter))
+                Consider(MissionKind.Rescue, c, at, CharacterValue(c, live: true));
         if (rescueOnly)
         {
             GrowPending();
@@ -625,23 +625,23 @@ public sealed partial class OpenSWRController
             if (Knowledge.See(game, c, Side) is { Owner: var o, Captured: false, Destroyed: false, Location: StarSystem at } && o == Enemy)
             {
                 int value = CharacterValue(c, ScreenViews.Sees(c, Side));
-                Consider(0x62, c, at, value + 10);
-                if (!(Hunting && EnemyObjective(c))) Consider(0x63, c, at, value); // Hunt: capture, never assassination
+                Consider(MissionKind.Abduction, c, at, value + 10);
+                if (!(Hunting && EnemyObjective(c))) Consider(MissionKind.Assassination, c, at, value); // Hunt: capture, never assassination
             }
         // sabotage: per known enemy system the most valuable unit or facility its views show (stale systems: contents unknown)
         foreach (var s in enemySystems.Where(s => !Stale(game, s)).OrderBy(s => s.Key))
         {
-            int Score(GameObject o) => (Family.Of(o.Type) is >= 0x20 and < 0x30 ? game.MaintenanceCost(o.Type) * 5 : k.Value(o.Type)) * (Important(s) ? 2 : 1);
-            var units = k.Contents(s).Where(v => v.Owner == Enemy && v.Completed && Family.Of(v.Object.Type) is >= 0x10 and < 0x30 && !DeathStar.IsDeathStar(v.Object.Type))
+            int Score(GameObject o) => (Family.Of(o.Type) is >= Families.Headquarters and < Families.MajorCharacter ? game.MaintenanceCost(o.Type) * 5 : k.Value(o.Type)) * (Important(s) ? 2 : 1);
+            var units = k.Contents(s).Where(v => v.Owner == Enemy && v.Completed && Family.Of(v.Object.Type) is >= Families.Troop and < Families.MajorCharacter && !DeathStar.IsDeathStar(v.Object.Type))
                 .Select(v => v.Object)
                 .Concat(k.Contents(s).Where(v => v.Owner == Enemy && v.Object is Fleet).SelectMany(f => k.Contents(f.Object))
                     .Where(v => v.Completed && Family.IsCapitalShip(v.Object.Type) && !DeathStar.IsDeathStar(v.Object.Type)).Select(v => v.Object));
-            if (units.OrderByDescending(Score).ThenBy(o => o.Key).FirstOrDefault() is { } best) Consider(0x69, best, s, Score(best));
+            if (units.OrderByDescending(Score).ThenBy(o => o.Key).FirstOrDefault() is { } best) Consider(MissionKind.Sabotage, best, s, Score(best));
         }
         // incite: enemy systems where the views show the enemy's support share below 50
         foreach (var s in enemySystems.OrderBy(s => s.Key))
             if (Knowledge.See(game, s, Side) is { Populated: true } v && (Side == Owner.Alliance ? 100 - v.Support : v.Support) < 50)
-                Consider(0x56, s, s, map.PowerBase.Contains(s.Sector) || map.Frontier.Contains(s.Sector) ? 30 : 10);
+                Consider(MissionKind.InciteUprising, s, s, map.PowerBase.Contains(s.Sector) || map.Frontier.Contains(s.Sector) ? 30 : 10);
         GrowPending();
         if (!rescueOnly && On(V7.Teams)) SpecialForceDemand = demand + result.Sum(x => x.Team.Concat(x.Decoys ?? []).Count(a => Family.IsSpecialForce(a.Type)));
         if (On(V7.Agents))
@@ -657,9 +657,9 @@ public sealed partial class OpenSWRController
             StartPivots(game, result);
             double top = TopWorth(result);
             if (Probe is { } probe2)
-                foreach (var x in result.Where(x => x.Kind is 0x62 or 0x63 && x.Worth < top && _pivots.All(p => p.Target != x.Target.Ref)))
+                foreach (var x in result.Where(x => x.Kind is MissionKind.Abduction or MissionKind.Assassination && x.Worth < top && _pivots.All(p => p.Target != x.Target.Ref)))
                     probe2.Dropped.TryAdd((x.Kind, x.Target.Ref), "abduction / assassination band rule");
-            result.RemoveAll(x => x.Kind is 0x62 or 0x63 && x.Worth < top && _pivots.All(p => p.Target != x.Target.Ref) && !(Hunting && EnemyObjective(x.Target))); // (Hunt: kept)
+            result.RemoveAll(x => x.Kind is MissionKind.Abduction or MissionKind.Assassination && x.Worth < top && _pivots.All(p => p.Target != x.Target.Ref) && !(Hunting && EnemyObjective(x.Target))); // (Hunt: kept)
             if (Probe is { } probe3)
             {
                 foreach (var x in result) probe3.CandidatesAfter[x.Kind] = probe3.CandidatesAfter.GetValueOrDefault(x.Kind) + 1;
@@ -676,16 +676,16 @@ public sealed partial class OpenSWRController
     /// <summary>Jedi training (worth 40, no loss): a free teacher and a free student at the same system, when the list offers it there.</summary>
     internal Covert? JediTraining(GameState game, List<Character> free)
     {
-        if (TypeOf(game, 0x58) is not { } type) return null;
+        if (TypeOf(game, MissionKind.JediTraining) is not { } type) return null;
         foreach (var teacher in free.Where(c => c.Definition.IsJediTrainer != 0).OrderByDescending(c => c.Force).ThenBy(c => c.Key))
             foreach (var student in free.Where(c => c != teacher && c.Force > 0 && c.Force < teacher.Force && Missions.Location(c) == Missions.Location(teacher))
                          .OrderBy(c => c.Key))
             {
                 if (Missions.Location(teacher) is not StarSystem at) break;
                 List<Agent> team = [teacher, student];
-                if (MissionEligibility.Validate(game, 0x240, Side, type.Common.Ref, team, [], at) is not null) continue;
-                double worth = Worth(game, 0x58, team, teacher.Force - student.Force, 40, CovertKnown.None);
-                if (worth > 0) return new(0x58, at, team, worth);
+                if (MissionEligibility.Validate(game, CommandType.CreateMission, Side, type.Common.Ref, team, [], at) is not null) continue;
+                double worth = Worth(game, MissionKind.JediTraining, team, teacher.Force - student.Force, 40, CovertKnown.None);
+                if (worth > 0) return new(MissionKind.JediTraining, at, team, worth);
             }
         return null;
     }

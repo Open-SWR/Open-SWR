@@ -31,7 +31,7 @@ public partial class TacticalHud : Control
     }
 
     /// <summary>A camera button: the operation at press, repeated every 100 ms while held when <paramref name="repeat"/>.</summary>
-    void Camera(int x, int y, int w, int h, int up, int down, int tooltip, int op, bool repeat)
+    void Camera(int x, int y, int w, int h, int up, int down, int tooltip, TacticalCameraOperation op, bool repeat)
     {
         var b = Button(this, x, y, w, h, up, down, tooltip);
         if (repeat) { b.Pressed = () => _s.Hold(op); b.Released = _s.Release; }
@@ -45,46 +45,46 @@ public partial class TacticalHud : Control
         MouseFilter = MouseFilterEnum.Ignore;
         var ui = screen.Ui;
         bool alliance = screen.Battle.Local == 0;
-        AddChild(new TextureRect { Texture = Bmp(alliance ? 1001 : 1004), Position = new Vector2(9, 1), Size = new Vector2(49, 19), TooltipText = Assets.Tip(TacticalScreen.Text(44433)), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale });
-        AddChild(new TextureRect { Texture = Bmp(alliance ? 1008 : 1010), Position = new Vector2(296, 1), Size = new Vector2(49, 19), TooltipText = Assets.Tip(TacticalScreen.Text(44443)), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale });
+        AddChild(new TextureRect { Texture = Bmp(alliance ? TacticalBitmaps.TaskForcesLabelAlliance : TacticalBitmaps.TaskForcesLabelEmpire), Position = new Vector2(9, 1), Size = new Vector2(49, 19), TooltipText = Assets.Tip(TacticalText.TaskForcesLabel), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale });
+        AddChild(new TextureRect { Texture = Bmp(alliance ? TacticalBitmaps.FighterSquadronsLabelAlliance : TacticalBitmaps.FighterSquadronsLabelEmpire), Position = new Vector2(296, 1), Size = new Vector2(49, 19), TooltipText = Assets.Tip(TacticalText.FighterSquadronsLabel), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.Scale });
         for (int i = 0; i < 8; i++)
         {
             int slot = i;
             // images and caption per slot state are set in Refresh
-            _taskForces[i] = Button(this, 60 + 29 * i, 2, 25, 17, 1007, 1007, 44434, () => ui.PressTaskForce(slot), 1007);
+            _taskForces[i] = Button(this, 60 + 29 * i, 2, 25, 17, TacticalBitmaps.TaskForceEmpty, TacticalBitmaps.TaskForceEmpty, TacticalTexts.UnassignedTaskForce, () => ui.PressTaskForce(slot), TacticalBitmaps.TaskForceEmpty);
         }
         for (int c = 0; c < 4; c++)
         {
             int colour = c;
-            _fighters[c] = Button(this, 347 + 29 * c, 2, 25, 15, 1012 + c, 1016 + c, 44444, () => ui.Command(0xB + colour), 1020);
+            _fighters[c] = Button(this, 347 + 29 * c, 2, 25, 15, TacticalBitmaps.FighterGroupUpBase + c, TacticalBitmaps.FighterGroupDownBase + c, TacticalTexts.InactiveFighterGroup, () => ui.Command(TacticalUi.FighterGroupCommands[colour]), TacticalBitmaps.FighterGroupDisabled);
         }
         for (int k = 0; k < 4; k++)
         {
-            int id = 0x10 + k;
-            _navs[k] = Button(this, 485 + 39 * k, 272, 27, 27, 1026 + k, 1030 + k, 44450 + k, () => ui.Command(id));
+            var id = TacticalUi.NavListCommands[k];
+            _navs[k] = Button(this, 485 + 39 * k, 272, 27, 27, TacticalBitmaps.NavPointSetUpBase + k, TacticalBitmaps.NavPointSetDownBase + k, TacticalTexts.NavPointSetBase + k, () => ui.Command(id));
         }
-        _highlightEmpire = Button(this, 483, 305, 30, 26, 1036, 1037, 44456, () => ui.Command(0x15));
-        _highlightAlliance = Button(this, 515, 305, 30, 26, 1034, 1035, 44454, () => ui.Command(0x14));
-        _pause = Button(this, 561, 308, 28, 21, 1060, 1061, 44471, screen.TogglePause);
-        Button(this, 608, 309, 20, 20, 1038, 1039, 44458, () => ui.ShowPage(0x1B));
-        Camera(491, 343, 24, 24, 1044, 1045, 44470, TacticalCamera.ZoomIn, true);
-        Camera(607, 343, 24, 24, 1046, 1047, 44469, TacticalCamera.ZoomOut, true);
-        Camera(539, 338, 43, 43, 1052, 1053, 44466, TacticalCamera.TiltUp, true);
-        Camera(497, 381, 42, 43, 1048, 1049, 44468, TacticalCamera.RotateLeft, true);
-        Camera(582, 381, 43, 43, 1050, 1051, 44467, TacticalCamera.RotateRight, true);
-        Camera(549, 391, 23, 23, 1058, 1059, 44464, TacticalCamera.ResetSubject, false);
-        Camera(540, 424, 43, 43, 1055, 1056, 44465, TacticalCamera.TiltDown, true);
-        Camera(486, 444, 43, 25, 1042, 1043, 44461, TacticalCamera.ResetView, false);
-        Camera(594, 444, 43, 25, 1040, 1041, 44459, TacticalCamera.Remember, false);
+        _highlightEmpire = Button(this, 483, 305, 30, 26, TacticalBitmaps.HighlightEmpireUp, TacticalBitmaps.HighlightEmpireDown, TacticalTexts.HighlightEmpire, () => ui.Command(TacticalCommand.HighlightEmpire));
+        _highlightAlliance = Button(this, 515, 305, 30, 26, TacticalBitmaps.HighlightAllianceUp, TacticalBitmaps.HighlightAllianceDown, TacticalTexts.HighlightAlliance, () => ui.Command(TacticalCommand.HighlightAlliance));
+        _pause = Button(this, 561, 308, 28, 21, TacticalBitmaps.PauseUp, TacticalBitmaps.PauseDown, TacticalTexts.PauseBattle, screen.TogglePause);
+        Button(this, 608, 309, 20, 20, TacticalBitmaps.GameOptionsUp, TacticalBitmaps.GameOptionsDown, TacticalTexts.GameOptions, () => ui.ShowPage(TacticalPage.Options));
+        Camera(491, 343, 24, 24, TacticalBitmaps.ZoomInUp, TacticalBitmaps.ZoomInDown, TacticalTexts.ZoomIn, TacticalCameraOperation.ZoomIn, true);
+        Camera(607, 343, 24, 24, TacticalBitmaps.ZoomOutUp, TacticalBitmaps.ZoomOutDown, TacticalTexts.ZoomOut, TacticalCameraOperation.ZoomOut, true);
+        Camera(539, 338, 43, 43, TacticalBitmaps.TiltUpUp, TacticalBitmaps.TiltUpDown, TacticalTexts.TiltUp, TacticalCameraOperation.TiltUp, true);
+        Camera(497, 381, 42, 43, TacticalBitmaps.RotateLeftUp, TacticalBitmaps.RotateLeftDown, TacticalTexts.RotateLeft, TacticalCameraOperation.RotateLeft, true);
+        Camera(582, 381, 43, 43, TacticalBitmaps.RotateRightUp, TacticalBitmaps.RotateRightDown, TacticalTexts.RotateRight, TacticalCameraOperation.RotateRight, true);
+        Camera(549, 391, 23, 23, TacticalBitmaps.ResetCameraSubjectUp, TacticalBitmaps.ResetCameraSubjectDown, TacticalTexts.ResetCameraSubject, TacticalCameraOperation.ResetSubject, false);
+        Camera(540, 424, 43, 43, TacticalBitmaps.TiltDownUp, TacticalBitmaps.TiltDownDown, TacticalTexts.TiltDown, TacticalCameraOperation.TiltDown, true);
+        Camera(486, 444, 43, 25, TacticalBitmaps.ResetCameraViewUp, TacticalBitmaps.ResetCameraViewDown, TacticalTexts.ResetCameraView, TacticalCameraOperation.ResetView, false);
+        Camera(594, 444, 43, 25, TacticalBitmaps.RememberCameraUp, TacticalBitmaps.RememberCameraDown, TacticalTexts.RememberCamera, TacticalCameraOperation.Remember, false);
         AddChild(_deathStar);
         _deathStar.Draw += DrawDeathStar;
-        _superlaser = Button(_deathStar, 137, 2, 21, 20, 1021, 1022, 44449, () => ui.Command(0xF), 1023);
+        _superlaser = Button(_deathStar, 137, 2, 21, 20, TacticalBitmaps.SuperlaserUp, TacticalBitmaps.SuperlaserDown, TacticalTexts.TargetSuperlaser, () => ui.Command(TacticalCommand.Superlaser), TacticalBitmaps.SuperlaserDisabled);
     }
 
     /// <summary>Death Star panel: bitmap 1024; charge bar (34, 9) 95 x 6 green (colour shade Inferred).</summary>
     void DrawDeathStar()
     {
-        var panel = Bmp(1024);
+        var panel = Bmp(TacticalBitmaps.DeathStarPanel);
         _deathStar.DrawTextureRect(panel, new Rect2(0, 0, 166, 25), false);
         DrawLog.Bitmap(_deathStar, panel, new Rect2(0, 0, 166, 25));
         var charge = new Rect2(34, 9, (float)(95 * Math.Clamp(_s.Ui.PanelValue / 100.0, 0, 1)), 6);
@@ -104,11 +104,11 @@ public partial class TacticalHud : Control
         {
             var b = _taskForces[i];
             bool used = ui.TaskForces[i] is not null;
-            (b.Up, b.Down, b.CheckedImage) = used ? (Bmp(1005), Bmp(1006), Bmp(1006)) : (Bmp(1007), Bmp(1007), Bmp(1007));
-            b.Caption = used ? TacticalScreen.Text(44417 + i) : "";
+            (b.Up, b.Down, b.CheckedImage) = used ? (Bmp(TacticalBitmaps.TaskForceUp), Bmp(TacticalBitmaps.TaskForceDown), Bmp(TacticalBitmaps.TaskForceDown)) : (Bmp(TacticalBitmaps.TaskForceEmpty), Bmp(TacticalBitmaps.TaskForceEmpty), Bmp(TacticalBitmaps.TaskForceEmpty));
+            b.Caption = used ? TacticalScreen.Text(TacticalTexts.TaskForceDigitBase + i) : "";
             b.Disabled = !ui.TaskForceEnabled(i);
             b.Checked = ui.Current is TacticalUi.TaskForceMode t && t.Slot == i;
-            b.TooltipText = Assets.Tip(TacticalScreen.Text(used ? 44435 + i : 44434));
+            b.TooltipText = Assets.Tip(TacticalScreen.Text(used ? TacticalTexts.TaskForceBase + i : TacticalTexts.UnassignedTaskForce));
             b.QueueRedraw();
         }
         for (int c = 0; c < 4; c++)
@@ -116,16 +116,16 @@ public partial class TacticalHud : Control
             var b = _fighters[c];
             b.Disabled = ui.Fighters[c] is null;
             b.Checked = ui.Current is TacticalUi.FighterMode f && f.Colour == c;
-            b.TooltipText = Assets.Tip(TacticalScreen.Text(ui.Fighters[c] is null ? 44444 : 44445 + c));
+            b.TooltipText = Assets.Tip(TacticalScreen.Text(ui.Fighters[c] is null ? TacticalTexts.InactiveFighterGroup : TacticalTexts.FighterGroupBase + c));
         }
         for (int k = 0; k < 4; k++) _navs[k].Checked = ui.NavShown[3 - k];
         _highlightEmpire.Checked = ui.Highlight[1];
-        _highlightEmpire.TooltipText = Assets.Tip(TacticalScreen.Text(ui.Highlight[1] ? 44457 : 44456));
+        _highlightEmpire.TooltipText = Assets.Tip(TacticalScreen.Text(ui.Highlight[1] ? TacticalTexts.DimEmpire : TacticalTexts.HighlightEmpire));
         _highlightAlliance.Checked = ui.Highlight[0];
-        _highlightAlliance.TooltipText = Assets.Tip(TacticalScreen.Text(ui.Highlight[0] ? 44455 : 44454));
+        _highlightAlliance.TooltipText = Assets.Tip(TacticalScreen.Text(ui.Highlight[0] ? TacticalTexts.DimAlliance : TacticalTexts.HighlightAlliance));
         _pause.Checked = _s.Battle.Paused;
         _pause.Disabled = _s.Battle.InIntro; // disabled during the intro
-        _pause.TooltipText = Assets.Tip(TacticalScreen.Text(_s.Battle.Paused ? 44472 : 44471));
+        _pause.TooltipText = Assets.Tip(TacticalScreen.Text(_s.Battle.Paused ? TacticalTexts.ResumeBattle : TacticalTexts.PauseBattle));
         _deathStar.Visible = ui.DeathStarPanel; // the panel shows while the UI has it
         if (_deathStar.Visible)
         {

@@ -19,7 +19,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="Vectors\*.json;Vectors\*.jsonl;Vectors\draw\*.jsonl" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Mods\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

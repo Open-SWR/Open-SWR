@@ -43,7 +43,7 @@ public sealed class GameDefinitions
     public string? GalaxyPicture { get; init; }
 
     /// <summary>StringModule of records added by mods: no install string and no install picture.</summary>
-    public const ushort ModStringModule = 0xF0;
+    public const ushort ModStringModule = 240;
 
     /// <summary>The 17 SD files the game loads (BASICSD.DAT is never loaded).</summary>
     public static readonly string[] LoadedSd =
@@ -120,7 +120,7 @@ public sealed class GameDefinitions
     /// </summary>
     public SdRecord? Resolve(uint sdRef)
     {
-        uint family = sdRef >> 24, index = sdRef & 0xFFFFFF;
+        uint family = sdRef >> 24, index = sdRef & 16777215;
         // per-file Index maps built on first use (hot path: maintenance sums); the first record of an Index wins, as a scan would.
         // shortcut: assumes the SD files no longer change after the first Resolve (true: mods build a new GameDefinitions from
         // their own tables), upgrade (reset _byIndex) if anything ever edits SdFiles in place

@@ -17,7 +17,7 @@ public readonly record struct SdCommon(uint Index, uint Unk04, uint ProducerFami
     /// <summary>The record's own reference: its family and Index.</summary>
     public uint Ref => SdRef.Make(Family, Index);
     /// <summary>StringId without its string block: the per-record number that also picks the record's pictures.</summary>
-    public int StringNumber => StringId & 0xFFF;
+    public int StringNumber => StringId & 4095;
 }
 
 public delegate T SdRecordParser<T>(SdCommon common, ReadOnlySpan<byte> rest);
@@ -216,8 +216,8 @@ public sealed record MissionRecord(SdCommon Common, uint Alliance, uint Empire, 
 
     /// <summary>A special force with this MissionMask may join: its mask lies inside SpecialForceMask.</summary>
     public bool AllowsSpecialForce(uint missionMask) => (missionMask & ~SpecialForceMask) == 0;
-    /// <summary>Characters may join (Unk24 holds the character marker 0x10000).</summary>
-    public bool AllowsCharacters => (Unk24 & 0x10000) != 0;
+    /// <summary>Characters may join (Unk24 holds the character marker 65536).</summary>
+    public bool AllowsCharacters => (Unk24 & 65536) != 0;
     /// <summary>Duration in days: base and random variance of the mission timer.</summary>
     public int DurationBase => (int)Unk28;
     public int DurationVariance => (int)Unk2C;
@@ -306,8 +306,8 @@ public sealed class SdEditRecord
     public uint Unk04 { get => Words[1]; set => Words[1] = value; }
     public (uint Min, uint Max) Producer { get => (Words[2], Words[3]); set => (Words[2], Words[3]) = value; }
     public uint Family { get => Words[4]; set => Words[4] = value; }
-    public ushort StringId { get => (ushort)(Words[5] & 0xFFFF); set => Words[5] = Words[5] & 0xFFFF0000 | value; }
-    public ushort StringModule { get => (ushort)(Words[5] >> 16); set => Words[5] = Words[5] & 0xFFFF | (uint)value << 16; }
+    public ushort StringId { get => (ushort)(Words[5] & 65535); set => Words[5] = Words[5] & 4294901760u | value; }
+    public ushort StringModule { get => (ushort)(Words[5] >> 16); set => Words[5] = Words[5] & 65535 | (uint)value << 16; }
     /// <summary>The record's own reference: its family and Index.</summary>
     public uint Ref => SdRef.Make(Family, Index);
 
@@ -316,11 +316,11 @@ public sealed class SdEditRecord
     public void Set(SdField field, uint value) => Words[(int)field / 4] = value;
 
     /// <summary>A u16 field (sector and system X / Y).</summary>
-    public ushort GetU16(SdField field) => (ushort)((int)field % 4 == 0 ? Words[(int)field / 4] & 0xFFFF : Words[(int)field / 4] >> 16);
+    public ushort GetU16(SdField field) => (ushort)((int)field % 4 == 0 ? Words[(int)field / 4] & 65535 : Words[(int)field / 4] >> 16);
     public void SetU16(SdField field, ushort value)
     {
         int w = (int)field / 4;
-        Words[w] = (int)field % 4 == 0 ? Words[w] & 0xFFFF0000 | value : Words[w] & 0xFFFF | (uint)value << 16;
+        Words[w] = (int)field % 4 == 0 ? Words[w] & 4294901760u | value : Words[w] & 65535 | (uint)value << 16;
     }
 }
 

@@ -55,12 +55,12 @@ public sealed partial class TacticalUnit
     internal double JumpTimer;
 }
 
-/// <summary>Formation navigator of a group: kind 1 sphere, 2 line, 3 fighter.</summary>
+/// <summary>Formation navigator of a group: sphere, line or fighter.</summary>
 internal sealed class Navigator
 {
-    public Navigator(int kind, int founderKey) =>
+    public Navigator(TacticalFormation kind, int founderKey) =>
         (Kind, Heading) = (kind, founderKey < 1000000 ? new V3(0, 0, 1) : new V3(0, 0, -1)); // Inferred: keys >= 1000000 = side index 1
-    public int Kind;
+    public TacticalFormation Kind;
     /// <summary>Heading and desired heading.</summary>
     public V3 Heading, Desired;
     /// <summary>Nav point, the previous turn's nav point, its velocity, last move direction.</summary>
@@ -86,9 +86,9 @@ internal sealed class Navigator
 }
 
 /// <summary>Range object of a group: mode 1 or mode 2 = the weapon band.</summary>
-internal sealed class RangeBand(int mode)
+internal sealed class RangeBand(TacticalTactic mode)
 {
-    public int Mode { get; } = mode;
+    public TacticalTactic Mode { get; } = mode;
     /// <summary>Distance, band low and high, value.</summary>
     public double Distance = 5.0, Lo, Hi = 5.0, Value;
 }
@@ -101,11 +101,11 @@ public sealed partial class TacticalGroup
     public IReadOnlyList<TacticalNavPoint> Waypoints => NavPoints;
     /// <summary>The formation anchor (the navigator's nav point).</summary>
     public V3 NavPoint => Nav?.Point ?? V3.Zero;
-    /// <summary>Formation: 1 sphere, 2 line, 3 fighter.</summary>
-    public int Formation => Nav?.Kind ?? 0;
-    /// <summary>Requested and applied acceleration mode (2 at creation).</summary>
-    internal int RequestedMode = 2, AppliedMode = 2;
-    internal RangeBand Range = new(2); // Inferred: the mode-2 object at creation (both modes 2)
+    /// <summary>Formation: sphere, line or fighter.</summary>
+    public TacticalFormation Formation => Nav?.Kind ?? TacticalFormation.None;
+    /// <summary>Requested and applied acceleration mode (stand off at creation).</summary>
+    internal TacticalTactic RequestedMode = TacticalTactic.StandOff, AppliedMode = TacticalTactic.StandOff;
+    internal RangeBand Range = new(TacticalTactic.StandOff); // Inferred: the stand-off object at creation (both modes stand off)
     /// <summary>Remote-group flag (the single-player registration writes 0), and the target-lost notification flag.</summary>
     internal bool Hold, Notified;
     /// <summary>Fighter group orbit angle.</summary>
@@ -114,15 +114,15 @@ public sealed partial class TacticalGroup
 
 public sealed partial class TacticalBattle
 {
-    /// <summary>Unit sizes before the model box: capital ship half height 3.0, size 3.6 (19.0 for type 0x15); fighter 0.3 / 1.2.</summary>
+    /// <summary>Unit sizes before the model box: capital ship half height 3.0, size 3.6 (19.0 for the Star Destroyer type); fighter 0.3 / 1.2.</summary>
     void Kinematics(GameState game, TacticalUnit t)
     {
         var u = t.U;
         t.Key = u.Key + 1000000 * u.Side; // Inferred
-        bool ssd = u.Type == 0 && u.TypeIndex == 0x15;
-        (t.HalfHeight, t.Size) = u.Type == 1 ? (0.3, 1.2) : (3.0, ssd ? 19.0 : 3.6);
+        bool ssd = u.Type == TacticalUnitType.CapitalShip && u.TypeIndex == StarDestroyerTypeIndex;
+        (t.HalfHeight, t.Size) = u.Type == TacticalUnitType.Fighter ? (0.3, 1.2) : (3.0, ssd ? 19.0 : 3.6);
         t.Box = new V3(t.Size, 2 * t.HalfHeight, t.Size);
-        if (u.Type == 0)
+        if (u.Type == TacticalUnitType.CapitalShip)
         {
             double Sd(Data.Dat.SdField field) => game.Definitions.Resolve(u.Object.Type) is { } r ? Data.Dat.SdFields.GetOrZero(r, field) : 0;
             (t.TractorPower, t.TractorRange, t.DamageControl) = (Sd(Data.Dat.SdField.TractorBeamPower), Sd(Data.Dat.SdField.TractorBeamRange), Sd(Data.Dat.SdField.DamageControl));
@@ -142,7 +142,7 @@ public sealed partial class TacticalBattle
         (t.HalfHeight, t.Size, t.Box) = (Math.Max(0.5 * Math.Abs(dy), 0.5), Math.Max(Math.Sqrt(dx * dx + dz * dz), 0.5), new V3(Math.Abs(dx), Math.Abs(dy), Math.Abs(dz)));
 
     /// <summary>Unit active: state 2, 4 or 6.</summary>
-    static bool IsActive(BattleEngine.Unit? u) => u is { State: 2 or 4 or 6 };
+    static bool IsActive(BattleEngine.Unit? u) => u is { State: TacticalUnitState.Active or TacticalUnitState.Recovering or TacticalUnitState.JumpOrdered };
 
     /// <summary>Admiral bonus A: the side's admiral value while the admiral's ship is active (2, 4 or 6), else 1.0.</summary>
     double Admiral(int side) => IsActive(Sides[side].AdmiralShip) ? Sides[side].AdmiralValue : 1.0;
@@ -212,14 +212,14 @@ public sealed partial class TacticalBattle
         double lim = Size * Bound;
         foreach (var t in _units)
         {
-            if (t.State == 2)
+            if (t.State == TacticalUnitState.Active)
             {
                 if (t.Fighter) FighterFrame(t, dt);
                 else ShipFrame(t, dt);
                 var p = t.Position;
                 t.Position = new V3(Math.Clamp(p.X, -lim, lim), Math.Clamp(p.Y, -lim, lim), Math.Clamp(p.Z, -lim, lim));
             }
-            else if (t.State == 7) Hyperspace(t, dt);
+            else if (t.State == TacticalUnitState.Accelerating) Hyperspace(t, dt);
         }
     }
 
@@ -320,7 +320,7 @@ public sealed partial class TacticalBattle
     void Found(TacticalGroup g)
     {
         var members = g.G.Members.Select(m => _byUnit[m]).Where(g.Members.Contains).ToList();
-        g.Nav = new Navigator(g.Fighters ? 3 : 2, members.FirstOrDefault()?.Key ?? 0);
+        g.Nav = new Navigator(g.Fighters ? TacticalFormation.Fighter : TacticalFormation.Line, members.FirstOrDefault()?.Key ?? 0);
         foreach (var u in members) AddToNav(g.Nav, u);
     }
 
@@ -366,9 +366,9 @@ public sealed partial class TacticalBattle
     {
         var h = nav.Heading;
         double sigma = n % 2 == 1 ? 1 : -1;
-        if (nav.Kind == 1) return SphereDirections[n % 22].Normalised() * (((n / 22) * 0.25 + 1) * 12.5);
+        if (nav.Kind == TacticalFormation.Sphere) return SphereDirections[n % 22].Normalised() * (((n / 22) * 0.25 + 1) * 12.5);
         if (n == 1) return V3.Zero;
-        if (nav.Kind == 2)
+        if (nav.Kind == TacticalFormation.Line)
         {
             double s = Math.Max(nav.Spacing, u.Size * 1.2), k = Math.Truncate(sigma * s) * (Math.Max(n, nav.MaxCount) / 2);
             return new V3(-h.Z * k, 0, h.X * k);
@@ -381,13 +381,13 @@ public sealed partial class TacticalBattle
     }
 
     /// <summary>
-    /// Formation change (message 0x0B): 1 sphere, 3 fighter (only with a fighter leader), else 2 line; the navigator is
+    /// Formation change (set-formation message): 1 sphere, 3 fighter (only with a fighter leader), else 2 line; the navigator is
     /// deleted and every member re-added in member-list order (Inferred: the new navigator is founded by the first member).
     /// </summary>
-    internal void ChangeFormation(TacticalGroup g, int kind)
+    internal void ChangeFormation(TacticalGroup g, TacticalFormation kind)
     {
         if (!_groups.Contains(g)) return;
-        kind = kind == 1 ? 1 : kind == 3 && g.Members.FirstOrDefault() is { Fighter: true } ? 3 : 2;
+        kind = kind == TacticalFormation.Sphere ? TacticalFormation.Sphere : kind == TacticalFormation.Fighter && g.Members.FirstOrDefault() is { Fighter: true } ? TacticalFormation.Fighter : TacticalFormation.Line;
         // The new navigator is founded on the simulation leader, then the other members are added
         var founder = g.SimLeader is { } l && g.Members.Contains(l) ? l : g.Members.FirstOrDefault();
         g.Nav = new Navigator(kind, founder?.Key ?? 0);
@@ -409,13 +409,13 @@ public sealed partial class TacticalBattle
     }
 
     /// <summary>
-    /// A unit joins a group in the simulation (messages 0x30 / 0x33): out of its old group, into the member list (key order) and the
+    /// A unit joins a group in the simulation (task-force create and join messages): out of its old group, into the member list (key order) and the
     /// navigator. Inferred: a withdrawn or destroyed unit does not join; a group emptied before takes its place in the side's group list again.
     /// </summary>
     void Join(TacticalGroup g, TacticalUnit t, bool leader = false)
     {
-        if (t.Group == g || t.State is 9 or 11) return;
-        if (leader || g.SimLeader is null) g.SimLeader = t; // set by message 0x30; a join only while the simulation leader is none
+        if (t.Group == g || t.State is TacticalUnitState.Withdrawn or TacticalUnitState.Destroyed) return;
+        if (leader || g.SimLeader is null) g.SimLeader = t; // set by the task-force create message; a join only while the simulation leader is none
         Leave(t);
         if (!Sides[g.Side].Groups.Contains(g.G)) Sides[g.Side].Groups.Add(g.G);
         g.G.Members.Add(t.U);
@@ -490,9 +490,9 @@ public sealed partial class TacticalBattle
     /// <summary>The kind's mover (line, sphere, fighter): true while moving, false on arrival.</summary>
     internal static bool Move(Navigator n, V3 p, double dt, double r)
     {
-        if (n.Kind == 3) return FighterMove(n, p, dt, r);
+        if (n.Kind == TacticalFormation.Fighter) return FighterMove(n, p, dt, r);
         bool moving = PointMove(n, p, dt, r);
-        if (n.Kind == 2) LineHeading(n, dt);
+        if (n.Kind == TacticalFormation.Line) LineHeading(n, dt);
         else SphereHeading(n, dt);
         return moving;
     }
@@ -586,7 +586,7 @@ public sealed partial class TacticalBattle
     internal void UpdateBand(TacticalGroup g)
     {
         var r = g.Range;
-        if (r.Mode == 1) { (r.Lo, r.Hi) = (0, 2.5); return; }
+        if (r.Mode == TacticalTactic.Surround) { (r.Lo, r.Hi) = (0, 2.5); return; }
         (r.Lo, r.Hi, r.Value, r.Distance) = (0, 0, 0, 5.0);
         if (Current(g) is not { } target || g.Members.Count == 0) return;
         var pieces = Pieces(g, target, out double rt, out double rm);
@@ -639,7 +639,7 @@ public sealed partial class TacticalBattle
     {
         bool ship = !x.Fighter;
         int a = BattleEngine.Arc(u.U, ship);
-        if (a == 4) return;
+        if (a == BattleEngine.NoArc) return;
         double w = BattleEngine.WeaponRate(u.U);
         void Add(double count, double range, double factor) { if (count > 0) list.Add((range, sign * count * w * Base * factor)); }
         Add(u.U.Arcs[a, 1], u.U.IonRange, ship ? 1.0 : 0.5);
@@ -648,22 +648,22 @@ public sealed partial class TacticalBattle
     }
 
     /// <summary>
-    /// FORMATION_ACCELERATE request: the requested mode := mode at once and message 0x3D; the range object, the applied mode and a task
+    /// FORMATION_ACCELERATE request: the requested mode := mode at once and the set-mode message; the range object, the applied mode and a task
     /// force's formation follow at its dispatch.
     /// </summary>
-    void RequestMode(TacticalGroup g, int mode)
+    void RequestMode(TacticalGroup g, TacticalTactic mode)
     {
         g.RequestedMode = mode;
-        Post(Stamp, 0x3D, () => Accelerate(g, mode));
+        Post(Stamp, TacticalMessage.SetMode, () => Accelerate(g, mode));
     }
 
-    /// <summary>Message 0x3D: a new range object of the mode, applied mode := mode; a task force changes formation (1 to sphere, 2 to line; Inferred: only when different).</summary>
-    void Accelerate(TacticalGroup g, int mode)
+    /// <summary>Set-mode message: a new range object of the mode, applied mode := mode; a task force changes formation (1 to sphere, 2 to line; Inferred: only when different).</summary>
+    void Accelerate(TacticalGroup g, TacticalTactic mode)
     {
         if (!_groups.Contains(g)) return;
         g.Range = new RangeBand(mode);
         g.AppliedMode = mode;
-        if (!g.Fighters && g.Nav is { } n && n.Kind != (mode == 1 ? 1 : 2)) ChangeFormation(g, mode == 1 ? 1 : 2);
+        if (!g.Fighters && g.Nav is { } n && n.Kind != (mode == TacticalTactic.Surround ? TacticalFormation.Sphere : TacticalFormation.Line)) ChangeFormation(g, mode == TacticalTactic.Surround ? TacticalFormation.Sphere : TacticalFormation.Line);
     }
 
     // ---- group per frame ----
@@ -677,7 +677,7 @@ public sealed partial class TacticalBattle
     void TaskForceFrame(TacticalGroup g, double dt)
     {
         var n = g.Nav!;
-        if (g.Mission == 3) { WithdrawFrame(g, dt); return; }
+        if (g.Mission == TacticalMissionNumber.Withdraw) { WithdrawFrame(g, dt); return; }
         if (g.NavPoints.Count > 0)
         {
             var np = g.NavPoints[0];
@@ -685,7 +685,7 @@ public sealed partial class TacticalBattle
             if (!Move(n, np.Position, dt, 1)) Reached(g, np);
             return;
         }
-        if (Current(g) is not { } target || g.Mission == 11) return;
+        if (Current(g) is not { } target || g.Mission == TacticalMissionNumber.Stop) return;
         if (!target.Active && !g.Notified) TargetLost(g, target); // one-time notification; movement goes on
         var fwd = Forward(g.Side);
         var v = target.Position - n.Point;
@@ -694,32 +694,32 @@ public sealed partial class TacticalBattle
         double l = v.Length;
         var r = g.Range;
         if (r.Lo <= l + 2 && l + 2 <= r.Hi) { n.Velocity = V3.Zero; return; }
-        if (g.AppliedMode == 2)
+        if (g.AppliedMode == TacticalTactic.StandOff)
         {
             if (l < r.Lo)
             {
                 if (target.Group is { } tg && Current(tg) is { } tt && g.Members.Contains(tt)) { n.Velocity = V3.Zero; return; }
                 v = fwd * (r.Lo * -1.1);
             }
-            if (g.RequestedMode == 2 && !g.Hold && Computer[g.Side] && g.Members.Count > 7) RequestMode(g, 1);
+            if (g.RequestedMode == TacticalTactic.StandOff && !g.Hold && Computer[g.Side] && g.Members.Count > 7) RequestMode(g, TacticalTactic.Surround);
         }
         int c = g.Members.Count;
-        double d = g.AppliedMode == 1 ? r.Distance : Math.Max(2.0, r.Lo + (c < 3 ? 0.5 : c < 6 ? 0.75 : 0.9) * (r.Hi - r.Lo));
+        double d = g.AppliedMode == TacticalTactic.Surround ? r.Distance : Math.Max(2.0, r.Lo + (c < 3 ? 0.5 : c < 6 ? 0.75 : 0.9) * (r.Hi - r.Lo));
         Move(n, n.Point + v.Normalised() * d, dt, 2.0);
     }
 
     /// <summary>
     /// Fighter group per frame: withdraw (mission 3); mission 6 (Death Star run: TacticalDeathStar.cs); nav points with the
     /// fighter mover (r = 1, the nav point set exactly to the waypoint on arrival; an emptied list falls through); else the first
-    /// target unless on hold or the notification flag set (target found dead: no movement until 0x35 / 0x36): the mover
+    /// target unless on hold or the notification flag set (target found dead: no movement until the remove-target or replace-targets message): the mover
     /// toward nav + v * distance without band test (r = 2), arrived: orbit the target at 36 deg/s (side index 1 negates the stored angle
     /// every frame, as read).
     /// </summary>
     void FighterGroupFrame(TacticalGroup g, double dt)
     {
         var n = g.Nav!;
-        if (g.Mission == 3) { WithdrawFrame(g, dt); return; }
-        if (g.Mission == 6) { RunFrame(g, dt); return; }
+        if (g.Mission == TacticalMissionNumber.Withdraw) { WithdrawFrame(g, dt); return; }
+        if (g.Mission == TacticalMissionNumber.AttackDeathStar) { RunFrame(g, dt); return; }
         if (g.NavPoints.Count > 0)
         {
             var np = g.NavPoints[0];
@@ -729,8 +729,8 @@ public sealed partial class TacticalBattle
             Reached(g, np);
             if (g.NavPoints.Count > 0) return; // the list empty after it falls through into the target step
         }
-        if (Current(g) is not { } target || g.Mission == 11) return;
-        if (g.Notified) return; // notification flag set: no movement until 0x35 / 0x36 clear it
+        if (Current(g) is not { } target || g.Mission == TacticalMissionNumber.Stop) return;
+        if (g.Notified) return; // notification flag set: no movement until the remove-target or replace-targets message clears it
         if (!target.Active) TargetLost(g, target); // the movement below runs for this one frame
         var v = target.Position - n.Point;
         if (v.IsZero) v = Forward(g.Side);
@@ -753,7 +753,7 @@ public sealed partial class TacticalBattle
     /// <summary>
     /// Withdraw movement: heading := desired := -forward; the nav point moves to the own start line (z = W * heading.z * 0.5,
     /// r = 1); arrived and the side's countdown <= 0: the first member (task force) or every member (fighter group) that is active,
-    /// can jump, within 8.0 of the line and not in state 6 / 7 / 8 faces the heading, state 6, message 0x2D.
+    /// can jump, within 8.0 of the line and not in state 6 / 7 / 8 faces the heading, state 6, jump-start message.
     /// </summary>
     void WithdrawFrame(TacticalGroup g, double dt)
     {
@@ -765,27 +765,27 @@ public sealed partial class TacticalBattle
         if (_countdown[g.Side] > 0) return;
         foreach (var u in (g.Fighters ? g.Members : g.Members.Take(1)).ToList())
         {
-            if (!u.Active || u.State is 6 or 7 or 8 || !CanJump(u) || (u.Position.Z - edge) * fwd.Z > 8.0) continue;
+            if (!u.Active || u.State is TacticalUnitState.JumpOrdered or TacticalUnitState.Accelerating or TacticalUnitState.InHyperspace || !CanJump(u) || (u.Position.Z - edge) * fwd.Z > 8.0) continue;
             u.Facing = u.DesiredFacing = n.Heading;
-            u.U.State = 6; // the tractor effect hook when held: the front end draws the loop from the holder list
-            Post(Stamp, 0x2D, () => JumpOut(u));
+            u.U.State = TacticalUnitState.JumpOrdered; // the tractor effect hook when held: the front end draws the loop from the holder list
+            Post(Stamp, TacticalMessage.JumpStart, () => JumpOut(u));
         }
     }
 
-    /// <summary>Message 0x2D: active and can jump (re-tested) gives state 7 (hyperspace timer from 0); active but cannot jump gives the scuttle handler at once; not active gives nothing.</summary>
+    /// <summary>Jump-start message: active and can jump (re-tested) gives state 7 (hyperspace timer from 0); active but cannot jump gives the scuttle handler at once; not active gives nothing.</summary>
     void JumpOut(TacticalUnit u)
     {
         if (!u.Active) return;
         if (CanJump(u))
         {
-            (u.U.State, u.JumpTimer) = (7, 0);
-            Sounds.Add(u.Fighter ? 0x1D : 0x1F); // first jump frame
+            (u.U.State, u.JumpTimer) = (TacticalUnitState.Accelerating, 0);
+            Sounds.Add(u.Fighter ? TacticalEffectSound.FighterJumpOut : TacticalEffectSound.CapitalJumpOut); // first jump frame
         }
         else Scuttle(u);
     }
 
     /// <summary>
-    /// State 7 per frame: facing := -forward, timer += dt up to 4000 ms; then state 8 and message 0x2E (which leads to:
+    /// State 7 per frame: facing := -forward, timer += dt up to 4000 ms; then state 8 and the retreat message (which leads to:
     /// out of its group, state 9; a carrier takes its launchable fighters along). The drawn push-back is presentation (the front end).
     /// </summary>
     void Hyperspace(TacticalUnit u, double dt)
@@ -793,8 +793,8 @@ public sealed partial class TacticalBattle
         u.Facing = -Forward(u.Side);
         u.JumpTimer = Math.Min(4000, u.JumpTimer + dt);
         if (u.JumpTimer < 4000) return;
-        u.U.State = 8;
-        Post(Stamp, 0x2E, () => Retreat(u));
+        u.U.State = TacticalUnitState.InHyperspace;
+        Post(Stamp, TacticalMessage.Retreat, () => Retreat(u));
     }
 
     // ---- unit frame updates ----
@@ -807,7 +807,7 @@ public sealed partial class TacticalBattle
     internal V3 DesiredVector(TacticalUnit t)
     {
         if (t.Group is not { Nav: { } n } g) return V3.Zero;
-        if (g.Mission == 3)
+        if (g.Mission == TacticalMissionNumber.Withdraw)
         {
             double edge = Forward(t.Side).Z * Size * -0.5, dz = edge - t.Position.Z;
             return Math.Abs(dz) <= 4.0 ? V3.Zero : new V3(0, 0, dz);
@@ -816,7 +816,7 @@ public sealed partial class TacticalBattle
         {
             // Simulation mission 2, a carrier key and its hangar (no alive test) gives
             // the hangar's point (a ship's launch / docking point, the scene's (-W/2, 0, 0))
-            if (g.Mission == 2 && t.U.Carrier is { } c && FindHangar(c) is { } h) return LaunchPoint(h) - t.Position;
+            if (g.Mission == TacticalMissionNumber.Recover && t.U.Carrier is { } c && FindHangar(c) is { } h) return LaunchPoint(h) - t.Position;
             var f = n.Point - n.Slot(t) - t.Position;
             return f.LengthSquared <= 4.0 ? n.Velocity : f;
         }
@@ -834,7 +834,7 @@ public sealed partial class TacticalBattle
     {
         var g = t.Group;
         V3 d;
-        if (g?.Mission == 3) d = -Forward(t.Side);
+        if (g?.Mission == TacticalMissionNumber.Withdraw) d = -Forward(t.Side);
         else if (!v.IsZero) d = v;
         else if (g?.Nav is not { } n || Current(g) is not { } target || !n.Velocity.IsZero || n.Stuck < 5 || target.Fighter) d = t.Facing;
         else
@@ -934,7 +934,7 @@ public sealed partial class TacticalBattle
         t.Floor = double.MinValue;
         t.Ceiling = double.MaxValue;
         var v = t.Desired = DesiredVector(t);
-        if (v.IsZero && t.Group?.Mission == 3) return;
+        if (v.IsZero && t.Group?.Mission == TacticalMissionNumber.Withdraw) return;
         var fallback = t.Group?.Nav is { } gn && !gn.Heading.IsZero ? gn.Heading : Forward(t.Side);
         var d = !v.IsZero ? v : t.Group is { } g && Current(g) is { } target ? target.Position - t.Position : fallback;
         if (d.IsZero) d = fallback;
@@ -974,26 +974,30 @@ public sealed partial class TacticalBattle
 
     // ---- orders that move ----
 
-    /// <summary>Order kinds: 0x09 set the nav point, 0x0B formation, 0x3D acceleration mode.</summary>
-    public const int SetNavPoint = 0x09, SetFormation = 0x0B, SetMode = 0x3D;
+    /// <summary>Type index of the SD class (its default size is 19.0 instead of 3.6).</summary>
+    const int StarDestroyerTypeIndex = 21;
 
-    /// <summary>Message 0x09 (payload group, x, y, z) through the message queue: the nav point := (x, y, z) at once when it runs. No UI path posts it.</summary>
+    /// <summary>Set-nav-point message (payload group, x, y, z) through the message queue: the nav point := (x, y, z) at once when it runs. No UI path posts it.</summary>
     public bool OrderPoint(TacticalGroup g, V3 p)
     {
         if (Done || !_groups.Contains(g)) return false;
-        Post(Stamp, SetNavPoint, () => { if (_groups.Contains(g) && g.Nav is not null) g.Nav.Point = p; });
+        Post(Stamp, TacticalMessage.SetNavPoint, () => { if (_groups.Contains(g) && g.Nav is not null) g.Nav.Point = p; });
         return true;
     }
 
-    /// <summary>A value message through the queue: 0x0B formation (1 sphere, 3 fighter with a fighter leader, else line), 0x3D acceleration mode 1 / 2 (the request sets the requested mode at once).</summary>
-    public bool OrderValue(TacticalGroup g, int kind, int value)
+    /// <summary>Set-formation message through the queue: the group's formation changes when it runs (a fighter formation with a fighter leader, else line).</summary>
+    public bool OrderFormation(TacticalGroup g, TacticalFormation kind)
     {
         if (Done || !_groups.Contains(g)) return false;
-        switch (kind)
-        {
-            case SetFormation: Post(Stamp, kind, () => ChangeFormation(g, value)); return true;
-            case SetMode when value is 1 or 2: RequestMode(g, value); return true;
-            default: return false;
-        }
+        Post(Stamp, TacticalMessage.SetFormation, () => ChangeFormation(g, kind));
+        return true;
+    }
+
+    /// <summary>Set-mode message (acceleration mode): the request sets the requested mode at once.</summary>
+    public bool OrderMode(TacticalGroup g, TacticalTactic mode)
+    {
+        if (Done || !_groups.Contains(g)) return false;
+        RequestMode(g, mode);
+        return true;
     }
 }

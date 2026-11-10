@@ -93,7 +93,7 @@ public partial class CellList : Control
     public Action<CellList, int, Rect2>? DrawCell { get; set; }
     public Action? Pressed { get; set; }           // any press (focus the window)
     public Action? SelectionChanged { get; set; }
-    public Action<int>? Activated { get; set; }    // double click (notification 0x309)
+    public Action<int>? Activated { get; set; }    // double click
     public Action<Vector2>? ContextMenu { get; set; }
     public Action<Vector2, int>? DragStarted { get; set; } // press point (global), cell
     readonly ScrollSkin? _skin;

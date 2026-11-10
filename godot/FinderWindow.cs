@@ -5,14 +5,15 @@ using System.Linq;
 using Godot;
 using TextFormat = OpenSWR.Data.TextFormat;
 using OpenSWR.Data;
+using OpenSWR.Data.Dat;
 using OpenSWR.Sim;
 using SimOwner = OpenSWR.Sim.Owner;
 
 /// <summary>
-/// Finder windows (ids 0x14 System / 0x15 Fleet / 0x16 Troop / 0x17 Personnel; 470 x 330 centred in the map rect,
+/// Finder windows (System, Fleet, Troop and Personnel; 470 x 330 centred in the map rect,
 /// not draggable, no minimise): page picture + frame 10335 / 10336 + right strip, title / label / filter caption, name box with
 /// type-ahead (Enter: go to), single-selection list sorted by text (skin 10653; row text grey, selected white), filter radio
-/// group, Fleet modes (ships / fleets), Personnel categories (characters / special forces), Close 200 and Display 0xC9. Rows
+/// group, Fleet modes (ships / fleets), Personnel categories (characters / special forces), Close 200 and Display. Rows
 /// from <see cref="Finders"/>; double click / Enter / Display: go to (a system: its sector and planet windows, observed
 /// F5) and close. Right click on a row: Encyclopedia and Status (observed F4). Refilled on a filter / mode change only.
 /// </summary>
@@ -27,17 +28,17 @@ public partial class FinderWindow : GameWindow
     NameField _name = null!;
     bool _typing;
 
-    public FinderWindow(MainScreen screen, int id) : base(screen, id, new Vector2(470, 330))
+    public FinderWindow(MainScreen screen, WindowKind id) : base(screen, id, new Vector2(470, 330))
     {
         var r = screen.MapRect;
         Position = (r.Position + (r.Size - Size) / 2).Floor(); // centred in the map rect
-        _filter = id is Finders.TroopFinder or Finders.PersonnelFinder ? (screen.Side == SimOwner.Alliance ? 1 : 2) : 1;
+        _filter = id is WindowKind.TroopFinder or WindowKind.PersonnelFinder ? (screen.Side == SimOwner.Alliance ? 1 : 2) : 1;
     }
 
     protected override bool Framed => false;
     protected override string Title => "";
-    bool Wide => Kind is Finders.FleetFinder or Finders.PersonnelFinder; // strip 10586 / 10590 and button x 423
-    bool Locations => Kind == Finders.TroopFinder || Kind == Finders.PersonnelFinder && _category == 2;
+    bool Wide => Kind is WindowKind.FleetFinder or WindowKind.PersonnelFinder; // strip 10586 / 10590 and button x 423
+    bool Locations => Kind == WindowKind.TroopFinder || Kind == WindowKind.PersonnelFinder && _category == 2;
 
     static Texture2D? Bmp(int id)
     {
@@ -56,44 +57,44 @@ public partial class FinderWindow : GameWindow
     public override void _Ready()
     {
         int x = A ? (Wide ? 423 : 427) : 426;
-        Btn(A ? new Rect2(x, 25, 32, 31) : new Rect2(426, 21, 44, 41), A ? 10514 : 10516, A ? 10515 : 10517, 6484, () => Screen.Windows.Close(this)).Sound = Assets.Click; // 200
-        Btn(A ? new Rect2(x, 93, 32, 31) : new Rect2(426, 89, 44, 41), A ? 10518 : 10520, A ? 10519 : 10521, 6483, Display).Sound = Assets.Click; // 0xC9
+        Btn(A ? new Rect2(x, 25, 32, 31) : new Rect2(426, 21, 44, 41), A ? StrategyBitmaps.FinderCloseAllianceUp : StrategyBitmaps.FinderCloseEmpireUp, A ? StrategyBitmaps.FinderCloseAllianceDown : StrategyBitmaps.FinderCloseEmpireDown, StrategyTexts.Close, () => Screen.Windows.Close(this)).Sound = Assets.Click; // 200
+        Btn(A ? new Rect2(x, 93, 32, 31) : new Rect2(426, 89, 44, 41), A ? StrategyBitmaps.DisplayAllianceUp : StrategyBitmaps.DisplayEmpireUp, A ? StrategyBitmaps.DisplayAllianceDown : StrategyBitmaps.DisplayEmpireDown, StrategyTexts.FinderDisplay, Display).Sound = Assets.Click; // display button
         (int Id, int Up, int Down, int Tip)[] filters = Kind switch
         {
-            Finders.SystemFinder => [(1, 10500, 10501, 6247), (2, 10502, 10503, 6248), (3, 10505, 10506, 6249), (4, 10508, 10509, 6256), (5, 10511, 10512, 6257)],
-            Finders.FleetFinder => [(1, 10500, 10501, 0), (2, 10502, 10503, 0), (3, 10505, 10506, 0)],
-            Finders.TroopFinder => [(1, 10502, 10503, 6480), (2, 10505, 10506, 6481)],
-            _ => [(1, 10502, 10503, 6291), (2, 10505, 10506, 6292)],
+            WindowKind.SystemFinder => [(1, StrategyBitmaps.FinderAllUp, StrategyBitmaps.FinderAllDown, StrategyTexts.AllSystems), (2, StrategyBitmaps.FinderAllianceUp, StrategyBitmaps.FinderAllianceDown, StrategyTexts.AllianceSystems), (3, StrategyBitmaps.FinderEmpireUp, StrategyBitmaps.FinderEmpireDown, StrategyTexts.EmpireSystems), (4, StrategyBitmaps.FinderNeutralUp, StrategyBitmaps.FinderNeutralDown, StrategyTexts.NeutralSystems), (5, StrategyBitmaps.FinderUnexploredUp, StrategyBitmaps.FinderUnexploredDown, StrategyTexts.UnexploredSystems)],
+            WindowKind.FleetFinder => [(1, StrategyBitmaps.FinderAllUp, StrategyBitmaps.FinderAllDown, 0), (2, StrategyBitmaps.FinderAllianceUp, StrategyBitmaps.FinderAllianceDown, 0), (3, StrategyBitmaps.FinderEmpireUp, StrategyBitmaps.FinderEmpireDown, 0)],
+            WindowKind.TroopFinder => [(1, StrategyBitmaps.FinderAllianceUp, StrategyBitmaps.FinderAllianceDown, StrategyTexts.AllianceTroops), (2, StrategyBitmaps.FinderEmpireUp, StrategyBitmaps.FinderEmpireDown, StrategyTexts.EmpireTroops)],
+            _ => [(1, StrategyBitmaps.FinderAllianceUp, StrategyBitmaps.FinderAllianceDown, StrategyTexts.AlliancePersonnel), (2, StrategyBitmaps.FinderEmpireUp, StrategyBitmaps.FinderEmpireDown, StrategyTexts.EmpirePersonnel)],
         };
-        int fy = Kind is Finders.SystemFinder or Finders.FleetFinder ? 78 : 72;
+        int fy = Kind is WindowKind.SystemFinder or WindowKind.FleetFinder ? 78 : 72;
         for (int i = 0; i < filters.Length; i++)
         {
             var f = filters[i];
             _filters.Add((f.Id, Btn(new Rect2(36 + 52 * i, fy, 49, 42), f.Up, f.Down, f.Tip, () => SetFilter(f.Id)), f.Tip));
-            if (Kind == Finders.TroopFinder) _filters[^1].Button.Sound = Assets.Click; // Inferred: the troop finder's "mode buttons"
+            if (Kind == WindowKind.TroopFinder) _filters[^1].Button.Sound = Assets.Click; // Inferred: the troop finder's "mode buttons"
         }
-        // Fleet modes (command 0xFA) / Personnel categories (0x6E) on the strip; button y 0 and 54 (E second y Inferred the same)
+        // Fleet modes / Personnel categories on the strip; button y 0 and 54 (E second y Inferred the same)
         (int Id, int AUp, int ADown, int EUp, int EDown, int Tip)[] modes = Kind switch
         {
-            Finders.FleetFinder => [(2, 10530, 10531, 10534, 10535, 6277), (1, 10528, 10529, 10532, 10533, 6272)],
-            Finders.PersonnelFinder => [(3, 10542, 10543, 10544, 10545, 6297), (2, 10546, 10547, 10548, 10549, 6296)],
+            WindowKind.FleetFinder => [(2, StrategyBitmaps.ShipModeAllianceUp, StrategyBitmaps.ShipModeAllianceDown, StrategyBitmaps.ShipModeEmpireUp, StrategyBitmaps.ShipModeEmpireDown, StrategyTexts.ShipFinderTitle), (1, StrategyBitmaps.FleetModeAllianceUp, StrategyBitmaps.FleetModeAllianceDown, StrategyBitmaps.FleetModeEmpireUp, StrategyBitmaps.FleetModeEmpireDown, StrategyTexts.FleetFinderTitle)],
+            WindowKind.PersonnelFinder => [(3, StrategyBitmaps.CharactersCategoryAllianceUp, StrategyBitmaps.CharactersCategoryAllianceDown, StrategyBitmaps.CharactersCategoryEmpireUp, StrategyBitmaps.CharactersCategoryEmpireDown, StrategyTexts.Characters), (2, StrategyBitmaps.SpecialForcesCategoryAllianceUp, StrategyBitmaps.SpecialForcesCategoryAllianceDown, StrategyBitmaps.SpecialForcesCategoryEmpireUp, StrategyBitmaps.SpecialForcesCategoryEmpireDown, StrategyTexts.SpecialForces)],
             _ => [],
         };
         for (int i = 0; i < modes.Length; i++)
         {
             var m = modes[i];
-            var r = A ? new Rect2(423, 147 + 54 * i, 32, 31) : new Rect2(426, 143 + 54 * i, Kind == Finders.FleetFinder ? 44 : 42, 41);
+            var r = A ? new Rect2(423, 147 + 54 * i, 32, 31) : new Rect2(426, 143 + 54 * i, Kind == WindowKind.FleetFinder ? 44 : 42, 41);
             _modes.Add((m.Id, Btn(r, A ? m.AUp : m.EUp, A ? m.ADown : m.EDown, m.Tip, () => SetMode(m.Id))));
-            if (Kind == Finders.FleetFinder) _modes[^1].Button.Sound = Assets.Click; // fleet finder mode buttons
+            if (Kind == WindowKind.FleetFinder) _modes[^1].Button.Sound = Assets.Click; // fleet finder mode buttons
         }
-        var list = Kind switch { Finders.TroopFinder => new Rect2(37, 144, 349, 159), Finders.PersonnelFinder => new Rect2(37, 143, 349, 161), _ => new Rect2(36, 138, 350, 165) };
-        _list = new CellList(10653) { Single = true, Cell = new Vector2(330, Kind == Finders.TroopFinder ? 25 : 20), Position = list.Position, Size = list.Size, DrawCell = DrawRow };
+        var list = Kind switch { WindowKind.TroopFinder => new Rect2(37, 144, 349, 159), WindowKind.PersonnelFinder => new Rect2(37, 143, 349, 161), _ => new Rect2(36, 138, 350, 165) };
+        _list = new CellList(StrategyRcData.PanelScrollSkin) { Single = true, Cell = new Vector2(330, Kind == WindowKind.TroopFinder ? 25 : 20), Position = list.Position, Size = list.Size, DrawCell = DrawRow };
         _list.Pressed = () => Screen.Windows.Focus(this);
         _list.SelectionChanged = Selected;
         _list.Activated = i => GoTo(_rows[i].Key);
         _list.ContextMenu = RowMenu;
         AddChild(_list);
-        _name = new NameField(new Vector2(143, 45), new Vector2(250, Kind == Finders.FleetFinder ? 16 : 18))
+        _name = new NameField(new Vector2(143, 45), new Vector2(250, Kind == WindowKind.FleetFinder ? 16 : 18))
         {
             TextChanged = TypeAhead, Submitted = () => { if (_current is { } c) GoTo(c); }, OtherKey = NameKey,
         };
@@ -114,7 +115,7 @@ public partial class FinderWindow : GameWindow
     /// <summary>Fleet mode change: name box cleared, page switched, refilled with the filter kept; Personnel category likewise (Inferred).</summary>
     void SetMode(int id)
     {
-        if (Kind == Finders.FleetFinder) { if (_mode == id) { Fill(keep: true); return; } _mode = id; }
+        if (Kind == WindowKind.FleetFinder) { if (_mode == id) { Fill(keep: true); return; } _mode = id; }
         else { if (_category == id) { Fill(keep: true); return; } _category = id; }
         _name.Clear();
         _current = null;
@@ -128,22 +129,22 @@ public partial class FinderWindow : GameWindow
         var s = _filter == 1 ? SimOwner.Alliance : SimOwner.Empire;
         _rows = Kind switch
         {
-            Finders.SystemFinder => Finders.Systems(Game, side, _filter, N),
-            Finders.FleetFinder => Finders.Fleets(Game, side, _mode == 2, _filter, N),
-            Finders.TroopFinder => Finders.Locations(Game, side, s, 0x10, 0x14, Finders.TroopTypes[_filter - 1], N),
-            _ when _category == 2 => Finders.Locations(Game, side, s, 0x3C, 0x40, Finders.SpecialForceTypes[_filter - 1], N),
+            WindowKind.SystemFinder => Finders.Systems(Game, side, _filter, N),
+            WindowKind.FleetFinder => Finders.Fleets(Game, side, _mode == 2, _filter, N),
+            WindowKind.TroopFinder => Finders.Locations(Game, side, s, Families.Troop, Families.CapitalShip, Finders.TroopTypes[_filter - 1], N),
+            _ when _category == 2 => Finders.Locations(Game, side, s, Families.SpecialForce, Families.Mission, Finders.SpecialForceTypes[_filter - 1], N),
             _ => Finders.Characters(Game, side, s, N, Assets.Stra),
         };
         _list.Count = _rows.Count;
         if (!keep) { _list.Selected.Clear(); _list.First = 0; }
         foreach (var (id, b, _) in _filters) b.Checked = id == _filter;
-        foreach (var (id, b) in _modes) b.Checked = id == (Kind == Finders.FleetFinder ? _mode : _category);
+        foreach (var (id, b) in _modes) b.Checked = id == (Kind == WindowKind.FleetFinder ? _mode : _category);
         QueueRedraw();
     }
 
     /// <summary>
-    /// 0x408 / filter re-selection: current key := the type-ahead row (none for an empty text or list); the row is selected
-    /// and scrolled into view unless already selected; the select posts no 0x29B (the name box text stays).
+    /// text changed notification / filter re-selection: current key := the type-ahead row (none for an empty text or list); the row is selected
+    /// and scrolled into view unless already selected; the select posts no command notification (the name box text stays).
     /// </summary>
     void TypeAhead(string text)
     {
@@ -155,28 +156,28 @@ public partial class FinderWindow : GameWindow
         _typing = false;
     }
 
-    /// <summary>Row click (0x29B): current key := the row's; the name box shows the row's name (Personnel: only when the view is Existing).</summary>
+    /// <summary>Row click (command notification): current key := the row's; the name box shows the row's name (Personnel: only when the view is Existing).</summary>
     void Selected()
     {
         if (_list.Selected.Count == 0 || _typing) return;
         var row = _rows[_list.Selected.Min];
         _current = row.Key;
-        if (Kind == Finders.PersonnelFinder && !ScreenViews.View(Game, row.Key, Side).Existing) return;
+        if (Kind == WindowKind.PersonnelFinder && !ScreenViews.View(Game, row.Key, Side).Existing) return;
         string name = Screen.ObjectName(row.Key);
         if (_name.Text != name) _name.SetText(name);
     }
 
-    /// <summary>Display (0xC9): go to the current key and close; nothing without one (Fleet Finder: closes anyway).</summary>
+    /// <summary>Display: go to the current key and close; nothing without one (Fleet Finder: closes anyway).</summary>
     void Display()
     {
         if (_current is { } c) GoTo(c);
-        else if (Kind == Finders.FleetFinder) Screen.Windows.Close(this);
+        else if (Kind == WindowKind.FleetFinder) Screen.Windows.Close(this);
     }
 
     /// <summary>Go to: troop / special-force rows: the location's first unit; a system: its sector and planet windows (F5).</summary>
     void GoTo(GameObject o)
     {
-        if (Locations) o = Finders.FirstUnit(Game, o, Side, Kind == Finders.TroopFinder ? 0x10u : 0x3Cu, Kind == Finders.TroopFinder ? 0x14u : 0x40u) ?? o;
+        if (Locations) o = Finders.FirstUnit(Game, o, Side, Kind == WindowKind.TroopFinder ? Families.Troop : Families.SpecialForce, Kind == WindowKind.TroopFinder ? Families.CapitalShip : Families.Mission) ?? o;
         Screen.Windows.Close(this);
         Screen.GoTo(o, planet: true);
     }
@@ -186,8 +187,8 @@ public partial class FinderWindow : GameWindow
     {
         if (_list.Selected.Count == 0) return;
         var key = _rows[_list.Selected.Min].Key;
-        var rows = OpenSWR.Data.UiRcData.BuildMenu([(ObjectCommands.Encyclopedia, true, false), (ObjectCommands.Status, key is not StarSystem, false)], Assets.Menu);
-        Screen.OpenMenuAt(rows, at, id => Screen.Dispatch(id, [(key, 0)]));
+        var rows = OpenSWR.Data.UiRcData.BuildMenu([((int)ObjectCommands.Encyclopedia, true, false), ((int)ObjectCommands.Status, key is not StarSystem, false)], Assets.Menu);
+        Screen.OpenMenuAt(rows, at, id => Screen.Dispatch(id, [(key, GroupMode.Object)]));
     }
 
     bool NameKey(InputEventKey k)
@@ -233,23 +234,23 @@ public partial class FinderWindow : GameWindow
 
     (int Picture, int Title, int Label) Page => Kind switch
     {
-        Finders.SystemFinder => (10522, 6245, 6246),
-        Finders.FleetFinder => _mode == 2 ? (A ? 10524 : 10525, 6277, 6278) : (A ? 10526 : 10527, 6272, 6273),
-        Finders.TroopFinder => (_filter == 1 ? 10540 : 10541, 6400, 6401),
-        _ => (_category == 3 ? (_filter == 1 ? 10536 : 10537) : (_filter == 1 ? 10538 : 10539), 6288, 6289),
+        WindowKind.SystemFinder => (StrategyBitmaps.SystemFinderPage, StrategyTexts.SystemFinderTitle, StrategyTexts.SystemFinderLabel),
+        WindowKind.FleetFinder => _mode == 2 ? (A ? StrategyBitmaps.ShipFinderPageAlliance : StrategyBitmaps.ShipFinderPageEmpire, StrategyTexts.ShipFinderTitle, StrategyTexts.ShipFinderLabel) : (A ? StrategyBitmaps.FleetFinderPageAlliance : StrategyBitmaps.FleetFinderPageEmpire, StrategyTexts.FleetFinderTitle, StrategyTexts.FleetFinderLabel),
+        WindowKind.TroopFinder => (_filter == 1 ? StrategyBitmaps.TroopFinderPageAlliance : StrategyBitmaps.TroopFinderPageEmpire, StrategyTexts.TroopFinderTitle, StrategyTexts.TroopFinderLabel),
+        _ => (_category == 3 ? (_filter == 1 ? StrategyBitmaps.CharactersPageAlliance : StrategyBitmaps.CharactersPageEmpire) : (_filter == 1 ? StrategyBitmaps.SpecialForcesPageAlliance : StrategyBitmaps.SpecialForcesPageEmpire), StrategyTexts.PersonnelFinderTitle, StrategyTexts.PersonnelFinderLabel),
     };
 
     /// <summary>Filter caption: the selected filter's tooltip (Fleet Finder: 6274-6276 fleets / 6279-6281 ships).</summary>
-    string Caption => Kind == Finders.FleetFinder ? Assets.Stra((_mode == 2 ? 6279 : 6274) + _filter - 1) : Assets.Stra(_filters.FirstOrDefault(f => f.Id == _filter).Tip);
+    string Caption => Kind == WindowKind.FleetFinder ? Assets.Stra((_mode == 2 ? StrategyTexts.AllShips : StrategyTexts.AllFleets) + _filter - 1) : Assets.Stra(_filters.FirstOrDefault(f => f.Id == _filter).Tip);
 
     public override void _Draw()
     {
         var (picture, title, label) = Page;
         if (Bmp(picture) is { } p) { DrawTextureRect(p, new Rect2(12, 13, 400, 306), false); DrawLog.Bitmap(this, p, new Rect2(12, 13, 400, 306)); }
-        var frame = Bmp(A ? 10335 : 10336)!;
+        var frame = Bmp(A ? StrategyBitmaps.PanelFrameAlliance : StrategyBitmaps.PanelFrameEmpire)!;
         DrawTextureRect(frame, new Rect2(0, 0, 470, 331), false);
         DrawLog.Bitmap(this, frame, new Rect2(0, 0, 470, 331));
-        var strip = Bmp(Wide ? (A ? 10586 : 10590) : (A ? 10584 : 10588))!;
+        var strip = Bmp(Wide ? (A ? StrategyBitmaps.WideFinderStripAlliance : StrategyBitmaps.WideFinderStripEmpire) : (A ? StrategyBitmaps.FinderStripAlliance : StrategyBitmaps.FinderStripEmpire))!;
         DrawTextureRect(strip, new Rect2(412, 0, 58, 330), false);
         DrawLog.Bitmap(this, strip, new Rect2(412, 0, 58, 330));
         // text items: title fixed width 350 centred, height measured; label measured, top-left at (36, 48)
@@ -263,10 +264,10 @@ public partial class FinderWindow : GameWindow
     {
         var row = _rows[i];
         bool selected = list.Selected.Contains(i);
-        float textWidth = row.Counts is null ? r.Size.X - 4 : (Kind == Finders.TroopFinder ? 194 : 222) - 4;
+        float textWidth = row.Counts is null ? r.Size.X - 4 : (Kind == WindowKind.TroopFinder ? 194 : 222) - 4;
         Assets.DrawCellText(list, new Rect2(r.Position.X + 2, r.Position.Y, textWidth, r.Size.Y), row.Text, 10, selected ? Colors.White : Color.Color8(120, 120, 120), TextFormat.Row);
         if (row.Counts is not { } counts) return;
-        int x0 = Kind == Finders.TroopFinder ? 194 : 222;
+        int x0 = Kind == WindowKind.TroopFinder ? 194 : 222;
         bool one = _filter == 1;
         for (int c = 0; c < counts.Length; c++)
         {
@@ -294,8 +295,8 @@ public partial class FinderWindow : GameWindow
 /// shadowed as a list row (not modelled: its prefix processing, an "&amp;" would underline the next character). Caret = the
 /// system caret: 2 px x the control height at (X - s, 0), shown by inverting the pixels under it, blinking at
 /// <see cref="StringField.BlinkTime"/>, only while focused (Inferred: a caret move restarts the blink with the caret shown).
-/// Keys: Home / End / Left / Right (Shift: selection), Backspace / Delete, Insert (overwrite), Enter: <see cref="Submitted"/>
-/// (0x407), characters: <see cref="TextChanged"/> (0x408); other keys go to the owner (not accepted). Mouse: press = caret /
+/// Keys: Home / End / Left / Right (Shift: selection), Backspace / Delete, Insert (overwrite), Enter: <see cref="Submitted"/>,
+/// characters: <see cref="TextChanged"/>; other keys go to the owner (not accepted). Mouse: press = caret /
 /// selection start, drag = selection, double click = word.
 /// </summary>
 public partial class NameField : Control
@@ -330,21 +331,21 @@ public partial class NameField : Control
 
     public string Text => _field.Text;
 
-    /// <summary>Text set (no 0x408): caret -1 (the end); s and the selection kept.</summary>
+    /// <summary>Text set (no text changed notification): caret -1 (the end); s and the selection kept.</summary>
     public void SetText(string text)
     {
         _field.SetText(text);
         Changed();
     }
 
-    /// <summary>Clear (no 0x408): empty, caret -1, s := 0.</summary>
+    /// <summary>Clear (no text changed notification): empty, caret -1, s := 0.</summary>
     public void Clear()
     {
         _field.Clear();
         Changed();
     }
 
-    /// <summary>A typed character (WM_CHAR; the demo path), without the 0x408 notification.</summary>
+    /// <summary>A typed character (WM_CHAR; the demo path), without the text changed notification.</summary>
     public void Type(char c)
     {
         _field.Type(c);
@@ -413,7 +414,7 @@ public partial class NameField : Control
             Submitted?.Invoke();
             return true;
         }
-        if (k.Unicode is > 0 and <= 0xFFFF && StringField.Typed((char)k.Unicode, k.CtrlPressed, k.AltPressed) && Accept?.Invoke((char)k.Unicode) != false) // WM_CHAR: printable only
+        if (k.Unicode is > 0 and <= 65535 && StringField.Typed((char)k.Unicode, k.CtrlPressed, k.AltPressed) && Accept?.Invoke((char)k.Unicode) != false) // WM_CHAR: printable only
         {
             if (_field.Type((char)k.Unicode)) TextChanged?.Invoke(_field.Text);
             return true;

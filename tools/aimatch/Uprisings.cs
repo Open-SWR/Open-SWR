@@ -54,8 +54,8 @@ public sealed class UprisingRecorder
         foreach (var m in game.Missions.Where(m => !_missions.ContainsKey(m))) _missions[m] = new(m, game.Day);
         foreach (var x in _missions.Values.Where(x => x.Result == "running"))
         {
-            if (x.Mission.TaskStatus == 3) x.Succeeded = true;
-            if (x.Mission.CompletionStatus != 0 || x.Mission.Deleted) x.Result = x.Succeeded ? "succeeded" : x.Mission.CompletionStatus is 3 or 4 ? "foiled" : "failed";
+            if (x.Mission.TaskStatus == MissionTaskStatus.Succeeded) x.Succeeded = true;
+            if (x.Mission.CompletionStatus != MissionCompletion.None || x.Mission.Deleted) x.Result = x.Succeeded ? "succeeded" : x.Mission.CompletionStatus is MissionCompletion.FoiledEnRoute or MissionCompletion.Foiled ? "foiled" : "failed";
         }
         var today = changes.Where(c => c.Day == game.Day).ToList();
         var battles = (game.BattleTrace ?? []).Where(b => b.Day == game.Day).Select(b => b.System).ToHashSet();
@@ -79,7 +79,7 @@ public sealed class UprisingRecorder
             if (share != tr.LastShare)
             {
                 // an enemy incite there in its success state today (Inferred: the incident's support change comes with it)
-                bool incite = _missions.Values.Any(x => x.Mission.Owner == enemy && x.Mission.Kind == 0x56 && x.Mission.Objective == s && x.Mission.TaskStatus == 3);
+                bool incite = _missions.Values.Any(x => x.Mission.Owner == enemy && x.Mission.Kind == MissionKind.InciteUprising && x.Mission.Objective == s && x.Mission.TaskStatus == MissionTaskStatus.Succeeded);
                 tr.Support.Add((game.Day, share - tr.LastShare, incite ? "incite" : battles.Contains(s) ? "battle" : "other"));
                 tr.LastShare = share;
             }
@@ -99,10 +99,10 @@ public sealed class UprisingRecorder
         var moves = (ai.TroopMoveLog ?? []).Where(m => m.From == s.Ref && m.Day > from && m.Day <= day).GroupBy(m => m.Step).ToDictionary(g => g.Key, g => g.Count());
         var against = _missions.Values.Where(x => x.Mission.Owner == enemy && x.Day > from && x.Day <= day && (x.Mission.Objective == s || x.Mission.TargetLocation == s)).ToList();
         var support = t.Support.Where(x => x.Day > from).ToList();
-        var subdue = _missions.Values.Where(x => x.Mission.Owner == _side && x.Mission.Kind == 0x57 && x.Mission.Objective == s && x.Day > from && x.Day <= day).OrderBy(x => x.Day).LastOrDefault();
+        var subdue = _missions.Values.Where(x => x.Mission.Owner == _side && x.Mission.Kind == MissionKind.SubdueUprising && x.Mission.Objective == s && x.Day > from && x.Day <= day).OrderBy(x => x.Day).LastOrDefault();
         return new(day, s.Ref, t.Taken, t.ShareAtCapture, t.ShareAtStart < 0 ? s.SupportFor(_side) : t.ShareAtStart, t.Lowest, t.TroopsAtStart, t.Requirement, t.MaxTroops, moves,
-            against.Count(x => x.Mission.Kind == 0x56), against.Count(x => x.Mission.Kind == 0x56 && x.Succeeded), against.Count(x => x.Mission.Kind == 0x52),
-            against.Count(x => x.Mission.Kind is not (0x56 or 0x52)),
+            against.Count(x => x.Mission.Kind == MissionKind.InciteUprising), against.Count(x => x.Mission.Kind == MissionKind.InciteUprising && x.Succeeded), against.Count(x => x.Mission.Kind == MissionKind.Espionage),
+            against.Count(x => x.Mission.Kind is not (MissionKind.InciteUprising or MissionKind.Espionage)),
             support.Where(x => x.Cause == "incite").Sum(x => x.Delta), support.Where(x => x.Cause == "battle").Sum(x => x.Delta), support.Where(x => x.Cause == "other").Sum(x => x.Delta),
             subdue is not null, subdue?.Result ?? "none");
     }

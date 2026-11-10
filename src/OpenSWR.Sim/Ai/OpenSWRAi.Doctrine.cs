@@ -18,7 +18,7 @@ public sealed partial class OpenSWRController
     /// <summary>The roles of the side's buildable units, recomputed when the buildable set changes (research, captured yards).</summary>
     internal IReadOnlyDictionary<uint, UnitRoles> BuildableRoles(GameState game)
     {
-        var types = new[] { 0x28u, 0x29u, 0x2Au }.SelectMany(m => Research.Buildable(game, Side, m)).Select(r => r.Common.Ref)
+        var types = new[] { Families.Shipyard, Families.TrainingFacility, Families.ConstructionYard }.SelectMany(m => Research.Buildable(game, Side, m)).Select(r => r.Common.Ref)
             .Where(t => Roles.KindOf(t) is not null).Distinct().Order().ToList();
         string key = string.Join(",", types);
         if (_roles is null || key != _rolesKey) (_roles, _rolesKey) = (Roles.Compute(game, types), key);
@@ -64,14 +64,14 @@ public sealed partial class OpenSWRController
             double need = 1.5 * k.Strength(g.Target, Enemy), have = fleets.Sum(f => k.Strength(f, Side));
             Max(UnitRole.Line, need <= 0 ? 0 : (need - have) / need);
             var seen = k.Contents(g.Target).Where(v => v.Owner == Enemy).SelectMany(v => v.Object is Fleet f ? k.Contents(f).SelectMany(c => k.Contents(c.Object).Prepend(c)) : [v]);
-            int squadrons = seen.Count(v => v.In(0x1C, 0x20));
+            int squadrons = seen.Count(v => v.In(Families.Fighter, Families.Headquarters));
             int screens = Math.Max(1, (int)Math.Ceiling(1.2 * squadrons / SquadronsPerScreen));
             if (!screensFull)
                 Max(UnitRole.Screen, (double)(screens - roles.Count(r => r.Main == UnitRole.Screen)) / screens);
             int troops = AttackTroopsFor(k, g.Target), places = ships.Sum(x => TroopRoom(game, x) + x.Contents.Count(y => Family.IsTroop(y.Type)));
             Max(UnitRole.Transport, (double)(troops - places) / troops);
             if (interdictorBuildable && !roles.Any(r => r.Interdictor)) Max(UnitRole.Durability, 1); // Durability stands for the interdictor slot
-            bool fortified = k.Contents(g.Target).Any(v => v.Owner == Enemy && v.In(0x22, 0x28)) || EnemyTroops(k, g.Target) > 4;
+            bool fortified = k.Contents(g.Target).Any(v => v.Owner == Enemy && v.In(Families.IonCannon, Families.Shipyard)) || EnemyTroops(k, g.Target) > 4;
             if (fortified)
             {
                 double bombardNeed = BombardNeed(game, k, g.Target), bombard = ships.Sum(x => Bombardment(game, x.Type));
@@ -112,7 +112,7 @@ public sealed partial class OpenSWRController
     {
         var enemy = game.Systems.SelectMany(s => k.Fleets(s, Enemy)).SelectMany(f => k.Contents(f)).ToList();
         int ships = enemy.Count(v => Family.IsCapitalShip(v.Object.Type));
-        int fighters = enemy.Count(v => v.In(0x1C, 0x20)) + enemy.Sum(v => k.Contents(v.Object).Count(c => c.In(0x1C, 0x20)));
+        int fighters = enemy.Count(v => v.In(Families.Fighter, Families.Headquarters)) + enemy.Sum(v => k.Contents(v.Object).Count(c => c.In(Families.Fighter, Families.Headquarters)));
         var role = ships > 2 * fighters ? UnitRole.Bomber : fighters > 2 * ships ? UnitRole.Interceptor : UnitRole.Superiority;
         return BestFor(game, UnitKind.Fighter, role, free, r => r.Main == role && (!jumping || !r.NeedsCarrier))
             ?? BestFor(game, UnitKind.Fighter, role, free, r => !jumping || !r.NeedsCarrier);
@@ -166,7 +166,7 @@ public sealed partial class OpenSWRController
 
     /// <summary>Bombardment a fortified target wants: its known planetary shields + 1.</summary>
     int BombardNeed(GameState game, Known k, StarSystem target) =>
-        1 + k.Contents(target).Where(v => v.Owner == Enemy && v.In(0x24, 0x25)).Sum(v => (int)(game.Definitions.DefenseFacilities.FirstOrDefault(r => r.Common.Ref == v.Object.Type)?.ShieldStrength ?? 0));
+        1 + k.Contents(target).Where(v => v.Owner == Enemy && v.In(Families.PlanetaryShield, Families.DeathStarShield)).Sum(v => (int)(game.Definitions.DefenseFacilities.FirstOrDefault(r => r.Common.Ref == v.Object.Type)?.ShieldStrength ?? 0));
 
     /// <summary>
     /// The shipyard's fighter target away from its system: its current target fleet if it still has room, else the nearest own

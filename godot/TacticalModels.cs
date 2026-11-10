@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 using OpenSWR.Data;
+using OpenSWR.Data.Dat;
 using OpenSWR.Data.Tactical;
 using OpenSWR.Sim;
 
@@ -29,7 +30,8 @@ public static class TacticalModels
     static int? ModelId(OpenSWR.Data.Dat.GameDefinitions defs, uint type)
     {
         int i = BattleEngine.TypeIndex(defs, type);
-        return i <= 14 ? 2010 + 10 * i : i <= 28 ? 2510 + 10 * (i - 15) : null;
+        return i <= TacticalTypeIndex.LastFirstBlockShip ? TacticalModelIds.CapitalShipBase + 10 * i
+            : i <= TacticalTypeIndex.LastSecondBlockShip ? TacticalModelIds.CapitalShipSecondBase + 10 * (i - TacticalTypeIndex.FirstSecondBlockShip) : null;
     }
 
     /// <summary>
@@ -48,30 +50,34 @@ public static class TacticalModels
     }
 
     /// <summary>
-    /// Fighter image base, by the local side (by type - 0x1D): local Alliance 4000, 4000, 4020, 4030, 4104, 4114,
-    /// 4124, 4134; local Empire 4004, 4014, 4024, 4034, 4100, 4110, 4120, 4130, by the type index. A class outside 0x1D ... 0x24 has no image.
+    /// Fighter image base, by the local side (by type - 29): local Alliance 4000, 4000, 4020, 4030, 4104, 4114,
+    /// 4124, 4134; local Empire 4004, 4014, 4024, 4034, 4100, 4110, 4120, 4130, by the type index. A class outside 29 ... 36 has no image.
     /// </summary>
     public static int? FighterImage(OpenSWR.Data.Dat.GameDefinitions defs, uint type, int local)
     {
-        int[][] table = [[4000, 4000, 4020, 4030, 4104, 4114, 4124, 4134], [4004, 4014, 4024, 4034, 4100, 4110, 4120, 4130]];
-        int i = BattleEngine.TypeIndex(defs, type) - 0x1D;
+        int[][] table =
+        [
+            [TacticalBitmaps.XWingAllianceView, TacticalBitmaps.YWingAllianceView, TacticalBitmaps.AWingAllianceView, TacticalBitmaps.BWingAllianceView, TacticalBitmaps.EmpireFighterAllianceView, TacticalBitmaps.EmpireInterceptorAllianceView, TacticalBitmaps.EmpireBomberAllianceView, TacticalBitmaps.EmpireDefenderAllianceView],
+            [TacticalBitmaps.XWingEmpireView, TacticalBitmaps.YWingEmpireView, TacticalBitmaps.AWingEmpireView, TacticalBitmaps.BWingEmpireView, TacticalBitmaps.EmpireFighterEmpireView, TacticalBitmaps.EmpireInterceptorEmpireView, TacticalBitmaps.EmpireBomberEmpireView, TacticalBitmaps.EmpireDefenderEmpireView],
+        ];
+        int i = BattleEngine.TypeIndex(defs, type) - TacticalTypeIndex.FirstFighter;
         return i is >= 0 and < 8 ? table[local][i] : null;
     }
 
     /// <summary>A type-303 image as a texture (fighters, effects, background): palette 15001 unless given (a planet: 15000 + its picture) and index 0 transparent (both Inferred).</summary>
-    public static Texture2D? Image(int id, int palette = 15001)
+    public static Texture2D? Image(int id, int palette = TacticalBitmaps.ScenePalette)
     {
         string key = "#" + id + "/" + palette;
         if (Textures.TryGetValue(key, out var cached)) return cached;
         Texture2D? texture = null;
-        if (Assets.Module(Module).Find(new ResId(303), (ushort)id) is { } res && !RleImage.IsPalette(res.Data.Span))
+        if (Assets.Module(Module).Find(new ResId(ResourceTypes.TacticalImage), (ushort)id) is { } res && !RleImage.IsPalette(res.Data.Span))
             try { texture = Texture(RleImage.Decode(res.Data.Span), transparent: 0, palette); }
             catch (System.IO.InvalidDataException) { }
         return Textures[key] = texture;
     }
 
     /// <summary>Palette colour <paramref name="index"/> of palette 15001 (the far fighter dot, images 4200-4204 are not decodable).</summary>
-    public static Color PaletteColour(int index) => (_palette ??= Palette(15001))[index];
+    public static Color PaletteColour(int index) => (_palette ??= Palette(TacticalBitmaps.ScenePalette))[index];
 
     /// <summary>World (x, y, z): Godot (x, y, -z).</summary>
     public static Vector3 ToGodot(double x, double y, double z) => new((float)x, (float)y, (float)-z);
@@ -90,12 +96,12 @@ public static class TacticalModels
             mod.RotationDegrees = new Vector3(0, 180, 0); // glTF nose points to -z; turn it 180 degrees to +Z
             return node;
         }
-        if (Family.Of(type) < 0x18 && ModelId(defs, type) is { } id && Mesh(id) is not null && Mesh(id + 1) is not null && Mesh(id + 2) is not null)
+        if (Family.Of(type) < Families.DeathStar && ModelId(defs, type) is { } id && Mesh(id) is not null && Mesh(id + 1) is not null && Mesh(id + 2) is not null)
         {
             for (int lod = 0; lod < 3; lod++) node.AddChild(new MeshInstance3D { Name = lod.ToString(), Mesh = Mesh(id + lod), Visible = lod == 1 });
             return node;
         }
-        node.AddChild(new MeshInstance3D { Mesh = Family.Of(type) is >= 0x18 and < 0x1C ? new SphereMesh { Radius = 9.5f, Height = 19 } : new BoxMesh { Size = new Vector3(1, 0.5f, 3) } });
+        node.AddChild(new MeshInstance3D { Mesh = Family.Of(type) is >= Families.DeathStar and < Families.Fighter ? new SphereMesh { Radius = 9.5f, Height = 19 } : new BoxMesh { Size = new Vector3(1, 0.5f, 3) } });
         return node;
     }
 
@@ -126,7 +132,7 @@ public static class TacticalModels
     {
         if (Meshes.TryGetValue(id, out var cached)) return cached;
         ArrayMesh? mesh = null;
-        if (Assets.Module(Module).Find(new ResId(301), (ushort)id) is { } res
+        if (Assets.Module(Module).Find(new ResId(ResourceTypes.TacticalModel), (ushort)id) is { } res
             && XFile.Parse(XFile.Decompress(res.Data.Span)).FirstOrDefault(n => n.Type == "Mesh") is { } node)
             mesh = Build(XMesh.From(node));
         return Meshes[id] = mesh;
@@ -175,16 +181,16 @@ public static class TacticalModels
     static Texture2D? Texture(string file)
     {
         if (Textures.TryGetValue(file, out var cached)) return cached;
-        var named = _named ??= Assets.Module(Module).OfType(new ResId(303)).Where(e => e.Name.Name is not null)
+        var named = _named ??= Assets.Module(Module).OfType(new ResId(ResourceTypes.TacticalImage)).Where(e => e.Name.Name is not null)
             .GroupBy(e => e.Name.Name!, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         Texture2D? texture = null;
         if (named.TryGetValue(file, out var res) && !RleImage.IsPalette(res.Data.Span)) texture = Texture(RleImage.Decode(res.Data.Span), transparent: -1);
         return Textures[file] = texture;
     }
 
-    static Texture2D Texture(RleImage image, int transparent, int paletteId = 15001)
+    static Texture2D Texture(RleImage image, int transparent, int paletteId = TacticalBitmaps.ScenePalette)
     {
-        var palette = paletteId == 15001 ? _palette ??= Palette(15001) : Palette(paletteId);
+        var palette = paletteId == TacticalBitmaps.ScenePalette ? _palette ??= Palette(TacticalBitmaps.ScenePalette) : Palette(paletteId);
         var rgba = new byte[image.Width * image.Height * 4];
         for (int i = 0; i < image.Pixels.Length; i++)
         {
@@ -200,7 +206,7 @@ public static class TacticalModels
     {
         // An unmodded install has no 15001-15200: 5557 is byte-equal to the mod's 15001.
         var module = Assets.Module(Module);
-        var data = (module.Find(new ResId(303), (ushort)id) ?? module.Find(new ResId(303), 5557))?.Data.ToArray() ?? new byte[768];
+        var data = (module.Find(new ResId(ResourceTypes.TacticalImage), (ushort)id) ?? module.Find(new ResId(ResourceTypes.TacticalImage), TacticalBitmaps.PlainScenePalette))?.Data.ToArray() ?? new byte[768];
         return [.. Enumerable.Range(0, 256).Select(i => Color.Color8(data[3 * i], data[3 * i + 1], data[3 * i + 2]))];
     }
 }

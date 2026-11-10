@@ -5,7 +5,7 @@ public abstract class GameEvent
 {
     /// <summary>TimedQueue key: the fire day.</summary>
     public int FireDay { get; set; }
-    /// <summary>PriorityQueue key; notification 0x315 = 0x10.</summary>
+    /// <summary>PriorityQueue key; the notification event has priority <see cref="Objects.NotificationPriority"/>.</summary>
     public virtual int Priority => 0;
     /// <summary>Runs the event; true = re-insert into the same queue (periodic timers), false = destroy.</summary>
     public abstract bool Run(GameState game);
@@ -175,15 +175,15 @@ public sealed class Clock
 }
 
 /// <summary>A timer start (Fire = false) or firing, for traces.</summary>
-public readonly record struct TimerRecord(int Day, bool Fire, int Type, uint Target, int Base, int Variance, int FireDay, uint Serial, bool Reinserted);
+public readonly record struct TimerRecord(int Day, bool Fire, TimerType Type, uint Target, int Base, int Variance, int FireDay, uint Serial, bool Reinserted);
 
 /// <summary>
 /// Periodic timer slot: Serial plus Base / Variance / Active. Every change of a part increments Serial; setting Active or
 /// Base while Active schedules an event with delay Base + roll(Variance).
 /// </summary>
-public sealed class TimerSlot(int type, uint target, object? subject, Action<GameState, TimerSlot> action)
+public sealed class TimerSlot(TimerType type, uint target, object? subject, Action<GameState, TimerSlot> action)
 {
-    public int Type { get; } = type;
+    public TimerType Type { get; } = type;
     /// <summary>Target object reference (family and id), as held by the event.</summary>
     public uint Target { get; } = target;
     /// <summary>The target object, for the action.</summary>
@@ -224,7 +224,7 @@ public sealed class TimerSlot(int type, uint target, object? subject, Action<Gam
         var e = new TimerEvent(this);
         game.Clock.Schedule(e, Base + game.Random.Roll(Variance, DrawSite.Timer));
         game.Clock.TimerTrace?.Add(new(game.Day, false, Type, Target, Base, Variance, e.FireDay, Serial, false));
-        if (Type == 0x387) game.Record(0x387, Target, Base, e.FireDay);
+        if (Type == TimerType.Travel) game.Record(FactKind.TravelStart, Target, Base, e.FireDay);
     }
 
     internal void Act(GameState game) => action(game, this);
@@ -235,7 +235,7 @@ public sealed class TimerSlot(int type, uint target, object? subject, Action<Gam
 /// Timer event: copy of the slot's Serial/Base/Variance. Fires only if the target resolves (family in the type's range) and the
 /// slot Serial still matches: action first, then fireDay += Base + roll(Variance) from the event's copy, re-insert; otherwise
 /// dropped without a draw.
-/// A Destroyed target does not resolve (verified for all timer classes 0x380-0x394).
+/// A Destroyed target does not resolve (verified for the Repair through FacilityCycle timer types).
 /// </summary>
 sealed class TimerEvent(TimerSlot slot, uint serial, int @base, int variance) : GameEvent
 {
@@ -256,7 +256,7 @@ sealed class TimerEvent(TimerSlot slot, uint serial, int @base, int variance) : 
             FireDay += _base + game.Random.Roll(_variance, DrawSite.Timer);
         }
         game.Clock.TimerTrace?.Add(new(game.Day, true, slot.Type, slot.Target, _base, _variance, fireDay, _serial, current));
-        // the 0x31A kept this slot for its queued event (Objects.Delete); dropped now, it can never fire again
+        // the delete handling kept this slot for its queued event (Objects.Delete); dropped now, it can never fire again
         if (!current && slot.Subject is GameObject { Deleted: true } && game.Timers.GetValueOrDefault((slot.Type, slot.Target)) == slot
             && !game.Clock.TimedEvents.OfType<TimerEvent>().Any(e => e != this && e.Slot == slot))
             game.Timers.Remove((slot.Type, slot.Target));

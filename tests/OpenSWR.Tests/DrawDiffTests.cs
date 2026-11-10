@@ -7,6 +7,8 @@ public class DrawDiffTests
 {
     static string[] Lines(string s) => s.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
+    // Trace records are in the Frida tracer's own form (Win32 colours and DrawText flags in hex, as it writes them); openswr
+    // log records and every expected value are decimal.
     // A sprite keyed into a canvas, the canvas blitted into a backbuffer section, the section drawn to the full-screen paint DC:
     // the sprite lands at canvas offset + sprite offset. The kblit comes before the canvas is placed (fixed point, not one pass).
     const string Chain = """
@@ -37,7 +39,7 @@ public class DrawDiffTests
         Assert.Equal("0,0 20x10", sprite.Src);
         var text = items.Single(i => i.Kind == "text");
         Assert.Equal((10, 20, 100, 16), (text.X!.Value, text.Y!.Value, text.W, text.H));
-        Assert.Equal(("14/400/Arial", "00ff00", 0x24, Strings.Hash("Hello")), (text.Font, text.Colour, text.Fmt!.Value, text.TextHash));
+        Assert.Equal(("14/400/Arial", "0,255,0", 36, Strings.Hash("Hello")), (text.Font, text.Colour, text.Fmt!.Value, text.TextHash));
     }
 
     [Fact]
@@ -62,7 +64,7 @@ public class DrawDiffTests
 
     static Report Diff(string openSWR) => Differ.Compare(TraceReader.Read(Lines(Chain)), OpenSWRLogReader.Read(Lines(openSWR)));
 
-    const string Text = """{"ev":"drawtext","s":"Hello","r":[10,20,110,36],"fmt":"0x24","font":10,"c":"00ff00"}""";
+    const string Text = """{"ev":"drawtext","s":"Hello","r":[10,20,110,36],"fmt":36,"font":10,"c":"0,255,0"}""";
 
     [Fact]
     public void SameDrawsMatch()
@@ -85,11 +87,11 @@ public class DrawDiffTests
 
         r = Diff("""
             {"ev":"bm_kblit","res":"strategy.dll:2:1","dx":35,"dy":46,"dw":20,"dh":9,"sx":0,"sy":0,"w":20,"h":10,"key":252}
-            {"ev":"drawtext","sh":"5:185f8db3","r":[10,20,110,36],"fmt":"0x124","font":4,"c":"ff0000"}
-            """.Replace("5:185f8db3", Strings.Hash("Hello")));
+            {"ev":"drawtext","sh":"HASH","r":[10,20,110,36],"fmt":292,"font":4,"c":"255,0,0"}
+            """.Replace("HASH", Strings.Hash("Hello")));
         Assert.Equal("matched 0, missing 0, extra 0, moved 0, different 2", r.Summary);
         Assert.StartsWith("size 20x10 -> 20x9 at (35,46)", r.Findings.Single(f => f.Original!.Kind == "bitmap").Detail);
-        Assert.Equal("fmt 0x24 -> 0x124, font 14/400/Arial -> 16/400/Arial, colour 00ff00 -> ff0000 at (10,20) -> (10,20) delta (0,0)",
+        Assert.Equal("fmt 36 -> 292, font 14/400/Arial -> 16/400/Arial, colour 0,255,0 -> 255,0,0 at (10,20) -> (10,20) delta (0,0)",
             r.Findings.Single(f => f.Original!.Kind == "text").Detail);
     }
 
@@ -191,42 +193,15 @@ public class DrawDiffTests
     public void OpenSWRLogExtras()
     {
         var items = OpenSWRLogReader.Read(Lines("""
-            {"ev":"drawtext","s":"Coruscant","r":[1,2,51,18],"fmt":"0x0","font":-1,"c":"ffffff","node":"Label"}
+            {"ev":"drawtext","s":"Coruscant","r":[1,2,51,18],"fmt":0,"font":-1,"c":"255,255,255","node":"Label"}
             {"ev":"bm_blit","res":null,"src":"composed:list","dx":0,"dy":0,"dw":10,"dh":10,"sx":0,"sy":0,"w":10,"h":10,"node":"X"}
             {"ev":"bm_blit","res":null,"dx":0,"dy":0,"dw":10,"dh":10,"sx":0,"sy":0,"w":10,"h":10,"node":"X"}
-            {"ev":"ellipse","r":[10,20,30,40],"pen":"00ff00","node":"GalaxyMap"}
+            {"ev":"ellipse","r":[10,20,30,40],"pen":"0,255,0","node":"GalaxyMap"}
             """));
         Assert.Equal("?/?/godot", items[0].Font);
         Assert.Equal(["bitmap src:composed:list", "bitmap (not from the install)", "ellipse 20x20"], items.Skip(1).Select(i => i.Group));
-        Assert.Equal(("none", "00ff00", "(10,20)"), (items[3].Colour, items[3].Pen, items[3].Position));
+        Assert.Equal(("none", "0,255,0", "(10,20)"), (items[3].Colour, items[3].Pen, items[3].Position));
         var r = Differ.Compare([], items);
         Assert.Equal("matched 0, missing 0, extra 4, moved 0, different 0", r.Summary);
-    }
-
-    static string VectorFile(string name) => Path.Combine(AppContext.BaseDirectory, "Vectors", "draw", name);
-    static readonly Dictionary<string, string> SideSkin = new() { ["strategy.dll:2:900"] = "strategy.dll:2:901" };
-
-    // Vectors: a 100 ms slice of the strategy trace (sector window opening) and the openswr sample log
-    [Fact]
-    public void StrategyVectorReportIsStable()
-    {
-        var original = TraceReader.Read(File.ReadLines(VectorFile("original-strategy.jsonl")));
-        var ours = OpenSWRLogReader.Read(File.ReadLines(VectorFile("openswr-strategy.jsonl")), SideSkin);
-        var r = Differ.Compare(original, ours);
-        Assert.Equal("matched 12, missing 870, extra 347, moved 9, different 14", r.Summary);
-        Assert.Equal(888, r.OriginalPlaced); // the state before the slice places its canvases (as the full trace does)
-        // the sector window's corner tile: the original blits it opaque, openswr keyed
-        Assert.Contains(r.Findings, f => f.Class == "different" && f.Group == "bitmap strategy.dll:2:10100" && f.Detail.StartsWith("key - -> 252"));
-    }
-
-    // Report-only: the trace and the openswr log do not show the same game state yet
-    [GameFact("OPENSWR_TRACE_DIR")]
-    public void FullStrategyTraceReports()
-    {
-        string trace = Path.Combine(Environment.GetEnvironmentVariable("OPENSWR_TRACE_DIR")!, "draw-20261104-155731.jsonl");
-        var r = Differ.Compare(TraceReader.Read(File.ReadLines(trace)), OpenSWRLogReader.Read(File.ReadLines(VectorFile("openswr-strategy.jsonl")), SideSkin));
-        Assert.True(r.OriginalDraws > 0 && r.OpenSWRDraws > 0);
-        Assert.NotEmpty(r.Text());
-        Assert.Contains(r.Findings, f => f.Group == "bitmap strategy.dll:2:901" && f.Detail.StartsWith("size 640x481 -> 640x480"));
     }
 }

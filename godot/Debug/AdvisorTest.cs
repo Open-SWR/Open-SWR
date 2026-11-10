@@ -18,10 +18,10 @@ public partial class AdvisorTest : Node2D
 
     // Alliance layout; the Empire layout was not read, assumed equal (Inferred).
     static readonly Vector2 MainAt = new(541, 337), SecondaryAt = new(316, 411);
-    const ushort IdleHold = 403, IdleTicks = 15, SecondaryEnd = 11575;
+    const ushort IdleHold = AdvisorRcData.MainIdle, IdleTicks = 15, SecondaryEnd = AdvisorRcData.SecondaryEnd;
 
     static readonly (string Side, string Script, string Dll, ushort Frame)[] Sides =
-        [("Alliance", "C3POACT.SPT", "ALSPRITE.DLL", 900), ("Empire", "IMP22ACT.SPT", "EMSPRITE.DLL", 901)];
+        [("Alliance", "C3POACT.SPT", "ALSPRITE.DLL", StrategyBitmaps.FrameAlliance), ("Empire", "IMP22ACT.SPT", "EMSPRITE.DLL", StrategyBitmaps.FrameEmpire)];
 
     /// <summary>Original game folder. Empty = OPENSWR_GAME_DIR, then user://settings.cfg, else ask.</summary>
     [Export] public string GameDir { get; set; } = "";

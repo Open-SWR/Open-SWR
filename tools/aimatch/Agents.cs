@@ -18,7 +18,7 @@ public sealed class AgentRecorder
     {
         public int Born { get; } = born;
         public Mission Mission { get; } = m;
-        public uint Kind { get; } = m.Kind;
+        public uint Kind { get; } = (uint)m.Kind;
         public Owner Side { get; } = m.Owner;
         public List<GameObject> Members { get; } = [.. m.Team, .. m.Decoys];
         public bool ForceAgent { get; } = m.Team.Any(a => Family.IsSpecialForce(a.Type));
@@ -29,9 +29,9 @@ public sealed class AgentRecorder
         public bool Lost { get; set; }
     }
 
-    /// <summary>Per slice end day and side: type -> (count, on a mission, idle, lost within the slice).</summary>
+    /// <summary>Per slice end day and side: type gives (count, on a mission, idle, lost within the slice).</summary>
     public Dictionary<(int Day, Owner Side), Dictionary<uint, (int Count, int OnMission, int Idle, int Lost)>> Forces { get; } = [];
-    /// <summary>Per slice end day and side: (kind, special-force agent) -> (missions created, decoys).</summary>
+    /// <summary>Per slice end day and side: (kind, special-force agent) gives (missions created, decoys).</summary>
     public Dictionary<(int Day, Owner Side), Dictionary<(uint Kind, bool Force), (int Missions, int Decoys)>> Created { get; } = [];
 
     readonly Dictionary<Mission, Run> _runs = [];
@@ -42,7 +42,7 @@ public sealed class AgentRecorder
 
     public void Day(GameState game, int length)
     {
-        foreach (var m in game.Missions.Where(m => !_runs.ContainsKey(m) && m.Owner is Owner.Alliance or Owner.Empire && m.Kind >= 0x51 && m.Team.Count + m.Decoys.Count > 0))
+        foreach (var m in game.Missions.Where(m => !_runs.ContainsKey(m) && m.Owner is Owner.Alliance or Owner.Empire && m.Kind >= MissionKind.Diplomacy && m.Team.Count + m.Decoys.Count > 0))
         {
             var r = _runs[m] = new Run(m, m.Objective is { } o && _foiled.Contains((m.Owner, o.Ref)), game.Day);
             _all.Add(r);
@@ -50,11 +50,11 @@ public sealed class AgentRecorder
         foreach (var r in _all.Where(r => !r.Ended))
         {
             var m = r.Mission;
-            if (m.TaskStatus == 3) r.Succeeded = true;
+            if (m.TaskStatus == MissionTaskStatus.Succeeded) r.Succeeded = true;
             if (r.Members.Any(x => !x.Existing || x is Character { Captured: true })) r.Lost = true;
-            if (m.CompletionStatus == 0 && !m.Deleted) continue;
+            if (m.CompletionStatus == MissionCompletion.None && !m.Deleted) continue;
             r.Ended = true;
-            if (m.CompletionStatus is 3 or 4 && m.Objective is { } o) _foiled.Add((r.Side, o.Ref));
+            if (m.CompletionStatus is MissionCompletion.FoiledEnRoute or MissionCompletion.Foiled && m.Objective is { } o) _foiled.Add((r.Side, o.Ref));
         }
         foreach (var f in game.Created.Where(o => Family.IsSpecialForce(o.Type) && o.Owner is Owner.Alliance or Owner.Empire))
         {
@@ -64,7 +64,7 @@ public sealed class AgentRecorder
         if (game.Day % length != 0 || game.Day == 0) return;
         foreach (var side in Sides)
         {
-            var onMission = game.Missions.Where(m => m.Owner == side && !m.Deleted && m.CompletionStatus == 0).SelectMany(m => m.Team.Concat(m.Decoys)).ToHashSet();
+            var onMission = game.Missions.Where(m => m.Owner == side && !m.Deleted && m.CompletionStatus == MissionCompletion.None).SelectMany(m => m.Team.Concat(m.Decoys)).ToHashSet();
             var mine = game.Created.Where(o => Family.IsSpecialForce(o.Type) && o.Owner == side && o.Existing).ToList();
             var table = Forces[(game.Day, side)] = [];
             foreach (var type in mine.Select(o => o.Type).Concat(_lost.Keys.Where(k => k.Item1 == side).Select(k => k.Item2)).Distinct())
@@ -119,7 +119,7 @@ public sealed class AgentRecorder
             var line = new StringBuilder("    espionage per slice (SF + char):");
             foreach (int day in days)
             {
-                int Count(bool force) => runs.Sum(x => x.Recorder.Created.Where(e => e.Key.Day == day && Who(x.Result, e.Key.Side) == who).Sum(e => e.Value.GetValueOrDefault((0x52u, force)).Missions));
+                int Count(bool force) => runs.Sum(x => x.Recorder.Created.Where(e => e.Key.Day == day && Who(x.Result, e.Key.Side) == who).Sum(e => e.Value.GetValueOrDefault((82u, force)).Missions));
                 line.Append(string.Create(CultureInfo.InvariantCulture, $" d{day} {(double)Count(true) / games:F1}+{(double)Count(false) / games:F1}"));
             }
             text.AppendLine(line.ToString());

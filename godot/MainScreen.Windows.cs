@@ -38,12 +38,12 @@ public partial class MainScreen
     internal string ObjectName(GameObject o, bool title) => o switch
     {
         StarSystem s => DisplayName(s.Definition.Common),
-        Character { CommandKind: >= 1 and <= 3 } c when title && c.Owner == _map.Side => $"{Assets.Stra(34819 - c.CommandKind)} {DisplayName(c.Definition.Common)}",
+        Character { CommandKind: >= 1 and <= 3 } c when title && c.Owner == _map.Side => $"{Assets.Stra(StrategyTexts.CommandRankTitleBase - c.CommandKind)} {DisplayName(c.Definition.Common)}",
         Character c => DisplayName(c.Definition.Common),
-        Fleet f => $"{_map.Text(11523) ?? "Fleet"} {f.Id:X}",
+        Fleet f => $"{_map.Text(11523) ?? "Fleet"} {f.Id}",
         Mission m => DisplayName(m.Record.Common),
         ManufacturingManager m => $"{m.Kind} manager",
-        _ => _game!.Definitions.Resolve(o.Type) is { } r ? DisplayName(r.Common) : $"{o.Type:X8}",
+        _ => _game!.Definitions.Resolve(o.Type) is { } r ? DisplayName(r.Common) : $"{Family.Of(o.Type)}:{SdRef.IndexOf(o.Type)}",
     };
 
     void BuildWindowLayer()
@@ -64,34 +64,34 @@ public partial class MainScreen
     }
 
     /// <summary>
-    /// A quadrant icon's sub-window: mode 4: kind 9 manufacturing, 8: 10 planet, 0x10: 4 fleet, 0x40: 0xB
-    /// missions; id = (kind, system index); created at the point, clamped into the map rect; an open one is raised.
+    /// A quadrant icon's sub-window: facilities: manufacturing window, ground: planet window, fleets: fleet window, missions: missions window;
+    /// id = (kind, system index); created at the point, clamped into the map rect; an open one is raised.
     /// </summary>
-    internal GameWindow? OpenSystemWindow(StarSystem s, int mode, Vector2 at)
+    internal GameWindow? OpenSystemWindow(StarSystem s, GroupMode mode, Vector2 at)
     {
-        int kind = mode switch { 4 => 9, 8 => 10, 0x10 => 4, 0x40 => 0xB, _ => 0 };
-        if (kind == 0) return null;
+        WindowKind kind = mode switch { GroupMode.Facilities => WindowKind.SystemManufacturing, GroupMode.Ground => WindowKind.SystemPlanet, GroupMode.Fleets => WindowKind.SystemFleet, GroupMode.Missions => WindowKind.SystemMissions, _ => WindowKind.None };
+        if (kind == WindowKind.None) return null;
         var id = new WindowAddress(kind, (int)new OpenSWR.Data.Dat.SdRef(s.Ref).Index);
         return Windows.Open(id, () =>
         {
             GameWindow w = kind switch
             {
-                9 => new ManufacturingWindow(this, id, s),
-                10 => new PlanetWindow(this, id, s),
-                4 => new FleetWindow(this, id, s),
+                WindowKind.SystemManufacturing => new ManufacturingWindow(this, id, s),
+                WindowKind.SystemPlanet => new PlanetWindow(this, id, s),
+                WindowKind.SystemFleet => new FleetWindow(this, id, s),
                 _ => new MissionsWindow(this, id, s),
             };
             var r = MapRect;
             w.Position = new Vector2(Mathf.Clamp(at.X, r.Position.X, r.End.X - w.Size.X), Mathf.Clamp(at.Y, r.Position.Y, r.End.Y - w.Size.Y));
             return w;
-        }, 606);
+        }, StrategySounds.SubWindowOpen);
     }
 
     /// <summary>
-    /// The load's window factory by window kind: sector windows (1) and system sub-windows (4, 9, 10, 0xB) of a
-    /// system still in the game, the message window (0xD, tab "all"), the finders (0x14-0x17) and the encyclopedia (0x19, index page).
-    /// Not re-created: the confirmation dialog (0x10, no factory case), battle windows, and the production (0x22), mission
-    /// (0xC) and status (0x1A) windows, whose pending command or subject is not saved (Inferred, as the tab and the encyclopedia entry).
+    /// The load's window factory by window kind: sector windows and system sub-windows of a
+    /// system still in the game, the message window (tab "all"), the finders and the encyclopedia (index page).
+    /// Not re-created: the confirmation dialog (no factory case), battle windows, and the production, mission
+    /// and status windows, whose pending command or subject is not saved (Inferred, as the tab and the encyclopedia entry).
     /// </summary>
     GameWindow? ReopenWindow(SavedWindow saved)
     {
@@ -99,14 +99,14 @@ public partial class MainScreen
         var game = _game!;
         switch (kind)
         {
-            case 1:
+            case WindowKind.Sector:
                 return game.Systems.Select(s => s.Sector).FirstOrDefault(x => x.Definition.Common.Index == index) is { } sector ? Windows.OpenSector(sector) : null;
-            case 4 or 9 or 10 or 0xB:
+            case WindowKind.SystemFleet or WindowKind.SystemManufacturing or WindowKind.SystemPlanet or WindowKind.SystemMissions:
                 return game.Systems.FirstOrDefault(s => new OpenSWR.Data.Dat.SdRef(s.Ref).Index == index) is { } system
-                    ? OpenSystemWindow(system, kind switch { 9 => 4, 10 => 8, 4 => 0x10, _ => 0x40 }, new Vector2(saved.X, saved.Y)) : null;
-            case 0xD when index == 0: OpenMessages(0x79); break;
-            case >= 0x14 and <= 0x17 when index == 0: OpenFinder(kind); break;
-            case 0x19 when index == 0: OpenEncyclopedia(null, 0); break;
+                    ? OpenSystemWindow(system, kind switch { WindowKind.SystemManufacturing => GroupMode.Facilities, WindowKind.SystemPlanet => GroupMode.Ground, WindowKind.SystemFleet => GroupMode.Fleets, _ => GroupMode.Missions }, new Vector2(saved.X, saved.Y)) : null;
+            case WindowKind.Messages when index == 0: OpenMessages(MessageTab.All); break;
+            case WindowKind.SystemFinder or WindowKind.FleetFinder or WindowKind.TroopFinder or WindowKind.PersonnelFinder when index == 0: OpenFinder(kind); break;
+            case WindowKind.Encyclopedia when index == 0: OpenEncyclopedia(null, 0); break;
             default: return null;
         }
         return Windows.Find(new WindowAddress(kind, index));
@@ -184,10 +184,10 @@ public partial class MainScreen
         if (_game is not { GameOver: false } || Mathf.Abs(at.X - start.X) <= 4 && Mathf.Abs(at.Y - start.Y) <= 4) return;
         if (Windows.WindowAt(at) is not { } target) return;
         // the topmost window under the point decides: a window covering the source's rect still takes the drop (Inferred)
-        if (source.Kind is 9 or 10 && target == source) return;
+        if (source.Kind is WindowKind.SystemManufacturing or WindowKind.SystemPlanet && target == source) return;
         var local = at - target.GetGlobalRect().Position;
         foreach (var (id, selection, to) in ScreenViews.Drop(_game, Side, source.Kind, source.Selection, target.DestAt(local), target.MoveAt(local), ctrl))
-            Dispatch(id, selection, to);
+            Dispatch((int)id, selection, to);
     }
 
     /// <summary>
@@ -201,13 +201,13 @@ public partial class MainScreen
         if (ScreenViews.GoTo(_game, o, Side) is not { } goTo) return;
         var (system, kind, _) = goTo;
         var sector = Windows.OpenSector(system.Sector);
-        if (kind == 0 && planet) kind = 10; // finders: a system opens its planet window too (as observed)
-        if (kind == 0)
+        if (kind == WindowKind.None && planet) kind = WindowKind.SystemPlanet; // finders: a system opens its planet window too (as observed)
+        if (kind == WindowKind.None)
         {
             sector.SelectObject(system);
             return;
         }
-        int mode = kind switch { 9 => 4, 10 => 8, 4 => 0x10, _ => 0x40 };
+        GroupMode mode = kind switch { WindowKind.SystemManufacturing => GroupMode.Facilities, WindowKind.SystemPlanet => GroupMode.Ground, WindowKind.SystemFleet => GroupMode.Fleets, _ => GroupMode.Missions };
         var at = sector.GetGlobalRect().Position + new Vector2(ScreenViews.PicturePosition(system).X + 37, ScreenViews.PicturePosition(system).Y);
         OpenSystemWindow(system, mode, at)?.SelectObject(o);
     }
@@ -217,9 +217,9 @@ public partial class MainScreen
     /// OPENSWR_DEMO_WINDOW = fleet | planet | manu | missions [+ "min"]: also that system's sub-window (selecting the first fleet /
     /// expanded), "min" minimises it into a slot, "+enemy" / "+neutral" the first system with that view owner, "+sel" selects the
     /// first planet cell / manager row, "+fac" the first facility (owner skins); OPENSWR_DEMO_WINDOW=goto: go to the first own capital ship.
-    /// OPENSWR_DEMO_REF = a definition SdRef (hex): that system, or the system holding an object of that type (selected).
+    /// OPENSWR_DEMO_REF = a definition SdRef (decimal): that system, or the system holding an object of that type (selected).
     /// </summary>
-    static uint? DemoRef => uint.TryParse(System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_REF"), System.Globalization.NumberStyles.HexNumber, null, out uint r) ? r : null;
+    static uint? DemoRef => uint.TryParse(System.Environment.GetEnvironmentVariable("OPENSWR_DEMO_REF"), out uint r) ? r : null;
 
     static bool Contains(GameObject container, GameObject o) => container.Contents.Any(c => c == o || Contains(c, o));
 
@@ -241,23 +241,23 @@ public partial class MainScreen
         {
             var want = window.Contains("+neutral") ? SimOwner.Neutral : Side == SimOwner.Alliance ? SimOwner.Empire : SimOwner.Alliance;
             var known = game.Systems.Where(x => Knowledge.See(game, x, Side).Owner == want).ToList();
-            s = known.FirstOrDefault(x => ScreenViews.Planet(game, x, 1, Side).Count + ScreenViews.Planet(game, x, 2, Side).Count > 0) ?? known.FirstOrDefault() ?? s;
+            s = known.FirstOrDefault(x => ScreenViews.Planet(game, x, ControlIds.PlanetPersonnelTab, Side).Count + ScreenViews.Planet(game, x, ControlIds.PlanetTroopsTab, Side).Count > 0) ?? known.FirstOrDefault() ?? s;
         }
         var w = Windows.OpenSector(s.Sector);
         if (string.IsNullOrEmpty(window)) return;
-        int mode = window.Split('+')[0] switch { "planet" => 8, "manu" => 4, "missions" => 0x40, _ => 0x10 };
-        if (mode == 0x40 && ScreenViews.Missions(game, s, Side).Count == 0
+        GroupMode mode = window.Split('+')[0] switch { "planet" => GroupMode.Ground, "manu" => GroupMode.Facilities, "missions" => GroupMode.Missions, _ => GroupMode.Fleets };
+        if (mode == GroupMode.Missions && ScreenViews.Missions(game, s, Side).Count == 0
             && game.Systems.FirstOrDefault(x => ScreenViews.Missions(game, x, Side).Count > 0) is { } busy) s = busy;
         var sub = OpenSystemWindow(s, mode, w.GetGlobalRect().Position + new Vector2(ScreenViews.PicturePosition(s).X + 40, ScreenViews.PicturePosition(s).Y));
-        if (mode == 0x10 && demo?.Container is Fleet own) sub?.SelectObject(demo);
-        else if (mode == 0x10 && ScreenViews.Fleets(game, s, Side).FirstOrDefault(f => f.Owner == Side).Object is { } fleet) sub?.SelectObject(fleet.Contents.FirstOrDefault(x => Family.IsCapitalShip(x.Type)) ?? fleet);
-        if (window.Contains("+sel") && (mode == 8 ? new[] { 1, 2, 3 }.Select(t => ScreenViews.Planet(game, s, t, Side).FirstOrDefault().Object).FirstOrDefault(o => o is not null) : ScreenViews.ManagerRows(s).FirstOrDefault()) is { } pick) sub?.SelectObject(pick);
-        if (window.Contains("+fac") && ScreenViews.Facilities(game, s, 0x2C, 0x2D, Side).FirstOrDefault().Object is { } fac) sub?.SelectObject(fac);
+        if (mode == GroupMode.Fleets && demo?.Container is Fleet own) sub?.SelectObject(demo);
+        else if (mode == GroupMode.Fleets && ScreenViews.Fleets(game, s, Side).FirstOrDefault(f => f.Owner == Side).Object is { } fleet) sub?.SelectObject(fleet.Contents.FirstOrDefault(x => Family.IsCapitalShip(x.Type)) ?? fleet);
+        if (window.Contains("+sel") && (mode == GroupMode.Ground ? new[] { ControlIds.PlanetPersonnelTab, ControlIds.PlanetTroopsTab, ControlIds.PlanetFightersTab }.Select(t => ScreenViews.Planet(game, s, t, Side).FirstOrDefault().Object).FirstOrDefault(o => o is not null) : ScreenViews.ManagerRows(s).FirstOrDefault()) is { } pick) sub?.SelectObject(pick);
+        if (window.Contains("+fac") && ScreenViews.Facilities(game, s, Families.Mine, Families.Refinery, Side).FirstOrDefault().Object is { } fac) sub?.SelectObject(fac);
         if (window.EndsWith("+min") && sub is not null) Windows.Minimise(sub);
     }
 
     /// <summary>
-    /// Status window (id 0x1A, one at a time): an object's page when the player side has a view of it (live or frozen;
+    /// Status window (one at a time): an object's page when the player side has a view of it (live or frozen;
     /// systems, own managers and missions always), the Galaxy Overview (<paramref name="overview"/>) or the Objectives (null).
     /// </summary>
     internal void OpenStatus(GameObject? o, bool overview = false)
@@ -269,7 +269,7 @@ public partial class MainScreen
         Windows.Open(StatusWindow.WindowId, () => new StatusWindow(this, o, overview));
     }
 
-    /// <summary>Alt+S (0xBBF): 0x103 Status for the focused window's single selected object, if the row is enabled.</summary>
+    /// <summary>Alt+S: the Status command for the focused window's single selected object, if the row is enabled.</summary>
     void StatusKey()
     {
         if (Windows.Focused?.Selection is [(var o, _)] sel && ObjectCommands.Rows(_game!, Side, sel).Any(r => r.Id == ObjectCommands.Status && r.Enabled)) OpenStatus(o);
@@ -286,13 +286,13 @@ public partial class MainScreen
         GameObject? Own(System.Func<GameObject, bool> f) => game.Created.Cast<GameObject>().Concat(game.Characters).FirstOrDefault(o => o.Owner == Side && o.Existing && f(o));
         GameObject? o = mode switch
         {
-            "system" => game.Systems.FirstOrDefault(s => s.Owner == Side && s.Contents.Any(x => Family.Of(x.Type) == 0x2C)),
+            "system" => game.Systems.FirstOrDefault(s => s.Owner == Side && s.Contents.Any(x => Family.Of(x.Type) == Families.Mine)),
             "fleet" => game.Systems.SelectMany(OwnFleets).FirstOrDefault(),
             "ship" => Own(x => Family.IsCapitalShip(x.Type) && x.Container is Fleet),
             "character" => Own(x => x is Character { Placed: true }),
             "troop" => Own(x => Family.IsTroop(x.Type)),
-            "fighter" => Own(x => Family.Of(x.Type) is >= 0x1C and < 0x20),
-            "facility" => Own(x => Family.Of(x.Type) is >= 0x28 and < 0x2B),
+            "fighter" => Own(x => Family.Of(x.Type) is >= Families.Fighter and < Families.Headquarters),
+            "facility" => Own(x => Family.Of(x.Type) is >= Families.Shipyard and < Families.ManufacturingEnd),
             "manager" => game.Systems.FirstOrDefault(s => s.Owner == Side && s.Managers[1] is { } m && Economy.Members(m).Count > 0)?.Managers[1],
             "mission" => game.Missions.FirstOrDefault(m => m.Owner == Side && !m.Destroyed),
             _ => null,
@@ -306,21 +306,21 @@ public partial class MainScreen
     }
 
     /// <summary>
-    /// End of the 0x240 targeting: Team = the selection's agents (a system's own characters for mode 8); a target that is a
+    /// End of the mission targeting: Team = the selection's agents (a system's own characters for the ground mode); a target that is a
     /// Team member becomes the system holding it in the player's view; the list = the passing types in rank order; empty: the
     /// command (no type) is validated and refused at once; else the mission window (one at a time).
     /// </summary>
-    internal void OpenMission(List<(GameObject Object, int Mode)> selection, GameObject target)
+    internal void OpenMission(List<(GameObject Object, GroupMode Mode)> selection, GameObject target)
     {
         var game = _game!;
         List<Agent> team = [.. selection.SelectMany(s => s.Object is StarSystem sys
-            ? sys.Contents.OfType<Agent>().Where(a => a.Owner == Side && a.Existing && Family.Of(a.Type) is >= 0x30 and < 0x3C)
+            ? sys.Contents.OfType<Agent>().Where(a => a.Owner == Side && a.Existing && Family.Of(a.Type) is >= Families.MajorCharacter and < Families.SpecialForce)
             : s.Object is Agent a ? [a] : [])];
         if (team.Contains(target) && Knowledge.Location(game, target, Side) is { } at) target = at as StarSystem ?? at.System ?? at;
         var types = MissionEligibility.WindowTypes(game, Side, team, [], target);
         if (types.Count == 0)
         {
-            Submit(new Command(0x240, Side) { Targets = [.. team.Select(a => ((GameObject)a, 0))], ArgRef = target, Fields = [0, 0, 0] });
+            Submit(new Command(CommandType.CreateMission, Side) { Targets = [.. team.Select(a => ((GameObject)a, GroupMode.Object))], ArgRef = target, Fields = [0, 0, 0] });
             return;
         }
         if (Windows.Find(MissionWindow.WindowId) is { } open) Windows.Close(open, sound: false);
@@ -342,10 +342,16 @@ public partial class MainScreen
         var target = game.Systems.Where(s => s != home && Knowledge.See(game, s, Side) is { Populated: true, Owner: SimOwner.Neutral }).MinBy(s => Orders.Distance(home, s));
         if (target is null) return;
         Only(null);
-        OpenMission([.. Free(home).Select(a => ((GameObject)a, 0))], target);
+        OpenMission([.. Free(home).Select(a => ((GameObject)a, GroupMode.Object))], target);
         if (Windows.Find(MissionWindow.WindowId) is not MissionWindow w) return;
-        w.Demo(mode == "personnel", 0x51, decoy: mode == "personnel", begin: mode == "send");
+        w.Demo(mode == "personnel", Family.Of(Refs.DiplomacyMission), decoy: mode == "personnel", begin: mode == "send");
         if (mode == "list") w.DemoOpenList();
+    }
+
+    /// <summary>Offsets from CommandType.ProduceFacility by manufacturing kind: the construction, shipyard and training facility commands.</summary>
+    static class ProduceFacilityOffset
+    {
+        public const int Construction = 0, Ship = 1, Training = 2;
     }
 
     /// <summary>
@@ -362,7 +368,7 @@ public partial class MainScreen
         var kind = Has(yard, ManufacturingKind.Ship) ? ManufacturingKind.Ship : System.Enum.GetValues<ManufacturingKind>().First(k => Has(yard, k));
         var manager = yard.Managers[(int)kind];
         Only(null);
-        OpenProduction(ObjectCommands.Build(0x210 + kind switch { ManufacturingKind.Construction => 0, ManufacturingKind.Ship => 1, _ => 2 }, Side, [(manager, 0)]));
+        OpenProduction(ObjectCommands.Build(CommandType.ProduceFacility + kind switch { ManufacturingKind.Construction => ProduceFacilityOffset.Construction, ManufacturingKind.Ship => ProduceFacilityOffset.Ship, _ => ProduceFacilityOffset.Training }, Side, [(manager, GroupMode.Object)]));
         if (Windows.Find(ProductionWindow.WindowId) is not ProductionWindow w) return manager;
         if (mode == "list") w.DemoOpenList();
         if (mode == "na") w.Demo(0, 255, done: false);
@@ -376,10 +382,10 @@ public partial class MainScreen
         if (rows.Count > 0) OpenMenu(new GameMenu(rows, at, Side == SimOwner.Alliance, command));
     }
 
-    static bool IsFinder(int id) => id is Finders.SystemFinder or Finders.FleetFinder or Finders.TroopFinder or Finders.PersonnelFinder;
+    static bool IsFinder(WindowKind id) => id is WindowKind.SystemFinder or WindowKind.FleetFinder or WindowKind.TroopFinder or WindowKind.PersonnelFinder;
 
     /// <summary>Finder: the game menu closes first; opens only when no window with its id is open.</summary>
-    internal void OpenFinder(int id)
+    internal void OpenFinder(WindowKind id)
     {
         if (_game is null || Windows.Find(id) is not null) return;
         _menu?.Close();
@@ -390,35 +396,35 @@ public partial class MainScreen
     /// <summary>A finder is open: F1-F7 are ignored.</summary>
     bool FinderOpen => Windows.Windows.Any(w => IsFinder(w.Kind));
 
-    /// <summary>Encyclopedia window (id 0x19): an object's or a definition's entry, else the index; opens only when none is open (no retarget, Inferred).</summary>
+    /// <summary>Encyclopedia window: an object's or a definition's entry, else the index; opens only when none is open (no retarget, Inferred).</summary>
     internal void OpenEncyclopedia(GameObject? o, uint definition)
     {
-        if (_game is null || Windows.Find(0x19) is not null) return;
+        if (_game is null || Windows.Find(WindowKind.Encyclopedia) is not null) return;
         _menu?.Close();
         Only(null);
         var entry = o is null && definition == 0 ? null : EncyclopediaWindow.EntryOf(_game, o, definition, DisplayName);
-        Windows.Open(0x19, () => new EncyclopediaWindow(this, entry));
+        Windows.Open(WindowKind.Encyclopedia, () => new EncyclopediaWindow(this, entry));
     }
 
     static List<OpenSWR.Data.Accelerator>? _accelerators;
 
     /// <summary>
     /// The TEXTCOMM RT_ACCELERATOR 11 entry a key matches (exact Shift / Ctrl / Alt), or null. Virtual keys:
-    /// letters and digits are their own codes, Tab 9, Numpad + 0x6B, Numpad - 0x6D; character entries ("=", "-") take the typed
+    /// letters and digits are their own codes, Tab 9, Numpad +, Numpad -; character entries ("=", "-") take the typed
     /// character, else the key's own ASCII code (US layout, Inferred: Godot may report no character with Alt held).
     /// </summary>
     static OpenSWR.Data.Accelerator? Accelerator(InputEventKey k)
     {
-        _accelerators ??= Assets.Module("TEXTCOMM.DLL").Find(new OpenSWR.Data.ResId(9), 11) is { } r ? OpenSWR.Data.Accelerator.Decode(r.Data.Span) : [];
+        _accelerators ??= Assets.Module("TEXTCOMM.DLL").Find(new OpenSWR.Data.ResId(ResourceTypes.Accelerator), UiIds.AcceleratorTable) is { } r ? OpenSWR.Data.Accelerator.Decode(r.Data.Span) : [];
         ushort vk = k.Keycode switch
         {
             >= Key.A and <= Key.Z or >= Key.Key0 and <= Key.Key9 => (ushort)k.Keycode,
-            Key.Tab => 9,
-            Key.KpAdd => 0x6B,
-            Key.KpSubtract => 0x6D,
+            Key.Tab => UiIds.VirtualKeyTab,
+            Key.KpAdd => UiIds.VirtualKeyAdd,
+            Key.KpSubtract => UiIds.VirtualKeySubtract,
             _ => 0,
         };
-        char c = k.Unicode is > 0 and <= 0xFFFF ? (char)k.Unicode : k.Keycode is > Key.None and < (Key)128 ? (char)k.Keycode : '\0';
+        char c = k.Unicode is > 0 and <= 65535 ? (char)k.Unicode : k.Keycode is > Key.None and < (Key)128 ? (char)k.Keycode : '\0';
         return OpenSWR.Data.Accelerator.Find(_accelerators, vk, c, k.ShiftPressed, k.CtrlPressed, k.AltPressed);
     }
 

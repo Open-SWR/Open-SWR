@@ -17,13 +17,13 @@ public class UprisingTests
     static List<GameObject> Troops(StarSystem s, Owner side) => s.Contents.Where(x => Family.IsTroop(x.Type) && x.Usable && x.Owner == side).ToList();
 
     static List<Character> Characters(StarSystem s, Owner side) =>
-        s.Contents.OfType<Character>().Where(c => c.Usable && c.Owner == side && Family.Of(c.Type) < 0x3C).ToList();
+        s.Contents.OfType<Character>().Where(c => c.Usable && c.Owner == side && Family.Of(c.Type) < Families.SpecialForce).ToList();
 
     /// <summary>A Populated Empire system with Empire share below 60, its regiments beyond the requirement removed (surplus 0).</summary>
     static StarSystem Disloyal(GameState game)
     {
         var s = game.SystemsOf(Owner.Empire).First(s => s.Populated && s.SupportFor(Owner.Empire) < 60);
-        foreach (var t in Troops(s, Owner.Empire).Skip(s.GarrisonRequirement)) Objects.Destroy(game, t, 0x14);
+        foreach (var t in Troops(s, Owner.Empire).Skip(s.GarrisonRequirement)) Objects.Destroy(game, t, DestroyedReason.Scrapped);
         game.Clock.Flush(game);
         return s;
     }
@@ -56,8 +56,8 @@ public class UprisingTests
         Assert.Equal(0, Systems.Surplus(s));
     }
 
-    // A lost regiment starts the uprising: requirement doubled, facilities suspended, timers 0x384 / 0x38D start.
-    // With 2 * req regiments the uprising is Suppressing (timer 0x383). The 0x383 action ends it.
+    // A lost regiment starts the uprising: requirement doubled, facilities suspended, the uprising timers start.
+    // With 2 * req regiments the uprising is Suppressing (suppress timer). The suppress timer action ends it.
     [GameFact]
     public void UprisingStartSuppressEnd()
     {
@@ -71,25 +71,25 @@ public class UprisingTests
         var draws = new List<(string Site, int N, int Result)>();
         game.Random.Trace = draws;
 
-        Objects.Destroy(game, troops[0], 0x14);
+        Objects.Destroy(game, troops[0], DestroyedReason.Scrapped);
         game.Clock.Flush(game);
         Assert.True(s.Uprising);
         Assert.False(s.Suppressing);
         Assert.Equal((2 * req, req - 1 - 2 * req), (s.GarrisonRequirement, s.GarrisonSurplus));
         Assert.All(facilities, f => Assert.True(f.Suspended));
-        Assert.True(game.Timers[(0x384, s.Ref)].Active && game.Timers[(0x38D, s.Ref)].Active);
-        Assert.Contains(draws, d => d is { Site: DrawSite.Timer, N: 71 }); // 0x38D start roll(70)
+        Assert.True(game.Timers[(TimerType.UprisingSupport, s.Ref)].Active && game.Timers[(TimerType.UprisingIncident, s.Ref)].Active);
+        Assert.Contains(draws, d => d is { Site: DrawSite.Timer, N: 71 }); // uprising timer start roll(70)
 
         for (int i = req - 1; i < 2 * req; i++) Objects.Create(game, Refs.EmpireArmy, Owner.Empire, s, completed: true);
         game.Clock.Flush(game);
         Assert.Equal((true, true, 0), (s.Uprising, s.Suppressing, s.GarrisonSurplus));
-        Assert.True(game.Timers[(0x383, s.Ref)].Active);
-        Assert.Contains(draws, d => d is { Site: DrawSite.Timer, N: 21 }); // 0x383 start roll(20)
+        Assert.True(game.Timers[(TimerType.Suppress, s.Ref)].Active);
+        Assert.Contains(draws, d => d is { Site: DrawSite.Timer, N: 21 }); // suppress timer start roll(20)
 
         Systems.SuppressTimer(game, s);
         game.Clock.Flush(game);
         Assert.Equal((false, false, req), (s.Uprising, s.Suppressing, s.GarrisonRequirement));
-        Assert.False(game.Timers[(0x383, s.Ref)].Active || game.Timers[(0x384, s.Ref)].Active || game.Timers[(0x38D, s.Ref)].Active);
+        Assert.False(game.Timers[(TimerType.Suppress, s.Ref)].Active || game.Timers[(TimerType.UprisingSupport, s.Ref)].Active || game.Timers[(TimerType.UprisingIncident, s.Ref)].Active);
         Assert.All(facilities, f => Assert.False(f.Suspended));
     }
 
@@ -108,7 +108,7 @@ public class UprisingTests
     public void IncidentDestroysFacilityAndInjures()
     {
         var game = Game();
-        var s = game.System(Refs.Coruscant);
+        var s = game.Known.Coruscant!;
         var facilities = s.Contents.Where(x => Family.IsFacility(x.Type) && x.Usable && x.Owner == Owner.Empire).ToList();
         var characters = Characters(s, Owner.Empire);
         Assert.NotEmpty(facilities);
@@ -125,27 +125,27 @@ public class UprisingTests
             draws.Take(6).Select(d => d.Site));
         Assert.Equal([8], draws.Take(1).Select(d => d.N)); // roll(7)
         Assert.Equal([facilities[k1]], facilities.Where(f => f.Destroyed));
-        Assert.Equal(8, facilities[k1].DestroyedReason);
+        Assert.Equal(DestroyedReason.Incident, facilities[k1].DestroyedReason);
         Assert.Equal(share - 2, s.SupportFor(Owner.Empire));
     }
 
-    // Key >= 12: u1 = 2 (a regiment, DestroyedReason 8), u2 = 5 (every captured character freed, State 1, no draw).
+    // Key >= 12: u1 = 2 (a regiment, DestroyedReason 8), u2 = 5 (every captured character freed, State Escaped, no draw).
     [GameFact]
     public void IncidentDestroysTroopAndReleasesAll()
     {
         var game = Game();
-        var s = game.System(Refs.Coruscant);
+        var s = game.Known.Coruscant!;
         var troops = Troops(s, Owner.Empire);
         var characters = Characters(s, Owner.Empire);
         Assert.NotEmpty(troops);
-        foreach (var c in characters.Take(2)) (c.State, c.Captured) = (Prisoners.Captured, true);
+        foreach (var c in characters.Take(2)) (c.State, c.Captured) = (PrisonerState.Captured, true);
         var clone = AimKey(game, s, 30);
         int k = clone.Roll(troops.Count - 1);
 
         Systems.Incident(game, s);
         Assert.Equal([troops[k]], troops.Where(t => t.Destroyed));
-        Assert.Equal(8, troops[k].DestroyedReason);
-        Assert.All(characters.Take(2), c => Assert.True(c.State == Prisoners.Escaped && !c.Captured && c.Autorouting));
+        Assert.Equal(DestroyedReason.Incident, troops[k].DestroyedReason);
+        Assert.All(characters.Take(2), c => Assert.True(c.State == PrisonerState.Escaped && !c.Captured && c.Autorouting));
         Assert.Equal(clone.State, game.Random.State);
     }
 
@@ -155,11 +155,11 @@ public class UprisingTests
     public void ReleasePickQuirk()
     {
         var game = Game();
-        var s = game.System(Refs.Coruscant);
+        var s = game.Known.Coruscant!;
         foreach (var c in game.Characters.Where(c => c.Owner == Owner.Empire && c.Usable).Take(3)) s.Add(c);
         var characters = Characters(s, Owner.Empire);
         Assert.True(characters.Count >= 3);
-        foreach (var c in characters.Skip(1).Take(2)) (c.State, c.Captured) = (Prisoners.Captured, true);
+        foreach (var c in characters.Skip(1).Take(2)) (c.State, c.Captured) = (PrisonerState.Captured, true);
         var clone = AimKey(game, s, 11);
         int troops = Troops(s, Owner.Empire).Count;
         if (troops > 0) clone.Roll(troops - 1);
@@ -192,7 +192,7 @@ public class UprisingTests
     {
         var game = Game();
         var s = Disloyal(game);
-        var m = Mission(game, 0x56000040, Owner.Alliance, s, 1000);
+        var m = Mission(game, Refs.InciteMission, Owner.Alliance, s, 1000);
         Assert.Equal(99, Missions.Probability(game, m, m.Team[0]));
         s.InciteTotal = -100; // u1 = u2 = 0
         NextChanceSucceeds(game);
@@ -201,24 +201,24 @@ public class UprisingTests
         Missions.Execute(game, m);
         Assert.Equal([DrawSite.Incite, DrawSite.Informant, DrawSite.UprisingRoll, DrawSite.UprisingRoll], draws.Select(d => d.Site));
         Assert.False(s.Uprising);
-        Assert.Equal(2, m.TaskStatus);
+        Assert.Equal(MissionTaskStatus.Failed, m.TaskStatus);
     }
 
     // Subdue draws nothing without Uprising. On success the owner's support changes by 1 + roll(19), then the subdue end
-    // (troops - undoubled requirement >= 0 -> Uprising := 0). TaskStatus 3, Leadership + 1.
+    // (troops - undoubled requirement >= 0 gives Uprising := 0). TaskStatus 3, Leadership + 1.
     [GameFact]
     public void SubdueEndsUprising()
     {
         var game = Game();
         var s = Disloyal(game);
-        var m = Mission(game, 0x57000080, Owner.Empire, s, 1000);
+        var m = Mission(game, Refs.SubdueMission, Owner.Empire, s, 1000);
         var draws = new List<(string Site, int N, int Result)>();
         game.Random.Trace = draws;
         Missions.Execute(game, m);
         Assert.Empty(draws);
 
         var troop = Troops(s, Owner.Empire)[0];
-        Objects.Destroy(game, troop, 0x14);
+        Objects.Destroy(game, troop, DestroyedReason.Scrapped);
         game.Clock.Flush(game);
         Objects.Create(game, Refs.EmpireArmy, Owner.Empire, s, completed: true); // back to req0 < the doubled requirement
         game.Clock.Flush(game);
@@ -232,7 +232,7 @@ public class UprisingTests
         Assert.Equal(20, draws[1].N); // roll(19), system owner = mission owner
         Assert.Equal(Math.Min(100, share + 1 + draws[1].Result), s.SupportFor(Owner.Empire));
         Assert.False(s.Uprising);
-        Assert.Equal(3, m.TaskStatus);
+        Assert.Equal(MissionTaskStatus.Succeeded, m.TaskStatus);
         Assert.Equal(lead + 1, m.Team[0].Skills[SkillIndex.Leadership]);
     }
 
@@ -242,9 +242,9 @@ public class UprisingTests
     {
         var game = Game();
         var s = Disloyal(game);
-        var incite = Mission(game, 0x56000040, Owner.Alliance, s, 57);
-        var late = Mission(game, 0x56000040, Owner.Alliance, s, 90);
-        var subdue = Mission(game, 0x57000080, Owner.Empire, s, 34);
+        var incite = Mission(game, Refs.InciteMission, Owner.Alliance, s, 57);
+        var late = Mission(game, Refs.InciteMission, Owner.Alliance, s, 90);
+        var subdue = Mission(game, Refs.SubdueMission, Owner.Empire, s, 34);
         int Lead(Mission m) => Missions.Enhanced(game, m.Team[0], SkillIndex.Leadership) / 10;
         (incite.Phase, late.Phase, subdue.Phase) = (8, 9, 8);
         Missions.UprisingTotals(game, s);
@@ -255,7 +255,7 @@ public class UprisingTests
         Assert.Equal((0, -Lead(subdue), 0), (s.InciteTotal, s.SubdueTotal, s.IncidentSupportDelta));
     }
 
-    // A core system's Uprising reaches the other side's frozen view too and posts 0x14B there. The Alliance player's
+    // A core system's Uprising reaches the other side's frozen view too and posts the uprising message there. The Alliance player's
     // controller counts the 621 alarm for an Empire core system it does not see.
     [GameFact]
     public void CoreUprisingReachesTheFrozenView()
@@ -263,15 +263,15 @@ public class UprisingTests
         var game = Game();
         var human = new OpenSWR.Sim.Ai.HumanController(Owner.Alliance);
         game.Controllers[Owner.Alliance] = human;
-        var s = game.SystemsOf(Owner.Empire).First(s => s.Populated && s.SupportFor(Owner.Empire) < 60 && Family.Of(s.Type) == 0x90 && !Knowledge.IsLive(s, Owner.Alliance));
-        foreach (var t in Troops(s, Owner.Empire).Skip(s.GarrisonRequirement)) Objects.Destroy(game, t, 0x14);
+        var s = game.SystemsOf(Owner.Empire).First(s => s.Populated && s.SupportFor(Owner.Empire) < 60 && Family.Of(s.Type) == Families.CoreSystem && !Knowledge.IsLive(s, Owner.Alliance));
+        foreach (var t in Troops(s, Owner.Empire).Skip(s.GarrisonRequirement)) Objects.Destroy(game, t, DestroyedReason.Scrapped);
         game.Clock.Flush(game);
         Assert.False(Knowledge.See(game, s, Owner.Alliance).Uprising);
-        Objects.Destroy(game, Troops(s, Owner.Empire)[0], 0x14);
+        Objects.Destroy(game, Troops(s, Owner.Empire)[0], DestroyedReason.Scrapped);
         game.Clock.Flush(game);
         Assert.True(s.Uprising);
         Assert.True(Knowledge.See(game, s, Owner.Alliance).Uprising);
-        Assert.Contains(game.Messages, m => m.Side == Owner.Alliance && m.Type == 0x14B && m.Object == s);
+        Assert.Contains(game.Messages, m => m.Side == Owner.Alliance && m.Type == ViewMessageType.Uprising && m.Object == s);
         OpenSWR.Sim.Ai.Controller.Deliver(game);
         Assert.Equal(1, human.UprisingAlarms);
     }

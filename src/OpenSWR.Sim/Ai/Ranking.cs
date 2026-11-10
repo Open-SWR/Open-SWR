@@ -1,16 +1,19 @@
 namespace OpenSWR.Sim.Ai;
 
+/// <summary>Sort direction of a ranked list. The values are the original's direction codes (1, 2).</summary>
+public enum RankOrder { None, Ascending, Descending }
+
 /// <summary>
 /// Ranked list: candidates inserted one at a time in candidate order in front of
-/// the first entry X comes before; before(X, Y) is X.value &lt; Y.value with dir = 1, X.value &gt; Y.value with dir != 1, and on equal values
-/// one UI draw, rand(10) &lt; 5. Then ranks 1, 2, ... in list order. dir 1 sorts ascending (the pick prefers large values), dir 2 descending.
+/// the first entry X comes before; before(X, Y) is X.value &lt; Y.value with Ascending, X.value &gt; Y.value with Descending, and on equal values
+/// one UI draw, rand(10) &lt; 5. Then ranks 1, 2, ... in list order. Ascending sorts small values first (the pick prefers large values).
 /// </summary>
 public sealed class RankedList
 {
     readonly List<(object Key, int Value)> _entries = [];
     readonly Dictionary<object, int> _ranks = [];
 
-    public RankedList(IEnumerable<(object Key, int Value)> candidates, int dir, Func<int, int> rand)
+    public RankedList(IEnumerable<(object Key, int Value)> candidates, RankOrder order, Func<int, int> rand)
     {
         foreach (var x in candidates)
         {
@@ -20,7 +23,7 @@ public sealed class RankedList
         }
         for (int i = 0; i < _entries.Count; i++) _ranks[_entries[i].Key] = i + 1;
 
-        bool Before(int x, int y) => x < y ? dir == 1 : x > y ? dir != 1 : rand(10) < 5;
+        bool Before(int x, int y) => x < y ? order == RankOrder.Ascending : x > y ? order != RankOrder.Ascending : rand(10) < 5;
     }
 
     public IReadOnlyList<(object Key, int Value)> Entries => _entries;

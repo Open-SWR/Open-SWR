@@ -2,14 +2,14 @@ using OpenSWR.Data.Dat;
 namespace OpenSWR.Sim;
 
 /// <summary>
-/// Strategic repair on timer 0x380: capital ships and Death Stars (0x14-0x1B) and fighter squadrons (0x1C-0x1F). The Damaged
+/// Strategic repair on the repair timer: capital ships and Death Stars (families 20 to 27) and fighter squadrons (families 28 to 31). The Damaged
 /// object flag, RepairActive (Damaged and Usable, drives timer Active) and FastRepair (drives timer Base), then the system
 /// FastRepair updates and the repair step.
 /// </summary>
 public static class Repair
 {
-    static bool Repairable(GameObject o) => Family.Of(o.Type) is >= 0x14 and < 0x20;
-    static bool IsFighter(GameObject o) => Family.Of(o.Type) is >= 0x1C and < 0x20;
+    static bool Repairable(GameObject o) => Family.Of(o.Type) is >= Families.CapitalShip and < Families.Headquarters;
+    static bool IsFighter(GameObject o) => Family.Of(o.Type) is >= Families.Fighter and < Families.Headquarters;
     static int Sd(GameState game, GameObject o, SdField field) => game.Definitions.Resolve(o.Type)!.Get(field);
 
     // ---- damage setters (every write recomputes Damaged) ----
@@ -39,7 +39,7 @@ public static class Repair
 
     /// <summary>
     /// Damaged, recomputed on a change only: ships / Death Stars have HullDamage != 0 or a nonzero critical counter sum;
-    /// fighters have SquadSizeDamage != 0. The hook's notification 0x31D is not modelled. Then the RepairActive update runs.
+    /// fighters have SquadSizeDamage != 0. The hook's notification is not modelled. Then the RepairActive update runs.
     /// </summary>
     static void UpdateDamaged(GameState game, GameObject unit)
     {
@@ -50,13 +50,13 @@ public static class Repair
         UpdateRepairActive(game, unit);
     }
 
-    /// <summary>Repair period: ships and Death Stars use G 0x804 / 0x805, fighters G 0x1200 / 0x1201, chosen by FastRepair.</summary>
+    /// <summary>Repair period: ships and Death Stars use the capital ship repair days (normal or fast), fighters the fighter repair days, chosen by FastRepair.</summary>
     static int Period(GameState game, GameObject unit) =>
-        game.Params.General(IsFighter(unit) ? unit.FastRepair ? 0x1200u : 0x1201u : unit.FastRepair ? 0x804u : 0x805u);
+        (IsFighter(unit) ? unit.FastRepair ? game.Rules.FighterFastRepairDays : game.Rules.FighterRepairDays : unit.FastRepair ? game.Rules.CapitalShipFastRepairDays : game.Rules.CapitalShipRepairDays);
 
     /// <summary>
     /// RepairActive is set to Damaged and Usable. It runs from the Damaged hook and from the class Usable hook (after the base
-    /// Usable hook). The setter acts on change only, and its hook sets timer 0x380 Active := RepairActive with Variance 0.
+    /// Usable hook). The setter acts on change only, and its hook sets the repair timer Active := RepairActive with Variance 0.
     /// Inferred: Base = period written before the activation (the first activations carry the period without a
     /// SetBase event).
     /// </summary>
@@ -66,17 +66,17 @@ public static class Repair
         bool active = unit.Damaged && unit.Usable;
         if (active == unit.RepairActive) return;
         unit.RepairActive = active;
-        var slot = TimerCatalogue.Slot(game, 0x380, unit.Ref, unit);
+        var slot = TimerCatalogue.Slot(game, TimerType.Repair, unit.Ref, unit);
         if (active) slot.Start(game, Period(game, unit), 0);
         else slot.SetActive(game, false);
     }
 
-    /// <summary>FastRepair setter, acting on change only. Its hook sets timer 0x380 Base to the period, which restarts an active slot.</summary>
+    /// <summary>FastRepair setter, acting on change only. Its hook sets the repair timer Base to the period, which restarts an active slot.</summary>
     static void SetFastRepair(GameState game, GameObject unit, bool value)
     {
         if (unit.FastRepair == value) return;
         unit.FastRepair = value;
-        if (game.Timers.TryGetValue((0x380, unit.Ref), out var slot)) slot.SetBase(game, Period(game, unit));
+        if (game.Timers.TryGetValue((TimerType.Repair, unit.Ref), out var slot)) slot.SetBase(game, Period(game, unit));
     }
 
     // ---- FastRepair updates ----
@@ -93,7 +93,7 @@ public static class Repair
     /// <summary>
     /// Whole-system refresh: every Existing fleet (key order), its Existing capital ships, each ship then its Existing fighters;
     /// then the Existing fighters directly in the system. Inferred: "capital ships" includes Death Stars
-    /// (0x14-0x1B, the shared class functions). Run by setup step 23, the system owner hook and the CombatUnitFastRepair hook.
+    /// (families 20 to 27, the shared class functions). Run by setup step 23, the system owner hook and the CombatUnitFastRepair hook.
     /// </summary>
     internal static void RefreshSystem(GameState game, StarSystem s)
     {
@@ -134,7 +134,7 @@ public static class Repair
     // ---- repair step ----
 
     /// <summary>
-    /// Timer 0x380 action. Ships / Death Stars: HullDamage -= Hull div 10 (floor 0) if &gt; 0;
+    /// Repair timer action. Ships / Death Stars: HullDamage -= Hull div 10 (floor 0) if &gt; 0;
     /// n = sum of the critical counters; n &gt; 0: chance(DamageControl), success gives k = roll(n - 1), the
     /// first counter (order Shield, Weapon, Tractor, Speed, primary, backup) with k &lt; c is decremented, else k -= c. Fighters:
     /// SquadSizeDamage -= 1 if &gt; 0, no draw.

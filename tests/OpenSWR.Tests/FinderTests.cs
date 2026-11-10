@@ -13,7 +13,7 @@ public class FinderTests
     {
         StarSystem s => $"S{s.Definition.Common.StringId}",
         Character c => $"c{c.Definition.Common.StringId}",
-        _ => $"o{o.Id:X}",
+        _ => $"o{o.Id}",
     };
 
     static GameState Game() => NewGame.Create(new GameSettings(Owner.Alliance, 1, 0, 0, 532947196), Definitions);
@@ -56,7 +56,7 @@ public class FinderTests
     public void TroopRows()
     {
         var game = Game();
-        var rows = Finders.Locations(game, Owner.Alliance, Owner.Alliance, 0x10, 0x14, Finders.TroopTypes[0], Name);
+        var rows = Finders.Locations(game, Owner.Alliance, Owner.Alliance, Families.Troop, Families.CapitalShip, Finders.TroopTypes[0], Name);
         Assert.NotEmpty(rows);
         foreach (var r in rows)
         {
@@ -66,7 +66,7 @@ public class FinderTests
             Assert.Equal(units.Count, r.Counts!.Sum());
         }
         var first = rows[0];
-        var unit = Finders.FirstUnit(game, first.Key, Owner.Alliance, 0x10, 0x14);
+        var unit = Finders.FirstUnit(game, first.Key, Owner.Alliance, Families.Troop, Families.CapitalShip);
         Assert.NotNull(unit);
         Assert.True(Family.IsTroop(unit!.Type));
     }
@@ -77,7 +77,7 @@ public class FinderTests
     {
         var game = Game();
         string Text(int id) => $"[{id}]";
-        var leia = game.Characters.First(c => c.Ref == Refs.Leia);
+        var leia = game.Known.Leia!;
         var rows = Finders.Characters(game, Owner.Alliance, Owner.Alliance, Name, Text);
         var row = Assert.Single(rows, r => r.Key == leia);
         Assert.StartsWith($"c{leia.Definition.Common.StringId}[6295]", row.Text);
@@ -95,7 +95,7 @@ public class FinderTests
     [Fact]
     public void TypeAhead()
     {
-        var o = new GameObject(0x90000001, Owner.Neutral, 1);
+        var o = new GameObject(SdRef.Make(Families.CoreSystem, 1), Owner.Neutral, 1);
         List<FinderRow> rows = [new(o, "Alpha"), new(o, "Bespin"), new(o, "Bestine"), new(o, "Corellia")];
         Assert.Equal(1, Finders.TypeAhead(rows, "be"));
         Assert.Equal(2, Finders.TypeAhead(rows, "BESt"));

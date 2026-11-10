@@ -1,4 +1,33 @@
+using OpenSWR.Data.Dat;
 namespace OpenSWR.Sim;
+
+/// <summary>Controller (view) message types: posted by a side's view when one of its fields changes.</summary>
+public enum ViewMessageType
+{
+    /// <summary>Not set (the default value).</summary>
+    None,
+    Owner,
+    Usable,
+    Created,
+    Completed,
+    Enroute,
+    Damaged,
+    Support,
+    Populated,
+    Explored,
+    Uprising,
+    NeverBeenControlled,
+    Battle,
+    Blockade,
+    QueueCount,
+    TaskStatus,
+    CompletionStatus,
+    Parent,
+    Destroyed,
+    /// <summary>Espionage found an extra system.</summary>
+    EspionageExtraSystem,
+    Name,
+}
 
 /// <summary>
 /// Frozen side view of an object: the values of its last refresh. Only the fields the sim reads through views
@@ -25,12 +54,12 @@ public sealed class View
     /// <summary>System Blockade / Battle. The setters copy into live views; a frozen view keeps them.</summary>
     public bool Blockade { get; set; }
     public bool Battle { get; set; }
-    /// <summary>Managers: queue count at the last full refresh (0x160 on a change).</summary>
+    /// <summary>Managers: queue count at the last full refresh (posts ViewMessageType.QueueCount on a change).</summary>
     public int QueueCount { get; set; }
-    /// <summary>Missions: TaskStatus / CompletionStatus at the last full refresh (0x1F0 then 0x1F1 on a change).</summary>
-    public int TaskStatus { get; set; }
-    public int CompletionStatus { get; set; }
-    /// <summary>Characters / special forces: RoleMissionKey at the last refresh, read by the 0x318 refresh.</summary>
+    /// <summary>Missions: TaskStatus / CompletionStatus at the last full refresh (posts the TaskStatus / CompletionStatus messages on a change).</summary>
+    public MissionTaskStatus TaskStatus { get; set; }
+    public MissionCompletion CompletionStatus { get; set; }
+    /// <summary>Characters / special forces: RoleMissionKey at the last refresh, read by the owner-change refresh.</summary>
     public Mission? RoleMission { get; set; }
     /// <summary>Damaged. The setter copies into live views, and a full refresh copies it. Read by the AI ship records.</summary>
     public bool Damaged { get; set; }
@@ -46,7 +75,7 @@ public sealed class View
     /// <summary>
     /// System NeverBeenControlled: copied by every full refresh (frozen views too) and, for live views, by the real
     /// setter's copy; the step-24 position refresh and the live to frozen transition copy nothing, so the value can differ from the
-    /// real flag even while live (a fresh view: clear). A change after game-ready posts 0x14C.
+    /// real flag even while live (a fresh view: clear). A change after game-ready posts the NeverBeenControlled view message.
     /// </summary>
     public bool NeverBeenControlled { get; set; }
     /// <summary>
@@ -66,13 +95,13 @@ public readonly record struct Seen(Owner Owner, bool Destroyed, bool Enroute, Ga
 /// knowledge updates (modes 0-12) and setup step 24. No RNG. Views are kept only as far as the sim reads them: live
 /// state per side (<see cref="GameObject.LiveSides"/>) and the frozen snapshot (<see cref="GameState.Views"/>).
 /// Not kept: names, positions, every field no specced sim reader uses; view-tree drops of contents apart from the
-/// parent (staging) and its 0x300; sectors and manager views (only their TargetKey, <see cref="ManufacturingManager.ViewTargetKey"/>).
+/// parent (staging) and its parent-change post; sectors and manager views (only their TargetKey, <see cref="ManufacturingManager.ViewTargetKey"/>).
 /// </summary>
 public static class Knowledge
 {
     static readonly Owner[] Sides = [Owner.Alliance, Owner.Empire];
 
-    static bool IsAbode(GameObject o) => Family.Of(o.Type) == 0x98;
+    static bool IsAbode(GameObject o) => Family.Of(o.Type) == Families.Abode;
 
     /// <summary>
     /// Live state per side; objects never recomputed are live for their owner's side only (views are created frozen, then the owner
@@ -86,7 +115,7 @@ public static class Knowledge
     /// <summary>
     /// Live condition per side: owner = s or (ObservedBy_s and Completed and not Enroute). Live to frozen: the view keeps
     /// the current values (snapshot); frozen to live: full refresh of the view and of its direct contents (live content views
-    /// already mirror the real objects; frozen ones whose real object left are dropped from the view tree: parent = staging, 0x300). Run by
+    /// already mirror the real objects; frozen ones whose real object left are dropped from the view tree: parent = staging). Run by
     /// the owner hook, the Usable notifier and the ObservedBy hooks.
     /// </summary>
     internal static void RecomputeLive(GameState game, GameObject o)
@@ -118,8 +147,8 @@ public static class Knowledge
     }
 
     /// <summary>
-    /// View-tree drop: the view goes into the side's view of the staging container 0xF2000003 (no system
-    /// above it: location none) and posts 0x300 (from the old view parent to 0xF2000003) behind the parent-refresh gates. Drops run after the
+    /// View-tree drop: the view goes into the side's view of the staging container (no system
+    /// above it: location none) and posts a parent-change notification (from the old view parent to the staging container) behind the parent-refresh gates. Drops run after the
     /// refreshes, in ascending view key order (second loop of the content refresh, verified).
     /// </summary>
     static void Drop(GameState game, GameObject x, Owner side, View v)
@@ -127,7 +156,7 @@ public static class Knowledge
         if (v.Parent == game.Staging) return; // already in staging, nothing
         var old = v.Parent;
         v.Parent = game.Staging;
-        if (game.Controllers.ContainsKey(side) && game.Ready) game.Messages.Add((side, 0x300, x, game.Staging, old));
+        if (game.Controllers.ContainsKey(side) && game.Ready) game.Messages.Add((side, ViewMessageType.Parent, x, game.Staging, old));
         Objects.ReadyTest(game, x); // a view parent change: the moved object, then the old parent
         Objects.ReadyTest(game, old);
     }
@@ -150,9 +179,9 @@ public static class Knowledge
 
     /// <summary>
     /// Parent copy of a frozen view, run by the parent setter for side 1 then side 2 before the parent-change hook:
-    /// a frozen view whose view parent OP is live for that side and is not the new real parent is dropped into staging (0x300
-    /// OP to 0xF2000003); a frozen OP: nothing (the stale parent stays); no view or no view parent: nothing (Inferred: the copy needs
-    /// both views). Live views move with the real object (the setter's 0x300). After a move or a drop the staging pass
+    /// a frozen view whose view parent OP is live for that side and is not the new real parent is dropped into staging (parent change post
+    /// OP to staging); a frozen OP: nothing (the stale parent stays); no view or no view parent: nothing (Inferred: the copy needs
+    /// both views). Live views move with the real object (the setter's parent-change post). After a move or a drop the staging pass
     /// runs on the view (<see cref="Pass"/>; per side: side 1 copy and pass, then side 2).
     /// </summary>
     internal static void ParentCopy(GameState game, GameObject o, GameObject parent)
@@ -178,12 +207,12 @@ public static class Knowledge
             .Distinct().OrderBy(x => x.Key).ToList();
 
     /// <summary>
-    /// Staging pass on side s's view of x: only when the view's parent chain reaches the staging container 0xF2000003;
+    /// Staging pass on side s's view of x: only when the view's parent chain reaches the staging container;
     /// first on its content views (recursively), then on the view: real x Destroyed, not Locked and its real parent
-    /// staging: its content views are dropped into staging (0x300 each, ascending key, Inferred order), the side's context flag
+    /// staging: its content views are dropped into staging (parent-change post each, ascending key, Inferred order), the side's context flag
     /// is set to the view's Created flag; characters / special forces: the class pass (<see cref="RoleClear"/>); a
-    /// frozen view then takes Destroyed: a change posts 0x302 (parent staging) when the flag is set (the side's
-    /// controller acknowledges with 0x205); finally the view itself is dropped (nothing when already in staging).
+    /// frozen view then takes Destroyed: a change posts the Destroyed view message (parent staging) when the flag is set (the side's
+    /// controller acknowledges with AcknowledgeDestroyed); finally the view itself is dropped (nothing when already in staging).
     /// Every class. Repeating it posts nothing new.
     /// </summary>
     static void Pass(GameState game, GameObject x, Owner side)
@@ -197,7 +226,7 @@ public static class Knowledge
         View? pv = null;
         if (!live && (!game.Views.TryGetValue((x, side), out pv) || pv.Parent is null))
             // a fresh view (no entry, or none parent) sits in the side's staging view: it takes Destroyed silently below
-            // (not Created: no 0x302, no strike entry, no role post; Drop finds it in staging).
+            // (not Created: no Destroyed view message, no strike entry, no role post; Drop finds it in staging).
             (pv ??= game.Views[(x, side)] = new View { Owner = Owner.Neutral }).Parent = game.Staging;
         bool flag = live ? x.Created : pv!.Created;
         if (x is Agent a) RoleClear(game, a, side, flag, pv);
@@ -205,15 +234,15 @@ public static class Knowledge
         if (!pv.Destroyed)
         {
             pv.Destroyed = true;
-            if (flag && game.Controllers.ContainsKey(side) && game.Ready) game.Messages.Add((side, 0x302, x, game.Staging, null));
-            if (flag) Combat.StrikeStaged(game, x, side, pv.Completed); // this 0x302 joins the strike's group (UI only)
+            if (flag && game.Controllers.ContainsKey(side) && game.Ready) game.Messages.Add((side, ViewMessageType.Destroyed, x, game.Staging, null));
+            if (flag) Combat.StrikeStaged(game, x, side, pv.Completed); // this Destroyed view message joins the strike's group (UI only)
             Objects.ReadyTest(game, x); // view Destroyed write
         }
         Drop(game, x, side, pv);
     }
 
     /// <summary>
-    /// Pass's parent-chain test: side s's view of x reaches the staging container 0xF2000003. A non-live view without an entry or
+    /// Pass's parent-chain test: side s's view of x reaches the staging container. A non-live view without an entry or
     /// with a none parent is a fresh view, which the original parents to the side's staging view from its creation:
     /// it counts as reaching staging. Roots without a real container (systems, sectors; the galaxy is never inserted) do not
     /// (Inferred: openswr keeps no galaxy / sector parents). <see cref="ViewParent"/> stays as it is for its other callers.
@@ -264,7 +293,7 @@ public static class Knowledge
 
     /// <summary>
     /// Core-system support copy (run from the support hook with context 3): for side 1 then side 2 a non-live
-    /// view (created fresh if missing: owner 3, flags clear) takes the new support, posting 0x140 when it changed; live
+    /// view (created fresh if missing: owner 3, flags clear) takes the new support, posting the Support view message when it changed; live
     /// views mirror already. Every post-setup writer (trace run 13); called after the support hook, core systems only.
     /// </summary>
     internal static void CopySupport(GameState game, StarSystem s)
@@ -272,22 +301,22 @@ public static class Knowledge
         foreach (var side in Sides.Where(side => !IsLive(s, side)))
         {
             if (!game.Views.TryGetValue((s, side), out var v)) game.Views[(s, side)] = v = new View { Owner = Owner.Neutral };
-            Changed(game, side, 0x140, s, v.Support != s.Support);
+            Changed(game, side, ViewMessageType.Support, s, v.Support != s.Support);
             v.Support = s.Support;
         }
     }
 
     /// <summary>
     /// Core-system Uprising copy (run from the Uprising hook after its body, context 3): for side
-    /// 1 then side 2 a non-live view (created fresh if missing) takes the Uprising value, posting 0x14B when it changed; live
-    /// views mirror already (their 0x14B came from the setter).
+    /// 1 then side 2 a non-live view (created fresh if missing) takes the Uprising value, posting the Uprising view message when it changed; live
+    /// views mirror already (their notification came from the setter).
     /// </summary>
     internal static void CopyUprising(GameState game, StarSystem s)
     {
         foreach (var side in Sides.Where(side => !IsLive(s, side)))
         {
             if (!game.Views.TryGetValue((s, side), out var v)) game.Views[(s, side)] = v = new View { Owner = Owner.Neutral };
-            Changed(game, side, 0x14B, s, v.Uprising != s.Uprising);
+            Changed(game, side, ViewMessageType.Uprising, s, v.Uprising != s.Uprising);
             v.Uprising = s.Uprising;
         }
     }
@@ -304,7 +333,7 @@ public static class Knowledge
 
     /// <summary>
     /// The real NeverBeenControlled setter, after a change: side 1 then side 2, each live view takes the value; a change
-    /// of the view posts 0x14C after game-ready (A = the system when the new value is set, standing in for the message's new value).
+    /// of the view posts the NeverBeenControlled view message after game-ready (A = the system when the new value is set, standing in for the message's new value).
     /// Frozen views keep theirs.
     /// </summary>
     internal static void NeverControlledChanged(GameState game, StarSystem s)
@@ -313,7 +342,7 @@ public static class Knowledge
         {
             if (NeverControlled(game, s, side) == s.NeverBeenControlled) continue;
             CopyNeverControlled(game, s, side);
-            if (game.Controllers.ContainsKey(side) && game.Ready) game.Messages.Add((side, 0x14C, s, s.NeverBeenControlled ? s : null, null));
+            if (game.Controllers.ContainsKey(side) && game.Ready) game.Messages.Add((side, ViewMessageType.NeverBeenControlled, s, s.NeverBeenControlled ? s : null, null));
         }
     }
 
@@ -322,13 +351,13 @@ public static class Knowledge
         game.Views.TryGetValue((s, side), out var v) && v.NeverBeenControlled;
 
     /// <summary>A frozen view's field write that changed it posts its message to the side's controller.</summary>
-    static void Changed(GameState game, Owner side, int type, GameObject o, bool changed)
+    static void Changed(GameState game, Owner side, ViewMessageType type, GameObject o, bool changed)
     {
         if (changed && game.Controllers.ContainsKey(side) && game.Ready) game.Messages.Add((side, type, o, null, null));
     }
 
     /// <summary>Full refresh of side s's view (a knowledge refresh copy posts per changed field) (context 3 or 2: only a frozen view changes; a live one mirrors already).</summary>
-    /// Characters / special forces: a changed RoleMissionKey copy posts 0x321 (view value to current).
+    /// Characters / special forces: a changed RoleMissionKey copy posts the agent-mission notification (FactKind.AgentMission) (view value to current).
     internal static void Refresh(GameState game, GameObject o, Owner side)
     {
         if (IsLive(o, side)) return;
@@ -341,7 +370,7 @@ public static class Knowledge
     /// <summary>The frozen view's RoleMissionKey (a fresh view: none).</summary>
     static Mission? Role(GameState game, GameObject o, Owner side) => game.Views.TryGetValue((o, side), out var v) ? v.RoleMission : null;
 
-    /// <summary>Role chain hook: the copy changed the view's RoleMissionKey and posts 0x321.</summary>
+    /// <summary>Role chain hook: the copy changed the view's RoleMissionKey and posts the agent-mission notification (FactKind.AgentMission).</summary>
     static void PostRole(GameState game, GameObject o, Mission? stale)
     {
         if (o is Agent a && stale != a.Mission) Missions.PostRole(game, a, stale, a.Mission);
@@ -349,7 +378,7 @@ public static class Knowledge
 
     /// <summary>
     /// Final move of a destroyed object into staging: the parent-change hook runs the staging pass on the side-1 view, then
-    /// side 2 (<see cref="Pass"/>), before the 0x320. The parent copy ran the same passes already (<see cref="ParentCopy"/>); this
+    /// side 2 (<see cref="Pass"/>), before the parent-change notification (FactKind.ParentChanged). The parent copy ran the same passes already (<see cref="ParentCopy"/>); this
     /// repeat reaches only views that got no pass there (a frozen view already in staging or inside a dropped view).
     /// </summary>
     internal static void AtStaging(GameState game, GameObject o)
@@ -360,10 +389,10 @@ public static class Knowledge
     /// <summary>
     /// The pass for the processing view of <paramref name="side"/> (<paramref name="pv"/> = its frozen view,
     /// null when live): real key not none: real := none (posts nothing) and copied into the side-1, then side-2 view (frozen ones
-    /// included), each changed copy posts 0x321 when its side's flag is set (the processing side's = <paramref name="flag"/>, the other
-    /// 1); live views post once together (the sim's setter posts one 0x321 per real change). Then the processing view is copied
+    /// included), each changed copy posts a notification when its side's flag is set (the processing side's = <paramref name="flag"/>, the other
+    /// 1); live views post once together (the sim's setter posts one notification per real change). Then the processing view is copied
     /// again with both flags set: a live view mirrors (nothing); a frozen one still holding a mission while the real key was
-    /// already none takes none and posts 0x321. A frozen view that is not processed keeps its mission.
+    /// already none takes none and posts a notification. A frozen view that is not processed keeps its mission.
     /// </summary>
     static void RoleClear(GameState game, Agent a, Owner side, bool flag, View? pv)
     {
@@ -424,19 +453,19 @@ public static class Knowledge
 
     /// <summary>
     /// Command target check (class callback 0) on side s's view: location = its BuilderKey's location if the view
-    /// is not Completed, else its own location; none gives (0x40, 0x20), (0x40, 0x21) for a Destroyed view. Null = valid.
+    /// is not Completed, else its own location; none gives Refusal.NoTargetLocation, Refusal.TargetLocationDestroyed for a Destroyed view. Null = valid.
     /// </summary>
     public static OrderResult? TargetCheck(GameState game, GameObject o, Owner side)
     {
         var v = See(game, o, side);
         var location = v.Completed ? v.Location : v.BuilderKey is { } b ? Missions.Location(b) : null;
-        return location is not null ? null : v.Destroyed ? new(0x40, 0x21) : new(0x40, 0x20);
+        return location is not null ? null : v.Destroyed ? Refusal.TargetLocationDestroyed : Refusal.NoTargetLocation;
     }
 
     // ---- ObservedBy ----
 
-    /// <summary>Classes that inherit ObservedBy: fleets, troops, ships, fighters, facilities (families [0x08, 0x30)).</summary>
-    static bool Inherits(GameObject o) => Family.Of(o.Type) is >= 0x08 and < 0x30;
+    /// <summary>Classes that inherit ObservedBy: fleets, troops, ships, fighters, facilities (families [8, 48)).</summary>
+    static bool Inherits(GameObject o) => Family.Of(o.Type) is >= Families.Fleet and < Families.MajorCharacter;
 
     /// <summary>
     /// ObservedBy recompute of a content: the parent's ObservedBy if the parent is set, the object is not
@@ -487,39 +516,39 @@ public static class Knowledge
         {
             if (!game.Views.TryGetValue((s, side), out var v)) game.Views[(s, side)] = v = new View();
             // each changed field posts its message
-            Changed(game, side, 0x100, s, v.Owner != s.Owner);
-            Changed(game, side, 0x149, s, v.Populated != s.Populated);
-            Changed(game, side, 0x14A, s, v.Explored != s.Explored);
+            Changed(game, side, ViewMessageType.Owner, s, v.Owner != s.Owner);
+            Changed(game, side, ViewMessageType.Populated, s, v.Populated != s.Populated);
+            Changed(game, side, ViewMessageType.Explored, s, v.Explored != s.Explored);
             (v.Owner, v.Populated, v.Explored) = (s.Owner, s.Populated, s.Explored); // base part: Explored, Populated, owner
             v.Updated = game.Day;
-            if (mode is 1 or 6) { Changed(game, side, 0x140, s, v.Support != s.Support); (v.Support, v.Control) = (s.Support, s.Control); } // part A: support, control word
-            if (mode == 6) { Changed(game, side, 0x14B, s, v.Uprising != s.Uprising); v.Uprising = s.Uprising; }
+            if (mode is 1 or 6) { Changed(game, side, ViewMessageType.Support, s, v.Support != s.Support); (v.Support, v.Control) = (s.Support, s.Control); } // part A: support, control word
+            if (mode == 6) { Changed(game, side, ViewMessageType.Uprising, s, v.Uprising != s.Uprising); v.Uprising = s.Uprising; }
         }
         if (mode == 6)
             foreach (var container in new GameObject[] { s }.Concat(s.Contents.OfType<Fleet>().SelectMany(f => f.Contents.Where(x => Family.IsCapitalShip(x.Type)))).ToList())
             {
                 // refresh the Existing commanders directly in it; drop view commanders no longer there (real CommandKind, Inferred)
-                foreach (var c in container.Contents.OfType<Character>().Where(c => Family.Of(c.Type) < 0x3C && c.Existing && c.CommandKind != 0).ToList())
+                foreach (var c in container.Contents.OfType<Character>().Where(c => Family.Of(c.Type) < Families.SpecialForce && c.Existing && c.CommandKind != 0).ToList())
                     Refresh(game, c, side);
                 foreach (var ((x, _), v) in game.Views.Where(e => e.Key.Item2 == side && e.Value.Parent == container && !IsLive(e.Key.Item1, side)).OrderBy(e => e.Key.Item1.Key).ToList())
                     if (x is Character { CommandKind: not 0 } && x.Container != container) { Drop(game, x, side, v); Pass(game, x, side); }
             }
         Func<GameObject, bool> l1 = mode switch
         {
-            3 => o => In(o, 0x10, 0x20) || In(o, 0x22, 0x28),
-            4 => o => In(o, 0xA0, 0xB0) || In(o, 0x28, 0x30),
+            3 => o => In(o, Families.Troop, Families.Headquarters) || In(o, Families.IonCannon, Families.Shipyard),
+            4 => o => In(o, Families.ConstructionManager, Families.ManagerEnd) || In(o, Families.Shipyard, Families.MajorCharacter),
             5 or 6 or 7 => o => o is Fleet,
-            8 => o => In(o, 0x20, 0x30) || In(o, 0x10, 0x20) || In(o, 0xA0, 0xB0) || o is Fleet,
-            9 => o => In(o, 0x30, 0x40),
+            8 => o => In(o, Families.Headquarters, Families.MajorCharacter) || In(o, Families.Troop, Families.Headquarters) || In(o, Families.ConstructionManager, Families.ManagerEnd) || o is Fleet,
+            9 => o => In(o, Families.MajorCharacter, Families.Mission),
             10 => _ => true,
-            11 => o => In(o, 0x10, 0x40) || In(o, 0xA0, 0xB0),
-            12 => o => In(o, 0x20, 0x30),
+            11 => o => In(o, Families.Troop, Families.Mission) || In(o, Families.ConstructionManager, Families.ManagerEnd),
+            12 => o => In(o, Families.Headquarters, Families.MajorCharacter),
             _ => _ => false,
         };
         bool l2 = mode is >= 5 and <= 8 or 10;
-        Func<GameObject, bool>? l3 = mode switch { 7 or 10 => _ => true, 8 => o => In(o, 0x10, 0x20), _ => null };
+        Func<GameObject, bool>? l3 = mode switch { 7 or 10 => _ => true, 8 => o => In(o, Families.Troop, Families.Headquarters), _ => null };
         List(s, l1);
-        // managers are not contents here: the ranges holding [0xA0, 0xB0) fully refresh their frozen views (the manager refresh with flag 1:
+        // managers are not contents here: the ranges holding [160, 176) fully refresh their frozen views (the manager refresh with flag 1:
         // TargetKey and queue count among them)
         if (mode is 4 or 8 or 10 or 11) foreach (var m in s.Managers.OfType<ManufacturingManager>()) Refresh(game, m, side);
         if (!l2) return;
@@ -553,7 +582,7 @@ public static class Knowledge
     public static GameObject? TargetKey(ManufacturingManager m, Owner side) => IsLive(m, side) ? m.TargetKey : m.ViewTargetKey[(int)side];
 
     /// <summary>
-    /// Side s's view of a manager's Reserved: the real one while live. shortcut: a frozen view reads false (the 0x216 copy
+    /// Side s's view of a manager's Reserved: the real one while live. shortcut: a frozen view reads false (the copy
     /// into frozen views is not kept: no reader of a foreign manager's Reserved); keep a per-side copy when one appears.
     /// </summary>
     public static bool Reserved(ManufacturingManager m, Owner side) => IsLive(m, side) && m.Reserved;
@@ -565,16 +594,16 @@ public static class Knowledge
     /// <summary>
     /// Manager owner change, steps 1-2 (the manager's owner already the
     /// new one (it follows its system; destroyed: 3): 1. old side o in {1, 2}: its still-live view takes the new owner and posts
-    /// 0x100 to o, then freezes with the values it has now (queue count and TargetKey before the cancel); 2. new side n in {1, 2}:
-    /// frozen to live full refresh, posting per differing field (0x300, 0x100, 0x101-0x103, 0x160; 0x161-0x163, 0x400 and the
-    /// DeploymentKey 0x321 are not kept: no reader). The 0x318 (step 5) is the caller's.
+    /// a ViewMessageType.Owner post to o, then freezes with the values it has now (queue count and TargetKey before the cancel); 2. new side n in {1, 2}:
+    /// frozen to live full refresh, posting per differing field (Parent, Owner, Usable, Created, Completed, QueueCount; the other manager posts and the
+    /// DeploymentKey post are not kept: no reader). The owner-change post is the caller's.
     /// </summary>
     internal static void ManagerOwnerChanged(GameState game, ManufacturingManager m, Owner old)
     {
         if (!game.Ready) return;
         if (old is Owner.Alliance or Owner.Empire)
         {
-            Changed(game, old, 0x100, m, true);
+            Changed(game, old, ViewMessageType.Owner, m, true);
             Snapshot(game, m, old, fromLive: true);
         }
         if (m.Owner is Owner.Alliance or Owner.Empire) game.ViewRefreshed(m, m.Owner);
@@ -602,17 +631,17 @@ public static class Knowledge
         Refresh(game, o, side);
     }
 
-    /// <summary>Core-system 0x318 hook: modes 12 and 4 for both sides.</summary>
+    /// <summary>Core-system owner-change hook: modes 12 and 4 for both sides.</summary>
     internal static void CoreOwnerFollowUp(GameState game, StarSystem s)
     {
         foreach (var side in Sides) { Update(game, s, 12, side); Update(game, s, 4, side); }
     }
 
     /// <summary>
-    /// Character / special-force 0x318 hook: old owner 1 or 2 to full refresh of that side's view; a
-    /// stale RoleMissionKey in it is copied and posts 0x321 (view value to current, its lock handler included).
+    /// Character / special-force owner-change hook: old owner 1 or 2 to full refresh of that side's view; a
+    /// stale RoleMissionKey in it is copied and posts the agent-mission notification (FactKind.AgentMission) (view value to current, its lock handler included).
     /// Managers: the same hook after the cancelled units' notifications, so the old owner's frozen view ends with the queue count
-    /// and TargetKey of that moment. Other classes post no 0x318 here.
+    /// and TargetKey of that moment. Other classes post no owner-change notification here.
     /// </summary>
     internal static void OwnerFollowUp(GameState game, GameObject o, Owner old)
     {
@@ -620,13 +649,13 @@ public static class Knowledge
     }
 
     /// <summary>
-    /// Mission finalize part (classes [0x51, 0x74) except 0x58, at phase 10 and on entering 11), only if LastPhase >= 5
+    /// Mission finalize part (classes [81, 116) except 88, at phase 10 and on entering 11), only if LastPhase >= 5
     /// or TargetLocation = Origin: a system target location to mode 6 for the owner; then the owner's view of a non-system,
     /// non-abode ObjectiveKey seen at the target location gets a full refresh.
     /// </summary>
     internal static void Finalize(GameState game, Mission m)
     {
-        if (m.Kind is < 0x51 or >= 0x74 or 0x58 || !(m.LastPhase >= 5 || m.TargetLocation == m.Origin)) return;
+        if (m.Kind is < MissionKind.Diplomacy or > MissionKind.Pickup or MissionKind.JediTraining || !(m.LastPhase >= 5 || m.TargetLocation == m.Origin)) return;
         if (m.TargetLocation is StarSystem s) Update(game, s, 6, m.Owner);
         if (m.Objective is { } o && o is not StarSystem && !IsAbode(o) && m.TargetLocation is { } t && See(game, o, m.Owner).Location == t)
             Refresh(game, o, m.Owner);
@@ -635,7 +664,7 @@ public static class Knowledge
     /// <summary>
     /// Setup step 24 (sides Inferred both): frozen views only. Every system: the "position" refresh (context A,
     /// systems: parent and Usable / Created / Completed / Existing; owner 3, not Populated stay), so every system view
-    /// is a valid mission target; core systems [0x90, 0x92) and their facilities [0x20, 0x30): full refresh; Yavin: mode 10 for
+    /// is a valid mission target; core systems [144, 146) and their facilities [32, 48): full refresh; Yavin: mode 10 for
     /// side 2. Manager refreshes keep only the TargetKey of every frozen manager view (Inferred: every system's managers); sector
     /// refreshes are not kept (a sector is not an object here).
     /// </summary>
@@ -658,12 +687,12 @@ public static class Knowledge
             }
         foreach (var m in game.Systems.SelectMany(s => s.Managers).OfType<ManufacturingManager>())
             foreach (var side in Sides) CopyTargetKey(m, side);
-        foreach (var s in game.Systems.Where(s => Family.Of(s.Type) is >= 0x90 and < 0x92))
+        foreach (var s in game.Systems.Where(s => Family.Of(s.Type) is >= Families.CoreSystem and < Families.RimSystem))
             foreach (var side in Sides)
             {
                 Refresh(game, s, side);
-                foreach (var f in s.Contents.Where(x => In(x, 0x20, 0x30)).ToList()) Refresh(game, f, side);
+                foreach (var f in s.Contents.Where(x => In(x, Families.Headquarters, Families.MajorCharacter)).ToList()) Refresh(game, f, side);
             }
-        Update(game, game.System(Refs.Yavin), 10, Owner.Empire);
+        Update(game, game.Known.Yavin!, 10, Owner.Empire);
     }
 }

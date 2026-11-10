@@ -28,7 +28,7 @@ public sealed partial class OpenSWRController
     static int RunSeed(GameState game, int day, uint system, int forces, int run)
     {
         long h = (uint)game.Settings.Seed;
-        foreach (long x in new long[] { day, system, (uint)forces, run }) h = (h * 1_000_003 + x) % 0x7FFFFFFD;
+        foreach (long x in new long[] { day, system, (uint)forces, run }) h = (h * 1_000_003 + x) % 2147483645;
         return (int)h + 1;
     }
 
@@ -55,17 +55,17 @@ public sealed partial class OpenSWRController
         if (_spaceCache.TryGetValue((s.Ref, game.Day, forces), out var hit)) return hit;
         Predictions++;
         var sandbox = new StarSystem(s.Definition, s.Sector);
-        uint id = 0x7F0000;
+        uint id = 8323072;
         var values = new Dictionary<GameObject, (bool Own, int Value, int Size)>();
         GameObject Copy(GameObject real, Owner owner, GameObject into, bool damage)
         {
-            var o = Family.Of(real.Type) is >= 0x08 and < 0x10 ? new Fleet(real.Type, owner, ++id) : new GameObject(real.Type, owner, ++id);
+            var o = Family.Of(real.Type) is >= Families.Fleet and < Families.Troop ? new Fleet(real.Type, owner, ++id) : new GameObject(real.Type, owner, ++id);
             if (damage)
             {
                 (o.HullDamage, o.SquadSizeDamage, o.CriticalHits) = (real.HullDamage, real.SquadSizeDamage, real.CriticalHits);
             }
             into.Add(o);
-            bool fighter = Family.Of(real.Type) is >= 0x1C and < 0x20;
+            bool fighter = Family.Of(real.Type) is >= Families.Fighter and < Families.Headquarters;
             if (fighter || Family.IsCapitalShip(real.Type))
                 values[o] = (owner == Side, k.Value(real.Type), fighter ? 0 : (int)(game.Definitions.CapitalShips.FirstOrDefault(r => r.Common.Ref == real.Type)?.Hull ?? 0));
             return o;
@@ -73,23 +73,23 @@ public sealed partial class OpenSWRController
         foreach (var f in ownList)
         {
             var fleet = Copy(f, Side, sandbox, false);
-            foreach (var ship in f.Contents.Where(x => Family.IsCapitalShip(x.Type) && x.Usable && Family.Of(x.Type) < 0x18))
+            foreach (var ship in f.Contents.Where(x => Family.IsCapitalShip(x.Type) && x.Usable && Family.Of(x.Type) < Families.DeathStar))
             {
                 var copy = Copy(ship, Side, fleet, true);
-                foreach (var fighter in ship.Contents.Where(y => Family.Of(y.Type) is >= 0x1C and < 0x20 && y.Usable)) Copy(fighter, Side, copy, true);
+                foreach (var fighter in ship.Contents.Where(y => Family.Of(y.Type) is >= Families.Fighter and < Families.Headquarters && y.Usable)) Copy(fighter, Side, copy, true);
             }
         }
-        foreach (var fighter in s.Contents.Where(y => Family.Of(y.Type) is >= 0x1C and < 0x20 && y.Usable && y.Owner == Side)) Copy(fighter, Side, sandbox, true);
+        foreach (var fighter in s.Contents.Where(y => Family.Of(y.Type) is >= Families.Fighter and < Families.Headquarters && y.Usable && y.Owner == Side)) Copy(fighter, Side, sandbox, true);
         foreach (var f in enemyList)
         {
             var fleet = Copy(f, Enemy, sandbox, false);
-            foreach (var ship in k.Contents(f).Where(v => Family.IsCapitalShip(v.Object.Type) && Family.Of(v.Object.Type) < 0x18))
+            foreach (var ship in k.Contents(f).Where(v => Family.IsCapitalShip(v.Object.Type) && Family.Of(v.Object.Type) < Families.DeathStar))
             {
                 var copy = Copy(ship.Object, Enemy, fleet, false);
-                foreach (var fighter in k.Contents(ship.Object).Where(v => v.In(0x1C, 0x20))) Copy(fighter.Object, Enemy, copy, false);
+                foreach (var fighter in k.Contents(ship.Object).Where(v => v.In(Families.Fighter, Families.Headquarters))) Copy(fighter.Object, Enemy, copy, false);
             }
         }
-        foreach (var fighter in k.Contents(s).Where(v => v.Owner == Enemy && v.In(0x1C, 0x20))) Copy(fighter.Object, Enemy, sandbox, false);
+        foreach (var fighter in k.Contents(s).Where(v => v.Owner == Enemy && v.In(Families.Fighter, Families.Headquarters))) Copy(fighter.Object, Enemy, sandbox, false);
 
         double wins = 0, ownLost = 0, enemyLost = 0;
         bool anyOwn = values.Values.Any(v => v.Own), anyEnemy = values.Values.Any(v => !v.Own);
@@ -117,7 +117,7 @@ public sealed partial class OpenSWRController
 
     /// <summary>
     /// Ground prediction: the attacker's win chance in an assault of <paramref name="attackers"/> (troop types) against
-    /// <paramref name="defenders"/> (troop types) and <paramref name="facilities"/> (defence facility types [0x22, 0x28)) at
+    /// <paramref name="defenders"/> (troop types) and <paramref name="facilities"/> (defence facility types, families 34 to 39) at
     /// <paramref name="s"/>.
     /// </summary>
     internal double PredictGround(GameState game, StarSystem s, IReadOnlyList<uint> attackers, IReadOnlyList<uint> defenders, IReadOnlyList<uint> facilities)
@@ -129,7 +129,7 @@ public sealed partial class OpenSWRController
             + facilities.Aggregate(37, (h, t) => h * 31 + (int)t));
         if (_groundCache.TryGetValue((s.Ref, game.Day, forces), out double hit)) return hit;
         Predictions++;
-        var g = game.Params;
+        var g = game.Rules;
         int Sd(uint type, SdField field) => game.Definitions.Resolve(type) is { } r ? r.GetOrZero(field) : 0;
         int wins = 0;
         for (int run = 0; run < PredictRuns; run++)
@@ -141,7 +141,7 @@ public sealed partial class OpenSWRController
             foreach (uint f in facilities)
             {
                 if (a.Count == 0) break;
-                if (!rand.Chance(Sd(f, SdField.DefenseAttackStrength) / Math.Max(1, g.General(0x200)))) continue;
+                if (!rand.Chance(Sd(f, SdField.DefenseAttackStrength) / Math.Max(1, g.AssaultFireDivisor))) continue;
                 int i = rand.Roll(a0 - 1);
                 if (i >= 0 && i < a.Count) a.RemoveAt(i);
             }
@@ -150,7 +150,7 @@ public sealed partial class OpenSWRController
                 {
                     int r = rand.Roll(d0 - 1);
                     if (r >= d.Count) continue;
-                    int v = Combat.Duel(game, rand.Roll(g.General(0x202)), Sd(t, SdField.TroopAttackStrength), 0, Sd(d[r], SdField.TroopDefenseStrength), 0);
+                    int v = Combat.Duel(game, rand.Roll(g.DuelRoll), Sd(t, SdField.TroopAttackStrength), 0, Sd(d[r], SdField.TroopDefenseStrength), 0);
                     if (v > 0) d.RemoveAt(r);
                     else if (v < 0) a.Remove(t);
                     if (a.Count == 0 || d.Count == 0) break;

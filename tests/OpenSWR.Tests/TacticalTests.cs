@@ -17,9 +17,9 @@ public class TacticalTests
     {
         var game = NewGame.Create(new GameSettings(Owner.Empire, 1, 0, 0, 12345), Definitions);
         var x = game.Systems.First(s => !s.Contents.Any(o => o.Existing) && s.Owner == Owner.Neutral);
-        var carrier = Definitions.CapitalShips.First(r => r.Empire != 0 && Family.Of(r.Common.Ref) < 0x18 && r.FighterCapacity >= 2 && r.WeaponRechargeRate > 0);
-        var heavy = Definitions.CapitalShips.Where(r => r.Empire != 0 && Family.Of(r.Common.Ref) < 0x18).MaxBy(r => r.TotalAttackStrength)!;
-        var rebel = Definitions.CapitalShips.Where(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < 0x18 && r.TotalAttackStrength > 0).ToList();
+        var carrier = Definitions.CapitalShips.First(r => r.Empire != 0 && Family.Of(r.Common.Ref) < Families.DeathStar && r.FighterCapacity >= 2 && r.WeaponRechargeRate > 0);
+        var heavy = Definitions.CapitalShips.Where(r => r.Empire != 0 && Family.Of(r.Common.Ref) < Families.DeathStar).MaxBy(r => r.TotalAttackStrength)!;
+        var rebel = Definitions.CapitalShips.Where(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < Families.DeathStar && r.TotalAttackStrength > 0).ToList();
         var empire = x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId()));
         var ship = empire.Add(new GameObject(carrier.Common.Ref, Owner.Empire, game.NextId()));
         var tie = Definitions.Fighters.First(r => r.Empire != 0 && r.Hyperdrive == 0).Common.Ref;
@@ -36,7 +36,7 @@ public class TacticalTests
     }
 
     static string State(GameState game, StarSystem x) => string.Join("; ", Combat.Units(x).Concat(x.Contents.OfType<Fleet>())
-        .Select(o => $"{o.Ref:X8} p{o.Container?.Ref:X8} d{o.Destroyed} h{o.HullDamage} q{o.SquadSizeDamage} c{string.Join("", Enumerable.Range(0, 6).Select(o.Critical))}"))
+        .Select(o => $"{Family.Of(o.Ref)}:{SdRef.IndexOf(o.Ref)} p{o.Container?.Ref} d{o.Destroyed} h{o.HullDamage} q{o.SquadSizeDamage} c{string.Join("", Enumerable.Range(0, 6).Select(o.Critical))}"))
         + $" won {x.BattleWon} battle {x.Battle}";
 
     /// <summary>
@@ -72,7 +72,7 @@ public class TacticalTests
                     Assert.Empty(trace);
                     Assert.Empty(gameDraws); // the tactical battle never steps the game generator
                     int tick = game.Clock.Tick;
-                    game.Clock.Step(game); // host state 0x14: no clock advance while the battle is not done
+                    game.Clock.Step(game); // host state waiting: no clock advance while the battle is not done
                     Assert.Equal(tick, game.Clock.Tick);
                     Assert.Throws<InvalidOperationException>(() => SaveGame.Save(game, new MemoryStream()));
                     t.Abort();
@@ -143,8 +143,8 @@ public class TacticalTests
     const double Base = 0.26666668f;
 
     /// <summary>
-    /// Timing: a shot decided in turn 0 (stamp base 3) shows its turbolaser beam (0x0E, stamp 3) at the start of turn 4,
-    /// hits (0x13, stamp 4) at turn 5; the ion display (0x0F) runs at turn 5 and its hit (0x12) at turn 6. Aimed values:
+    /// Timing: a shot decided in turn 0 (stamp base 3) shows its turbolaser beam (the TurbolaserShot message, stamp 3) at the start of turn 4,
+    /// hits (the TurbolaserHit message, stamp 4) at turn 5; the IonShot message runs at turn 5 and its IonHit message at turn 6. Aimed values:
     /// turbolaser count * base * 1.0, ion count * base * 1.0 against a ship. The shooter's arc is spent (not ready, queued). No draw
     /// on the game generator.
     /// </summary>
@@ -153,7 +153,7 @@ public class TacticalTests
     {
         var script = new Script([0], []);
         // Empire: Super Star Destroyer with ShieldCH 4 (no recharge) and WeaponCH 4 (never ready, never fires)
-        var (game, battle, a, e) = Scene(script, [0x14000042], [0x14000086], o => { if (o.Owner == Owner.Empire) { o.SetCritical(0, 4); o.SetCritical(1, 4); } });
+        var (game, battle, a, e) = Scene(script, [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 134)], o => { if (o.Owner == Owner.Empire) { o.SetCritical(0, 4); o.SetCritical(1, 4); } });
         long draws = game.Random.Draws;
         var (shooter, target) = (a[0], e[0]);
         Place(shooter, 0, 0);
@@ -162,18 +162,18 @@ public class TacticalTests
         double s0 = target.Shield;
         Assert.Equal(1200, s0);
         battle.Step(); // turn 0: the decision
-        Assert.Equal(1, battle.Queued(0x0E, 3));
-        Assert.Equal(1, battle.Queued(0x13, 4));
-        Assert.Equal(1, battle.Queued(0x0F, 4));
-        Assert.Equal(1, battle.Queued(0x12, 5));
+        Assert.Equal(1, battle.Queued(TacticalMessage.TurbolaserShot, 3));
+        Assert.Equal(1, battle.Queued(TacticalMessage.TurbolaserHit, 4));
+        Assert.Equal(1, battle.Queued(TacticalMessage.IonShot, 4));
+        Assert.Equal(1, battle.Queued(TacticalMessage.IonHit, 5));
         Assert.False(shooter.U.Ready[0]);
         Assert.Contains(0, shooter.U.Queue);
         for (int turn = 1; turn <= 4; turn++) battle.Step();
         Assert.Equal(s0, target.Shield);
-        Assert.Equal([(4, 0x0E, shooter, target)], battle.Shots.Select(s => (s.Turn, s.Kind, s.From, s.To)));
+        Assert.Equal([(4, TacticalMessage.TurbolaserShot, shooter, target)], battle.Shots.Select(s => (s.Turn, s.Kind, s.From, s.To)));
         battle.Step(); // turn 5: turbolaser hit
         Assert.Equal(s0 - 70 * Base, target.Shield, 3);
-        Assert.Equal((5, 0x0F, shooter, target), (battle.Shots[^1].Turn, battle.Shots[^1].Kind, battle.Shots[^1].From, battle.Shots[^1].To));
+        Assert.Equal((5, TacticalMessage.IonShot, shooter, target), (battle.Shots[^1].Turn, battle.Shots[^1].Kind, battle.Shots[^1].From, battle.Shots[^1].To));
         battle.Step(); // turn 6: ion hit
         Assert.Equal(s0 - 70 * Base - 50 * Base, target.Shield, 3);
         Assert.Equal(draws, game.Random.Draws);
@@ -181,11 +181,11 @@ public class TacticalTests
         Assert.Equal(10, battle.Stamp);
     }
 
-    /// <summary>Arc of a target: heading +z; ahead -> 0 (fore), +x -> 1 (starboard), behind -> 2 (aft), -x -> 3 (port).</summary>
+    /// <summary>Arc of a target: heading +z; ahead gives 0 (fore), +x gives 1 (starboard), behind gives 2 (aft), -x gives 3 (port).</summary>
     [GameFact]
     public void ArcByGeometry()
     {
-        var (_, _, a, _) = Scene(new Script([], []), [0x14000042, 0x14000042], [0x14000086]);
+        var (_, _, a, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66), SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 134)]);
         var u = a[0];
         Place(u, 0, 0);
         u.Heading = (0, 1);
@@ -194,33 +194,33 @@ public class TacticalTests
     }
 
     /// <summary>
-    /// Aimed shot: out of every weapon's range -> nothing fires; the laser only within its own range (17): a frigate (turbolaser
+    /// Aimed shot: out of every weapon's range gives nothing fires; the laser only within its own range (17): a frigate (turbolaser
     /// 80 / range 60, laser 60 / range 17) at 30 fires its turbolaser only, at 15 also the laser.
     /// </summary>
     [GameFact]
     public void AimedShotTakesTheWeaponsInRange()
     {
         var script = new Script([0, 0, 0], []);
-        var (_, battle, a, e) = Scene(script, [0x14000043], [0x14000086], o => { if (o.Owner == Owner.Empire) o.SetCritical(1, 4); });
+        var (_, battle, a, e) = Scene(script, [SdRef.Make(Families.CapitalShip, 67)], [SdRef.Make(Families.CapitalShip, 134)], o => { if (o.Owner == Owner.Empire) o.SetCritical(1, 4); });
         var (u, t) = (a[0], e[0]);
         Tf(battle, u).G.Target = t.U;
         Place(u, 0, 0);
         Place(t, 0, 70);
         battle.Step();
-        Assert.Equal(0, battle.Queued(0x11) + battle.Queued(0x13));
+        Assert.Equal(0, battle.Queued(TacticalMessage.LaserHit) + battle.Queued(TacticalMessage.TurbolaserHit));
         Place(t, 0, 30);
         battle.Step();
-        Assert.Equal((0, 1), (battle.Queued(0x11), battle.Queued(0x13))); // turbolaser 0x13, laser 0x11
+        Assert.Equal((0, 1), (battle.Queued(TacticalMessage.LaserHit), battle.Queued(TacticalMessage.TurbolaserHit))); // turbolaser, laser
         u.U.Ready[0] = true;
         Place(t, 0, 15);
         battle.Step();
-        Assert.Equal((1, 2), (battle.Queued(0x11), battle.Queued(0x13)));
+        Assert.Equal((1, 2), (battle.Queued(TacticalMessage.LaserHit), battle.Queued(TacticalMessage.TurbolaserHit)));
     }
 
     /// <summary>
     /// The fire query takes enemy fighters only, walking from the shooter toward lower x first,
     /// then higher x, each walk ending at the first entry beyond the range (example: shooter at 0, fighters at -3, -1, +1, +5, range
-    /// 4 -> -1, -3, +1); capital ships are never candidates.
+    /// 4 gives -1, -3, +1); capital ships are never candidates.
     /// </summary>
     [GameFact]
     public void FireQueryWalksTheFighters()
@@ -230,9 +230,9 @@ public class TacticalTests
         var r0 = Definitions.Systems[0];
         var x = new StarSystem(r0, sectors[r0.SectorIndex]) { Explored = true };
         game.Systems.Add(x);
-        x.Add(new Fleet(Refs.Fleet, Owner.Alliance, game.NextId())).Add(new GameObject(0x14000042, Owner.Alliance, game.NextId()));
-        x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId())).Add(new GameObject(0x14000085, Owner.Empire, game.NextId()));
-        for (int i = 0; i < 4; i++) x.Add(new GameObject(0x1C000005, Owner.Empire, game.NextId()));
+        x.Add(new Fleet(Refs.Fleet, Owner.Alliance, game.NextId())).Add(new GameObject(SdRef.Make(Families.CapitalShip, 66), Owner.Alliance, game.NextId()));
+        x.Add(new Fleet(Refs.Fleet, Owner.Empire, game.NextId())).Add(new GameObject(SdRef.Make(Families.CapitalShip, 133), Owner.Empire, game.NextId()));
+        for (int i = 0; i < 4; i++) x.Add(new GameObject(SdRef.Make(Families.Fighter, 5), Owner.Empire, game.NextId()));
         var battle = new TacticalBattle(game, x, Owner.Alliance, new Script([], []).Draw);
         var shooter = battle.Units.First(u => u.Side == 0);
         var ship = battle.Units.First(u => u.Side == 1 && !u.Fighter);
@@ -245,30 +245,30 @@ public class TacticalTests
     }
 
     /// <summary>
-    /// Hits: shield held -> crit 0 when rand 0...100 <= max(1, 100 * d / s0); broken -> the whole overflow on the hull, then rand
-    /// 0...100 + 100 * delta hull / hull in the bands; d at least 1; hull <= 0 -> state 11, hull 0, no draw.
+    /// Hits: shield held gives crit 0 when rand 0...100 <= max(1, 100 * d / s0); broken gives the whole overflow on the hull, then rand
+    /// 0...100 + 100 * delta hull / hull in the bands; d at least 1; hull <= 0 gives state 11, hull 0, no draw.
     /// </summary>
     [GameFact]
     public void HitFormulas()
     {
         var script = new Script([], [30, 31, 100, 0]);
-        var (_, battle, a, e) = Scene(script, [0x14000042], [0x14000085]);
+        var (_, battle, a, e) = Scene(script, [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
         var (t, shooter) = (e[0], a[0]);
         t.U.Shield = 100;
-        battle.Hit(t, 30, shooter, ratio: true); // p = 30, r = 30 -> crit 0
+        battle.Hit(t, 30, shooter, ratio: true); // p = 30, r = 30 gives crit 0
         Assert.Equal(70, t.Shield);
-        Assert.Equal(1, battle.Queued(0x1E, battle.Stamp));
-        battle.Hit(t, 21, shooter, ratio: true); // p = 30, r = 31 -> none
-        Assert.Equal(1, battle.Queued(0x1E));
+        Assert.Equal(1, battle.Queued(TacticalMessage.CriticalHitShield, battle.Stamp));
+        battle.Hit(t, 21, shooter, ratio: true); // p = 30, r = 31 gives none
+        Assert.Equal(1, battle.Queued(TacticalMessage.CriticalHitShield));
         (t.U.Shield, t.U.Hull) = (10, 200);
-        battle.Hit(t, 60, shooter, ratio: true); // hull 150; x = -25 + 100 = 75 -> k = 1
+        battle.Hit(t, 60, shooter, ratio: true); // hull 150; x = -25 + 100 = 75 gives k = 1
         Assert.Equal((0.0, 150.0), (t.Shield, t.Hull));
-        Assert.Equal(1, battle.Queued(0x1F));
-        battle.Hit(t, 0.2, shooter, ratio: true); // d := 1 -> hull 149; x = -0.67 + 0 -> none
+        Assert.Equal(1, battle.Queued(TacticalMessage.CriticalHitWeapon));
+        battle.Hit(t, 0.2, shooter, ratio: true); // d := 1 gives hull 149; x = -0.67 + 0 gives none
         Assert.Equal(149, t.Hull);
         Assert.Equal([(0, 100, 30), (0, 100, 31), (0, 100, 100), (0, 100, 0)], script.Log);
         battle.Hit(t, 1000, shooter, ratio: true);
-        Assert.Equal((11, 0.0), (t.State, t.Hull));
+        Assert.Equal((TacticalUnitState.Destroyed, 0.0), (t.State, t.Hull));
         Assert.Equal(4, script.Log.Count); // the killing hit draws nothing
     }
 
@@ -277,9 +277,9 @@ public class TacticalTests
     public void FighterTargetsTakeTheAgilityRatio()
     {
         var script = new Script([], []);
-        var (game, battle, _, _) = Scene(script, [0x14000042], [0x14000085]);
+        var (game, battle, _, _) = Scene(script, [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
         // a squadron of X-wings (maneuverability 5 + 1) against a shooter of agility min(9, 2 + 1) = 3: d / 2
-        battle.System.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId()));
+        battle.System.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId()));
         var b = new TacticalBattle(game, battle.System, Owner.Alliance, script.Draw);
         var wing = b.Units.Single(u => u.Fighter);
         var ship = b.Units.First(u => u.Side == 1);
@@ -291,22 +291,22 @@ public class TacticalTests
     }
 
     /// <summary>
-    /// Step 6: a crit message is posted with the stamp base during the dispatch of turn m that applies the hit
+    /// A crit message is posted with the stamp base during the dispatch of turn m that applies the hit
     /// (base m + 3), so it acts at turn m + 4: a turbolaser shot decided at turn 0 hits at turn 5 and its shield crit acts at turn 9.
     /// </summary>
     [GameFact]
     public void CritActsFourTurnsAfterTheHit()
     {
         var script = new Script([0], [0]);
-        var (_, battle, a, e) = Scene(script, [0x14000042], [0x14000086], o => { if (o.Owner == Owner.Empire) o.SetCritical(1, 4); });
+        var (_, battle, a, e) = Scene(script, [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 134)], o => { if (o.Owner == Owner.Empire) o.SetCritical(1, 4); });
         var (shooter, t) = (a[0], e[0]);
         Place(shooter, 0, 0);
         Place(t, 0, 30);
         Tf(battle, shooter).G.Target = t.U;
         battle.Step(); // turn 0: the decision
         for (int turn = 1; turn <= 5; turn++) battle.Step();
-        // turn 5: the hit, rand 0 <= p -> crit 0 posted with base 8
-        Assert.Equal(1, battle.Queued(0x1E, 8));
+        // turn 5: the hit, rand 0 <= p gives crit 0 posted with base 8
+        Assert.Equal(1, battle.Queued(TacticalMessage.CriticalHitShield, 8));
         for (int turn = 6; turn <= 8; turn++) battle.Step();
         Assert.Equal(0, t.U.ShieldCh);
         battle.Step(); // turn 9
@@ -315,21 +315,21 @@ public class TacticalTests
 
     /// <summary>
     /// Ion hit: the excess over the shield never reaches the hull; per whole point k = rand 1...10: 1 tractor-down + rand 30...50,
-    /// 2 engine-down + rand 30...50, 3...10 arc (k - 3) div 2 down; message 0x16 applies them (arc not ready, energy 0, queued); the
+    /// 2 engine-down + rand 30...50, 3...10 arc (k - 3) div 2 down; the ShieldOverflow message applies them (arc not ready, energy 0, queued); the
     /// engine-down time stops the ship (speed 0) and runs down by 1.0 per turn.
     /// </summary>
     [GameFact]
     public void IonHitDisablesWithoutHullDamage()
     {
         var script = new Script([], [1, 40, 2, 35, 9]);
-        var (_, battle, a, e) = Scene(script, [0x14000042], [0x14000085]);
+        var (_, battle, a, e) = Scene(script, [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
         var t = e[0];
         double hull = t.Hull;
         t.U.Shield = 5;
         battle.IonHit(t, 8, a[0]);
         Assert.Equal((0.0, hull), (t.Shield, t.Hull));
         Assert.Equal([(1, 10, 1), (30, 50, 40), (1, 10, 2), (30, 50, 35), (1, 10, 9)], script.Log);
-        Assert.Equal(1, battle.Queued(0x16, battle.Stamp));
+        Assert.Equal(1, battle.Queued(TacticalMessage.ShieldOverflow, battle.Stamp));
         for (int i = 0; i < 5; i++) battle.Step(); // stamp 3 runs at turn 4 (the fifth step), then the unit update counts down once
         Assert.Equal((34.0, 39.0), (t.U.EngineDown, t.U.TractorDown));
         Assert.False(t.U.Ready[3]);
@@ -343,7 +343,7 @@ public class TacticalTests
     [GameFact]
     public void EliminationEndsAfterTheCountdown()
     {
-        var (game, battle, a, e) = Scene(new Script([], []), [0x14000042], [0x14000085]);
+        var (game, battle, a, e) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
         battle.Hit(e[0], 1e6, a[0], ratio: true);
         battle.Advance(1);
         Assert.True(battle.Ending);
@@ -367,24 +367,24 @@ public class TacticalTests
     [GameFact]
     public void FinishRedocksFightersExceptOnAbort()
     {
-        var carrier = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < 0x18 && r.FighterCapacity >= 1).Common.Ref;
+        var carrier = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) < Families.DeathStar && r.FighterCapacity >= 1).Common.Ref;
         TacticalBattle Make(out TacticalUnit wing, out TacticalUnit ship, out TacticalUnit enemy)
         {
-            var (game, b0, _, _) = Scene(new Script([], []), [carrier], [0x14000085]);
-            b0.System.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId()));
+            var (game, b0, _, _) = Scene(new Script([], []), [carrier], [SdRef.Make(Families.CapitalShip, 133)]);
+            b0.System.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId()));
             var b = new TacticalBattle(game, b0.System, Owner.Alliance, new Script([], []).Draw);
             (wing, ship, enemy) = (b.Units.Single(u => u.Fighter), b.Units.Single(u => u.Side == 0 && !u.Fighter), b.Units.Single(u => u.Side == 1));
             return b;
         }
         var battle = Make(out var wing, out var ship, out var enemy);
-        Assert.Equal(2, wing.State);
+        Assert.Equal(TacticalUnitState.Active, wing.State);
         battle.Hit(enemy, 1e6, ship, ratio: true);
         battle.Advance(1);
-        Assert.Equal((1, false), (wing.State, battle.Ui.InCommand));
+        Assert.Equal((TacticalUnitState.Docked, false), (wing.State, battle.Ui.InCommand));
         Assert.Same(ship.Object, battle.Result().Fighters[wing.Object].Carrier);
         battle = Make(out wing, out _, out _);
         battle.Abort();
-        Assert.Equal(2, wing.State);
+        Assert.Equal(TacticalUnitState.Active, wing.State);
         Assert.Null(battle.Result().Fighters[wing.Object].Carrier);
     }
 
@@ -392,9 +392,9 @@ public class TacticalTests
     [GameFact]
     public void StrengthCountsFightersOnBothSides()
     {
-        var (game, b0, _, _) = Scene(new Script([], []), [0x14000042], [0x14000085]);
+        var (game, b0, _, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
         var before = new TacticalBattle(game, b0.System, Owner.Alliance, new Script([], []).Draw);
-        b0.System.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId()));
+        b0.System.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId()));
         var after = new TacticalBattle(game, b0.System, Owner.Alliance, new Script([], []).Draw);
         before.Step();
         after.Step();
@@ -402,34 +402,34 @@ public class TacticalTests
     }
 
     /// <summary>
-    /// Target orders: replace (0x36), add (0x34), remove (0x35) change the UI target list at once and the simulation list
-    /// by their group message at the dispatch (stamp base 3 -> turn 4); nearest enemy (capital ships first); the
+    /// Target orders: replace (the replace-target order), add (add-target), remove (remove-target) change the UI target list at once and the simulation list
+    /// by their group message at the dispatch (stamp base 3 gives turn 4); nearest enemy (capital ships first); the
     /// current target out of every range (r = 2), the fire decision walks the nearest-enemy list.
     /// The ship has no laser, so the refresh took the enemy capital ship nearest to the nav point, e[1].
     /// </summary>
     [GameFact]
     public void TargetOrdersChangeTheUiListAtOnceAndTheSimulationListLater()
     {
-        var (_, battle, a, e) = Scene(new Script([1, 1, 1, 1, 0], []), [0x14000042], [0x14000085, 0x14000086, 0x14000084], o => { if (o.Owner == Owner.Empire) o.SetCritical(1, 4); });
+        var (_, battle, a, e) = Scene(new Script([1, 1, 1, 1, 0], []), [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 134), SdRef.Make(Families.CapitalShip, 132)], o => { if (o.Owner == Owner.Empire) o.SetCritical(1, 4); });
         var g = Tf(battle, a[0]);
         Place(a[0], 0, 0);
         Place(e[0], 0, 200);
         Place(e[1], 0, 30);
         Place(e[2], 0, 300);
         Assert.Equal(e[1], battle.Nearest(a[0].Position, 0));
-        Assert.True(battle.Order(g, TacticalBattle.ReplaceTargets, e[0]));
-        Assert.True(battle.Order(g, TacticalBattle.AddTarget, e[1]));
-        Assert.True(battle.Order(g, TacticalBattle.AddTarget, e[2]));
-        Assert.True(battle.Order(g, TacticalBattle.RemoveTarget, e[2]));
+        Assert.True(battle.Order(g, TacticalMessage.ReplaceTargets, e[0]));
+        Assert.True(battle.Order(g, TacticalMessage.AddTarget, e[1]));
+        Assert.True(battle.Order(g, TacticalMessage.AddTarget, e[2]));
+        Assert.True(battle.Order(g, TacticalMessage.RemoveTarget, e[2]));
         Assert.Equal([e[0], e[1]], g.UiTargets);
         Assert.Empty(battle.TargetList(g));
-        Assert.Equal([0x36, 0x34, 0x34, 0x35], battle.QueuedKinds());
+        Assert.Equal([TacticalMessage.ReplaceTargets, TacticalMessage.AddTarget, TacticalMessage.AddTarget, TacticalMessage.RemoveTarget], battle.QueuedKinds());
         for (int i = 0; i < 4; i++) battle.Step();
         Assert.Empty(battle.TargetList(g));
-        battle.Step(); // turn 4: the stamp-3 messages, then the fire: e[0] out of every range (r = 2) -> aimed at e[1]
+        battle.Step(); // turn 4: the stamp-3 messages, then the fire: e[0] out of every range (r = 2) gives aimed at e[1]
         Assert.Equal([e[1]], g.NearestEnemy);
         Assert.Equal([e[0], e[1]], battle.TargetList(g));
-        Assert.Equal(1, battle.Queued(0x13, 8));
+        Assert.Equal(1, battle.Queued(TacticalMessage.TurbolaserHit, 8));
     }
 
     /// <summary>
@@ -457,8 +457,8 @@ public class TacticalTests
 
     /// <summary>
     /// Withdraw: the countdown is at least 30000 ms (30 turns); then side state 3 and, the ship standing on
-    /// its own start line (within 8.0), the next frame starts its jump: state 6 and message 0x2D (stamp 33 -> turn 34: state 7), 4000 ms
-    /// of hyperspace frames (state 8, message 0x2E stamp 41 -> turn 42: state 9, withdrawn); the side's units withdrawn -> S[0] (side 1
+    /// its own start line (within 8.0), the next frame starts its jump: state 6 and the jump message (stamp 33 gives turn 34: state 7), 4000 ms
+    /// of hyperspace frames (state 8, the Retreat message stamp 41 gives turn 42: state 9, withdrawn); the side's units withdrawn gives S[0] (side 1
     /// withdrew) and S[3].
     /// </summary>
     [GameFact]
@@ -467,22 +467,22 @@ public class TacticalTests
         BattleEngine.RetreatAllowedOverride = (_, _) => true;
         try
         {
-            var (_, battle, a, _) = Scene(new Script([], []), [0x14000042], [0x14000085]);
+            var (_, battle, a, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
             Tf(battle, a[0]);
             Assert.True(battle.RetreatPossible(0));
             battle.Withdraw(0);
-            Assert.Equal(2, battle.SideState(0));
+            Assert.Equal(TacticalSideState.WithdrawOrdered, battle.SideState(0));
             Assert.False(battle.RetreatPossible(0));
             while (battle.Turn < 29) battle.Advance(TacticalBattle.FrameMs);
-            Assert.Equal(2, battle.SideState(0));
-            while (a[0].State == 2) battle.Advance(TacticalBattle.FrameMs);
-            Assert.Equal((3, 30, 6), (battle.SideState(0), battle.Turn, a[0].State));
-            while (a[0].State == 6) battle.Advance(TacticalBattle.FrameMs);
-            Assert.Equal((7, 35), (a[0].State, battle.Turn));
-            while (a[0].State == 7) battle.Advance(TacticalBattle.FrameMs);
-            Assert.Equal((8, 39), (a[0].State, battle.Turn)); // the 80th frame (at 38000 ms) and turn 38 in the same call
-            while (a[0].State == 8) battle.Advance(TacticalBattle.FrameMs);
-            Assert.Equal((9, 43), (a[0].State, battle.Turn));
+            Assert.Equal(TacticalSideState.WithdrawOrdered, battle.SideState(0));
+            while (a[0].State == TacticalUnitState.Active) battle.Advance(TacticalBattle.FrameMs);
+            Assert.Equal((TacticalSideState.Jumping, 30, TacticalUnitState.JumpOrdered), (battle.SideState(0), battle.Turn, a[0].State));
+            while (a[0].State == TacticalUnitState.JumpOrdered) battle.Advance(TacticalBattle.FrameMs);
+            Assert.Equal((TacticalUnitState.Accelerating, 35), (a[0].State, battle.Turn));
+            while (a[0].State == TacticalUnitState.Accelerating) battle.Advance(TacticalBattle.FrameMs);
+            Assert.Equal((TacticalUnitState.InHyperspace, 39), (a[0].State, battle.Turn)); // the 80th frame (at 38000 ms) and turn 38 in the same call
+            while (a[0].State == TacticalUnitState.InHyperspace) battle.Advance(TacticalBattle.FrameMs);
+            Assert.Equal((TacticalUnitState.Withdrawn, 43), (a[0].State, battle.Turn));
             Assert.True(battle.Ending);
             Assert.Equal([1, 0, 0, 1, 0, 0, 0], battle.S);
         }
@@ -491,7 +491,7 @@ public class TacticalTests
 
     /// <summary>
     /// Type index from the SD string number: every shipped capital ship, fighter and the Death Star has its own index
-    /// (none falls back to 0 except record 0); MC30c / Viscount / Liberator = 11 / 12 / 13, the Super Star Destroyer 0x15, the
+    /// (none falls back to 0 except record 0); MC30c / Viscount / Liberator = 11 / 12 / 13, the Super Star Destroyer (type 21), the
     /// Alliance fighters X-, Y-, A-, B-wing = 29-32, TIE Fighter 33.
     /// </summary>
     [GameFact]
@@ -503,8 +503,8 @@ public class TacticalTests
         Assert.Equal(38, index.Distinct().Count());
         Assert.Equal(38, all.Count);
         Assert.Equal(0, I(Definitions.CapitalShips[0].Common.Ref));
-        Assert.Equal((11, 12, 13, 0x15), (I(0x1400004D), I(0x1400004B), I(0x1400004C), I(0x14000086)));
-        Assert.Equal((29, 31, 33), (I(0x1C000003), I(0x1C000001), I(0x1C000005)));
+        Assert.Equal((11, 12, 13, 21), (I(SdRef.Make(Families.CapitalShip, 77)), I(SdRef.Make(Families.CapitalShip, 75)), I(SdRef.Make(Families.CapitalShip, 76)), I(SdRef.Make(Families.CapitalShip, 134))));
+        Assert.Equal((29, 31, 33), (I(Refs.XWingSquadron), I(SdRef.Make(Families.Fighter, 1)), I(SdRef.Make(Families.Fighter, 5))));
         var alliance = Definitions.Fighters.Where(r => r.Alliance != 0).Select(r => I(r.Common.Ref)).Order();
         Assert.Equal([29, 30, 31, 32], alliance);
     }
@@ -516,7 +516,7 @@ public class TacticalTests
     [GameFact]
     public void NavGridOfFourCubes()
     {
-        var (_, battle, _, _) = Scene(new Script([], []), [0x14000042, 0x14000042, 0x14000042], [0x14000085, 0x14000085, 0x14000085, 0x14000085, 0x14000085]);
+        var (_, battle, _, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66), SdRef.Make(Families.CapitalShip, 66), SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133)]);
         var p = battle.NavPoints;
         Assert.Equal(105, p.Count);
         Assert.Equal([27, 26, 26, 26], Enumerable.Range(1, 4).Select(s => p.Count(x => x.Set == s)));
@@ -537,24 +537,24 @@ public class TacticalTests
 
     /// <summary>
     /// Worked table (no officers, no crits, no drag): speed = 1 + Unk3C * 0.24 (capital) / 0.4 (fighter), M and turn rate (M * pi/18
-    /// when M &gt; 1; the Super Star Destroyer capped to pi/60); SpeedCH 2 halves the speed; engines down -> speed 0, maneuverability 1.
+    /// when M &gt; 1; the Super Star Destroyer capped to pi/60); SpeedCH 2 halves the speed; engines down gives speed 0, maneuverability 1.
     /// </summary>
     [GameFact]
     public void KinematicsFromTheWorkedTable()
     {
-        var (game, b0, _, _) = Scene(new Script([], []), [0x14000043, 0x14000048], [0x14000085, 0x14000086]);
-        b0.System.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId())); // X-wing
-        b0.System.Add(new GameObject(0x1C000001, Owner.Alliance, game.NextId())); // A-wing
+        var (game, b0, _, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 67), SdRef.Make(Families.CapitalShip, 72)], [SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 134)]);
+        b0.System.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId())); // X-wing
+        b0.System.Add(new GameObject(SdRef.Make(Families.Fighter, 1), Owner.Alliance, game.NextId())); // A-wing
         var battle = new TacticalBattle(game, b0.System, Owner.Alliance, new Script([], []).Draw);
         var u = battle.Units.ToDictionary(t => t.Object.Type);
         (uint Type, double Speed, double M, double Turn)[] table =
         [
-            (0x14000085, 1.96, 2, 2 * Math.PI / 18), // Imperial I Star Destroyer
-            (0x14000043, 1.72, 3, Math.PI / 6), // Nebulon-B
-            (0x14000048, 3.40, 5, 5 * Math.PI / 18), // Corellian Gunship
-            (0x14000086, 1.48, 2, Math.PI / 60), // Super Star Destroyer (type 0x15)
-            (0x1C000003, 4.20, 6, Math.PI / 3), // X-wing
-            (0x1C000001, 5.40, 9, Math.PI / 2), // A-wing
+            (SdRef.Make(Families.CapitalShip, 133), 1.96, 2, 2 * Math.PI / 18), // Imperial I Star Destroyer
+            (SdRef.Make(Families.CapitalShip, 67), 1.72, 3, Math.PI / 6), // Nebulon-B
+            (SdRef.Make(Families.CapitalShip, 72), 3.40, 5, 5 * Math.PI / 18), // Corellian Gunship
+            (SdRef.Make(Families.CapitalShip, 134), 1.48, 2, Math.PI / 60), // Super Star Destroyer (type 21)
+            (Refs.XWingSquadron, 4.20, 6, Math.PI / 3), // X-wing
+            (SdRef.Make(Families.Fighter, 1), 5.40, 9, Math.PI / 2), // A-wing
         ];
         foreach (var (type, speed, m, turn) in table)
         {
@@ -562,7 +562,7 @@ public class TacticalTests
             Assert.Equal(m, battle.Maneuverability(u[type]), 6);
             Assert.Equal(turn, u[type].TurnRate, 9);
         }
-        var isd = u[0x14000085];
+        var isd = u[SdRef.Make(Families.CapitalShip, 133)];
         isd.U.SpeedCh = 2;
         Assert.Equal(0.98, battle.Speed(isd), 6);
         isd.U.EngineDown = 30;
@@ -571,15 +571,15 @@ public class TacticalTests
     }
 
     /// <summary>
-    /// Placement and edges with the setup task forces: 3 against 5 ships -> W = 115; lines at z = -/+ 57.5; three equal
-    /// ships make one task force (g = 1): the leader at x = 0, the others in its line slots (n = 2 -> x - 12, n = 3 -> x + 12), on HUD
+    /// Placement and edges with the setup task forces: 3 against 5 ships gives W = 115; lines at z = -/+ 57.5; three equal
+    /// ships make one task force (g = 1): the leader at x = 0, the others in its line slots (n = 2 gives x - 12, n = 3 gives x + 12), on HUD
     /// button 1; five make two (g = 2, stride 2): leaders at heights 0 and +8, the fifth ship the second group's slot 3; side 1's
     /// slots mirror x; no HUD slots for side 1; no messages; clamp +/- (2/3)*W.
     /// </summary>
     [GameFact]
     public void PlacementAndEdges()
     {
-        var (_, battle, a, e) = Scene(new Script([], []), [0x14000042, 0x14000042, 0x14000042], [0x14000085, 0x14000085, 0x14000085, 0x14000085, 0x14000085]);
+        var (_, battle, a, e) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66), SdRef.Make(Families.CapitalShip, 66), SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133)]);
         Assert.Equal(115, battle.Size);
         Assert.Equal([0.0, -12, 12], a.Select(u => u.Position.X));
         Assert.All(a, u => Assert.Equal((-57.5, 0.0), (u.Position.Z, u.Position.Y)));
@@ -598,40 +598,40 @@ public class TacticalTests
     }
 
     /// <summary>
-    /// Slot offsets: line (spacing 12, ISD-sized members, side 0 heading +z): n = 2 -> (12, 0, 0), 3 -> (-12, 0, 0), 4 -> 
-    /// (24, 0, 0), 5 -> (-24, 0, 0); side 1 mirrors x; sphere n = 1 -> (0, 0, 12.5), 2 -> (0, 0, -12.5), 7 -> 12.5/sqrt 3 * (1, 1, 1), 23 -> 
-    /// (0, 0, 15.625); fighter n = 1 -> 0, others of length 1.
+    /// Slot offsets: line (spacing 12, ISD-sized members, side 0 heading +z): n = 2 gives (12, 0, 0), 3 gives (-12, 0, 0), 4 gives
+    /// (24, 0, 0), 5 gives (-24, 0, 0); side 1 mirrors x; sphere n = 1 gives (0, 0, 12.5), 2 gives (0, 0, -12.5), 7 gives 12.5/sqrt 3 * (1, 1, 1), 23 gives
+    /// (0, 0, 15.625); fighter n = 1 gives 0, others of length 1.
     /// </summary>
     [GameFact]
     public void SlotOffsets()
     {
-        var (_, battle, a, _) = Scene(new Script([], []), [0x14000085], [0x14000085]);
+        var (_, battle, a, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 133)], [SdRef.Make(Families.CapitalShip, 133)]);
         var u = a[0];
         battle.SetBox(u, 1.18, 0.54, 2.14);
         Assert.Equal((0.5, 2.44), (u.HalfHeight, Math.Round(u.Size, 2)));
-        V3 Line(int key, int n) => TacticalBattle.SlotOffset(new Navigator(2, key) { MaxCount = n }, n, u);
+        V3 Line(int key, int n) => TacticalBattle.SlotOffset(new Navigator(TacticalFormation.Line, key) { MaxCount = n }, n, u);
         Assert.Equal([V3.Zero, new V3(12, 0, 0), new V3(-12, 0, 0), new V3(24, 0, 0), new V3(-24, 0, 0)], Enumerable.Range(1, 5).Select(n => Line(1, n) + V3.Zero));
         Assert.Equal(new V3(-12, 0, 0), Line(1000001, 2) + V3.Zero);
-        V3 Sphere(int n) => TacticalBattle.SlotOffset(new Navigator(1, 1), n, u);
+        V3 Sphere(int n) => TacticalBattle.SlotOffset(new Navigator(TacticalFormation.Sphere, 1), n, u);
         Assert.Equal(new V3(0, 0, 12.5), Sphere(1));
         Assert.Equal(new V3(0, 0, -12.5), Sphere(2));
         double k = 12.5 / Math.Sqrt(3);
         foreach (double c in new[] { Sphere(7).X, Sphere(7).Y, Sphere(7).Z }) Assert.Equal(k, c, 9);
         Assert.Equal(new V3(0, 0, 15.625), Sphere(23));
-        var fighter = new Navigator(3, 1);
+        var fighter = new Navigator(TacticalFormation.Fighter, 1);
         Assert.Equal(V3.Zero, TacticalBattle.SlotOffset(fighter, 1, u));
         for (int n = 2; n < 8; n++) Assert.Equal(1, TacticalBattle.SlotOffset(fighter, n, u).Length, 9);
     }
 
     /// <summary>
     /// Weapon band, one ISD against a Nebulon-B: pieces [0, 17] 2920, (17, 35] 3040, (35, 50] 1040, (50, 60] -960; A = 0,
-    /// best (17, 35] -> band [17, 35]. Viscount against the Nebulon-B: A = 70 - 60 = 10, band [17, 40]. Mode 1:
+    /// best (17, 35] gives band [17, 35]. Viscount against the Nebulon-B: A = 70 - 60 = 10, band [17, 40]. Mode 1:
     /// band [0, 2.5].
     /// </summary>
     [GameFact]
     public void WeaponBandExamples()
     {
-        var (_, battle, a, e) = Scene(new Script([], []), [0x14000085, 0x1400004B], [0x14000043]);
+        var (_, battle, a, e) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 75)], [SdRef.Make(Families.CapitalShip, 67)]);
         var (isd, viscount, nebulon) = (Tf(battle, a[0]), Tf(battle, a[1]), e[0]);
         isd.G.Target = viscount.G.Target = nebulon.U;
         var pieces = battle.Pieces(isd, nebulon, out double rt, out double rm);
@@ -643,9 +643,9 @@ public class TacticalTests
         Assert.Equal((17.0, 35.0, 23.0), (isd.Range.Lo, isd.Range.Hi, isd.Range.Distance));
         battle.UpdateBand(viscount);
         Assert.Equal((17.0, 40.0, 10.0), (viscount.Range.Lo, viscount.Range.Hi, viscount.Range.Distance));
-        Assert.True(battle.OrderValue(isd, TacticalBattle.SetMode, 1));
-        for (int i = 0; i < 5; i++) battle.Step(); // 0x3D stamp 3 runs at turn 4: the mode-1 range object, sphere formation
-        Assert.Equal((0.0, 2.5, 5.0, 1), (isd.Range.Lo, isd.Range.Hi, isd.Range.Distance, isd.Formation));
+        Assert.True(battle.OrderMode(isd, TacticalTactic.Surround));
+        for (int i = 0; i < 5; i++) battle.Step(); // the tactic order stamped 3 runs at turn 4: the surround range object, sphere formation
+        Assert.Equal((0.0, 2.5, 5.0, TacticalFormation.Sphere), (isd.Range.Lo, isd.Range.Hi, isd.Range.Distance, isd.Formation));
     }
 
     /// <summary>
@@ -660,8 +660,8 @@ public class TacticalTests
         var r0 = Definitions.Systems[0];
         var x = new StarSystem(r0, sectors[r0.SectorIndex]) { Explored = true };
         game.Systems.Add(x);
-        x.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId()));
-        x.Add(new GameObject(0x1C000005, Owner.Empire, game.NextId()));
+        x.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId()));
+        x.Add(new GameObject(SdRef.Make(Families.Fighter, 5), Owner.Empire, game.NextId()));
         var battle = new TacticalBattle(game, x, Owner.Alliance, new Script([], []).Draw);
         var (wing, tie) = (battle.Units.Single(u => u.Side == 0), battle.Units.Single(u => u.Side == 1));
         var g = wing.Group!;
@@ -673,7 +673,7 @@ public class TacticalTests
         Assert.Equal((5.0, 12.0, 4.0), (g.Range.Lo, g.Range.Hi, g.Range.Distance));
     }
 
-    /// <summary>Turning: ISD turn rate 2pi/18, error 90 deg, 50 ms frame -> f = 0.0111, 1.0 deg per frame; f >= 1 -> the desired heading.</summary>
+    /// <summary>Turning: ISD turn rate 2pi/18, error 90 deg, 50 ms frame gives f = 0.0111, 1.0 deg per frame; f >= 1 gives the desired heading.</summary>
     [Fact]
     public void TurnStepExample()
     {
@@ -691,7 +691,7 @@ public class TacticalTests
     [GameFact]
     public void VerticalSeparation()
     {
-        var (_, battle, a, _) = Scene(new Script([], []), [0x14000085, 0x14000085], [0x14000085]);
+        var (_, battle, a, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133)], [SdRef.Make(Families.CapitalShip, 133)]);
         foreach (var u in a) { battle.SetBox(u, 1.18, 0.54, 2.14); Tf(battle, u); }
         a[0].Position = (0, 0, 0);
         a[1].Position = (2.5, 0, 0);
@@ -717,9 +717,9 @@ public class TacticalTests
     [GameFact]
     public void TaskForceClosesToItsBand()
     {
-        var (_, battle, a, e) = Scene(new Script([], []), [0x14000085], [0x14000043]);
+        var (_, battle, a, e) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 133)], [SdRef.Make(Families.CapitalShip, 67)]);
         var g = Tf(battle, a[0]);
-        Assert.True(battle.Order(g, TacticalBattle.ReplaceTargets, e[0])); // the simulation list at turn 4
+        Assert.True(battle.Order(g, TacticalMessage.ReplaceTargets, e[0])); // the simulation list at turn 4
         Assert.Equal(103, battle.Size);
         double L() => (e[0].Position - g.NavPoint).Length;
         int stopped = -1;
@@ -735,18 +735,18 @@ public class TacticalTests
     }
 
     /// <summary>
-    /// Nav points: 0x3A (replace) with a grid point changes the UI list at once and the simulation list one turn after
+    /// Nav points: the nav replace order with a grid point changes the UI list at once and the simulation list one turn after
     /// its stamp; the formation moves to the point (line mover, r = 1) and drops it from the simulation and the UI list on arrival
-    /// 0x09 sets the nav point at once when it runs.
+    /// the set-nav-point order sets the nav point at once when it runs.
     /// </summary>
     [GameFact]
     public void NavPointOrders()
     {
-        var (_, battle, a, _) = Scene(new Script([], []), [0x14000085], [0x14000043]);
+        var (_, battle, a, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 133)], [SdRef.Make(Families.CapitalShip, 67)]);
         var g = Tf(battle, a[0]);
         var wp = battle.NavPoints.First(p => p.Set == 1 && p.Layer == 1 && p.Position.X > 0 && p.Position.Z < 0);
         Assert.Equal(new V3(12.875, 0, -12.875), wp.Position);
-        Assert.True(battle.OrderNav(g, TacticalBattle.ReplaceNavPoints, wp));
+        Assert.True(battle.OrderNav(g, TacticalMessage.ReplaceNavPoints, wp));
         Assert.Equal([wp], g.UiNav);
         for (int i = 0; i < 4; i++) battle.Step();
         Assert.Empty(g.Waypoints);
@@ -764,18 +764,18 @@ public class TacticalTests
     // ---- order core ----
 
     /// <summary>
-    /// Create from a list: the first unit creates (0x30), the others join (0x33), a unit in another task force leaves it first
-    /// (0x37); then the pending target (0x34) and nav point (0x38); UI members and the group reference at once, simulation members at the dispatch.
+    /// Create from a list: the first unit creates (TaskForceCreate), the others join (TaskForceJoin), a unit in another task force leaves it first
+    /// (TaskForceLeave); then the pending target (TacticalMessage.AddTarget) and nav point (TacticalMessage.AddNavPoint); UI members and the group reference at once, simulation members at the dispatch.
     /// </summary>
     [GameFact]
     public void CreateFromAListPostsInOrder()
     {
-        var (_, battle, a, e) = Scene(new Script([], []), [0x14000042, 0x14000042, 0x14000042], [0x14000085]);
+        var (_, battle, a, e) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66), SdRef.Make(Families.CapitalShip, 66), SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
         var old = Tf(battle, a[2]);
         var g = battle.CreateTaskForce([a[0], a[1], a[2]]);
-        Assert.True(battle.Order(g, TacticalBattle.AddTarget, e[0]));
-        Assert.True(battle.OrderNav(g, TacticalBattle.AddNavPoint, battle.NavPoints[0]));
-        Assert.Equal([0x37, 0x30, 0x37, 0x33, 0x37, 0x33, 0x34, 0x38], battle.QueuedKinds()); // each leaves its task force first
+        Assert.True(battle.Order(g, TacticalMessage.AddTarget, e[0]));
+        Assert.True(battle.OrderNav(g, TacticalMessage.AddNavPoint, battle.NavPoints[0]));
+        Assert.Equal([TacticalMessage.TaskForceLeave, TacticalMessage.TaskForceCreate, TacticalMessage.TaskForceLeave, TacticalMessage.TaskForceJoin, TacticalMessage.TaskForceLeave, TacticalMessage.TaskForceJoin, TacticalMessage.AddTarget, TacticalMessage.AddNavPoint], battle.QueuedKinds()); // each leaves its task force first
         Assert.Equal([a[0], a[1], a[2]], g.UiMembers);
         Assert.All(a, u => Assert.Same(g, u.UiGroup));
         Assert.Empty(g.Units);
@@ -793,7 +793,7 @@ public class TacticalTests
     [GameFact]
     public void TheLastMemberLeavingFreesTheSlot()
     {
-        var (_, battle, a, _) = Scene(new Script([], []), [0x14000042, 0x14000042], [0x14000085]);
+        var (_, battle, a, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66), SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
         var g = battle.CreateTaskForce([a[0], a[1]]);
         battle.Ui.Bind(2, g);
         Assert.Equal(2, battle.Ui.SlotOf(g));
@@ -808,15 +808,15 @@ public class TacticalTests
     /// <summary>
     /// Mission setter: 2 (Recover) only for fighter groups, 6 (Attack Death Star) only for side-0 fighter groups
     /// (refused: UI mission kept); 1 / 9 / 11 clear the UI nav list only, 0 / 4 / 5 both lists; leaving Escort clears the UI targets
-    /// and sets tactic 1 (0x3D); 10 clears the simulation nav list; m = 2 / 6 frees the fighter group's HUD slot; message 0x0A sets
+    /// and sets tactic 1 (the tactic order); 10 clears the simulation nav list; m = 2 / 6 frees the fighter group's HUD slot; the mission message sets
     /// the simulation mission at the dispatch; a computer group of the other side on mission 2 / 6 refuses m != 0.
     /// </summary>
     [GameFact]
     public void MissionSetterRules()
     {
-        var (game, b0, _, _) = Scene(new Script([], []), [0x14000042], [0x14000085]);
-        b0.System.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId()));
-        b0.System.Add(new GameObject(0x1C000005, Owner.Empire, game.NextId()));
+        var (game, b0, _, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
+        b0.System.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId()));
+        b0.System.Add(new GameObject(SdRef.Make(Families.Fighter, 5), Owner.Empire, game.NextId()));
         var battle = new TacticalBattle(game, b0.System, Owner.Alliance, new Script([], []).Draw);
         var ship = battle.Units.Single(u => u.Side == 0 && !u.Fighter);
         var enemy = battle.Units.Single(u => u.Side == 1 && !u.Fighter);
@@ -825,33 +825,33 @@ public class TacticalTests
         Assert.Same(wing, battle.Ui.Fighters[0]);
         var g = Tf(battle, ship);
         var nav = battle.NavPoints[5];
-        Assert.False(battle.SetMission(g, 2));
-        Assert.False(battle.SetMission(g, 6));
-        Assert.Equal(0, g.UiMission);
-        battle.Order(g, TacticalBattle.ReplaceTargets, enemy);
-        battle.OrderNav(g, TacticalBattle.ReplaceNavPoints, nav);
+        Assert.False(battle.SetMission(g, TacticalMissionNumber.Recover));
+        Assert.False(battle.SetMission(g, TacticalMissionNumber.AttackDeathStar));
+        Assert.Equal(TacticalMissionNumber.None, g.UiMission);
+        battle.Order(g, TacticalMessage.ReplaceTargets, enemy);
+        battle.OrderNav(g, TacticalMessage.ReplaceNavPoints, nav);
         battle.RunQueued();
-        Assert.True(battle.SetMission(g, 1));
+        Assert.True(battle.SetMission(g, TacticalMissionNumber.Escort));
         Assert.Equal([enemy], g.UiTargets);
         Assert.Empty(g.UiNav);
-        Assert.Equal(2, g.Tactic);
-        Assert.True(battle.SetMission(g, 0)); // leaving Escort: targets cleared, tactic 1
+        Assert.Equal(TacticalTactic.StandOff, g.Tactic);
+        Assert.True(battle.SetMission(g, TacticalMissionNumber.None)); // leaving Escort: targets cleared, tactic 1
         Assert.Empty(g.UiTargets);
-        Assert.Equal(1, g.Tactic);
-        Assert.Equal([0x0A, 0x3D, 0x0A], battle.QueuedKinds());
+        Assert.Equal(TacticalTactic.Surround, g.Tactic);
+        Assert.Equal([TacticalMessage.SetMission, TacticalMessage.SetMode, TacticalMessage.SetMission], battle.QueuedKinds());
         battle.RunQueued();
-        Assert.Equal((0, 1, 1), (g.Mission, g.AppliedMode, g.Formation)); // sphere after 0x3D mode 1
-        Assert.Empty(g.Waypoints); // the 0x0A handler of mission 1 cleared the simulation nav list
-        battle.OrderNav(g, TacticalBattle.ReplaceNavPoints, nav);
+        Assert.Equal((TacticalMissionNumber.None, TacticalTactic.Surround, TacticalFormation.Sphere), (g.Mission, g.AppliedMode, g.Formation)); // sphere after the tactic order, surround
+        Assert.Empty(g.Waypoints); // the mission-message handler of mission 1 cleared the simulation nav list
+        battle.OrderNav(g, TacticalMessage.ReplaceNavPoints, nav);
         battle.RunQueued();
         Assert.Equal([nav], g.Waypoints);
-        Assert.True(battle.SetMission(g, 10));
+        Assert.True(battle.SetMission(g, TacticalMissionNumber.Anvil));
         Assert.Empty(g.Waypoints);
-        Assert.True(battle.SetMission(wing, 6));
+        Assert.True(battle.SetMission(wing, TacticalMissionNumber.AttackDeathStar));
         Assert.Null(battle.Ui.Fighters[0]);
-        Assert.False(battle.SetMission(ties, 6));
-        Assert.True(battle.SetMission(ties, 2));
-        Assert.False(battle.SetMission(ties, 4)); // computer group of the other side on mission 2
-        Assert.True(battle.SetMission(ties, 0));
+        Assert.False(battle.SetMission(ties, TacticalMissionNumber.AttackDeathStar));
+        Assert.True(battle.SetMission(ties, TacticalMissionNumber.Recover));
+        Assert.False(battle.SetMission(ties, TacticalMissionNumber.AttackFighters)); // computer group of the other side on mission 2
+        Assert.True(battle.SetMission(ties, TacticalMissionNumber.None));
     }
 }

@@ -35,15 +35,15 @@ public sealed class UiRandom(Func<int>? seed = null)
     }
 
     /// <summary>
-    /// Seed routine: C runtime srand(time(0)), then s = r1*r2 + r3*r4 from four rand() calls, repeated while s = 0x7FFFFFFF.
+    /// Seed routine: C runtime srand(time(0)), then s = r1*r2 + r3*r4 from four rand() calls, repeated while s = 2147483647.
     /// rand() is the MSVC CRT LCG (state * 214013 + 2531011) and returns its middle 15 bits.
     /// </summary>
     static int CrtSeed()
     {
         uint state = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        int Rand() { state = state * 214013 + 2531011; return (int)(state >> 16 & 0x7FFF); }
+        int Rand() { state = state * 214013 + 2531011; return (int)(state >> 16 & 32767); }
         int s;
-        do s = Rand() * Rand() + Rand() * Rand(); while (s == 0x7FFFFFFF);
+        do s = Rand() * Rand() + Rand() * Rand(); while (s == 2147483647);
         return s;
     }
 }

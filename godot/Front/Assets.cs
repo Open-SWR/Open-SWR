@@ -25,7 +25,8 @@ public static class Assets
     static readonly Dictionary<int, Font> Fonts = [];
 
     // Opaque front-end bitmaps (checked by pixel census); every other one is blitted colour-keyed.
-    static bool Opaque(ushort id) => id is 20001 or 20002 or (>= 10017 and <= 10019) or (>= 10043 and <= 10045) or (>= 10052 and <= 10057);
+    static bool Opaque(ushort id) => id is CommonBitmaps.MainMenuBackground or CommonBitmaps.OptionsBackground or (>= CommonBitmaps.GalaxySizeHuge and <= CommonBitmaps.GalaxySizeStandard)
+        or (>= CommonBitmaps.DisplayToggleOff and <= CommonBitmaps.DisplayToggleDisabled) or (>= CommonBitmaps.MusicSliderTrack and <= CommonBitmaps.SaveSideHeadToHead);
 
     public static PeResources Module(string name) =>
         Modules.TryGetValue(name, out var m) ? m : Modules[name] = PeResources.Load(Path.Combine(GameDir, name));
@@ -77,7 +78,7 @@ public static class Assets
     public static Texture2D? EData(int id)
     {
         if (EDataPictures.TryGetValue(id, out var t)) return t;
-        string name = id is > 0 and <= 0xFFFF ? Text("ENCYBMAP.DLL", id) : "";
+        string name = id is > 0 and <= 65535 ? Text("ENCYBMAP.DLL", id) : "";
         string path = Path.Combine(GameDir, "EData", name);
         if (name.Length == 0 || !File.Exists(path)) return EDataPictures[id] = null;
         var b = IndexedBitmap.FromDib(File.ReadAllBytes(path).AsSpan(14)); // BITMAPFILEHEADER, then the DIB
@@ -93,7 +94,7 @@ public static class Assets
     /// </summary>
     public static (Texture2D Texture, Vector2 Size)? ObjectPicture(int id)
     {
-        if (id is <= 0 or > 0xFFFF) return null;
+        if (id is <= 0 or > 65535) return null;
         if (Module("STRATEGY.DLL").Find(ResId.Bitmap, (ushort)id) is not null) return (Strategy((ushort)id), BitmapSize((ushort)id, "STRATEGY.DLL"));
         return EData(id) is { } e ? (e, e.GetSize()) : null;
     }
@@ -114,9 +115,9 @@ public static class Assets
 
     /// <summary>RT_RCDATA bytes of a module (e.g. ENCYTEXT.DLL encyclopedia texts); null when missing.</summary>
     public static byte[]? RcData(int id, string module) =>
-        id is > 0 and <= 0xFFFF && Module(module).Find(ResId.RcData, (ushort)id) is { } r ? r.Data.ToArray() : null;
+        id is > 0 and <= 65535 && Module(module).Find(ResId.RcData, (ushort)id) is { } r ? r.Data.ToArray() : null;
 
-    /// <summary>STRATEGY.DLL popup-menu row entry; null when the id has none (0x204, 0x241, 0x268).</summary>
+    /// <summary>STRATEGY.DLL popup-menu row entry; null when the id has none.</summary>
     public static MenuItem? Menu(int id) =>
         id is (>= 32 and <= 41) or (>= 256 and <= 624) && Module("STRATEGY.DLL").Find(ResId.RcData, (ushort)id) is { } r ? MenuItem.Decode(r.Data.Span) : null;
 
@@ -139,7 +140,7 @@ public static class Assets
     }
 
     /// <summary>STRATEGY WAVE 608, the click of the strategy buttons that have one, played on press.</summary>
-    public static AudioStream? Click => Wave(608, "STRATEGY.DLL");
+    public static AudioStream? Click => Wave(StrategySounds.Click, "STRATEGY.DLL");
 
     /// <summary>Plays a STRATEGY.DLL WAVE (window sounds).</summary>
     public static void PlayStrategy(int id) => PlaySound(Wave((ushort)id, "STRATEGY.DLL"));
@@ -196,14 +197,14 @@ public static class Assets
 
     /// <summary>
     /// Side name argument: TEXTSTRA by placeholder kind, side 1 / side 2:
-    /// 1: 19792, 2: 19808, 4: 19824, 0x10-0x19: 19840 + 2*(kind - 0x10), +1 for side 2. Inferred: other kinds, and ids missing
-    /// from the module (19840 up), fall back to kind 1; the 0x20 / 0x21 suffix is left out.
+    /// 1: 19792, 2: 19808, 4: 19824, kinds 16-25: 19840 + 2*(kind - 16), +1 for side 2. Inferred: other kinds, and ids missing
+    /// from the module (19840 up), fall back to kind 1; the 32 / 33 suffix is left out.
     /// </summary>
     public static Func<uint, string> Side(bool sideOne) => kind =>
     {
-        int b = kind switch { 2 or 0x21 => 19808, 4 => 19824, >= 0x10 and <= 0x19 => 19840 + 2 * (int)(kind - 0x10), _ => 19792 };
+        int b = kind switch { MessageArgKinds.SideFullName or MessageArgKinds.SideFullNameSuffixed => StrategyTexts.SideFullName, MessageArgKinds.SideAdjective => StrategyTexts.SideAdjective, >= MessageArgKinds.SideNameKindFirst and <= MessageArgKinds.SideNameKindLast => StrategyTexts.SideNameKindBase + 2 * (int)(kind - MessageArgKinds.SideNameKindFirst), _ => StrategyTexts.SideName };
         string t = Stra(b + (sideOne ? 0 : 1));
-        return t != "" ? t : Stra(19792 + (sideOne ? 0 : 1));
+        return t != "" ? t : Stra(StrategyTexts.SideName + (sideOne ? 0 : 1));
     };
 
     public static string Dialog(int id) => Text("REBDLOG.DLL", id);

@@ -2,16 +2,16 @@ namespace OpenSWR.Sim.Ai;
 
 /// <summary>
 /// Side controller (host side 1, side 2; common base): a sequence counter (side 1 from 1, side 2 from
-/// 0x77359401), an outbox ordered by sequence, the tick token. Per tick (<see cref="Clock.Step"/>): stage 1 token, stage 3
+/// 2000000001), an outbox ordered by sequence, the tick token. Per tick (<see cref="Clock.Step"/>): stage 1 token, stage 3
 /// submit (every outbox entry in sequence order, the token last), stage 6 message delivery (<see cref="Deliver"/>), stage 8
-/// think, stage 13 budget reset on the DayDue tick. Human and computer controllers both acknowledge destroyed objects (0x205).
+/// think, stage 13 budget reset on the DayDue tick. Human and computer controllers both acknowledge destroyed objects (AcknowledgeDestroyed command).
 /// </summary>
 public abstract class Controller
 {
     protected Controller(Owner side)
     {
         Side = side;
-        NextSequence = side == Owner.Alliance ? 1u : 0x77359401u;
+        NextSequence = side == Owner.Alliance ? 1u : 2000000001u;
     }
 
     /// <summary>The battle decision float (the side's withdraw threshold).</summary>
@@ -44,7 +44,7 @@ public abstract class Controller
     }
 
     /// <summary>Stage 1: the tick token, command type 1 (no sim effect).</summary>
-    internal void MakeToken() => Append(new Command(1, Side));
+    internal void MakeToken() => Append(new Command(CommandType.TickToken, Side));
 
     /// <summary>Stage 3: every outbox entry to the clock's pending list, lowest sequence first (the token last).</summary>
     internal void SubmitOutbox(GameState game)
@@ -54,12 +54,12 @@ public abstract class Controller
     }
 
     /// <summary>
-    /// One controller message of this side. Base (human and computer): 0x302 view Destroyed -> acknowledge with 0x205,
-    /// Targets = [(object, 0)], not counted (the count is always 0 in single player).
+    /// One controller message of this side. Base (human and computer): Destroyed view message gives acknowledge with AcknowledgeDestroyed command,
+    /// Targets = [(object, GroupMode.Object)], not counted (the count is always 0 in single player).
     /// </summary>
-    internal virtual void Receive(GameState game, int type, GameObject o, GameObject? a, GameObject? b)
+    internal virtual void Receive(GameState game, ViewMessageType type, GameObject o, GameObject? a, GameObject? b)
     {
-        if (type == 0x302) Append(new Command(0x205, Side) { Targets = [(o, 0)] });
+        if (type == ViewMessageType.Destroyed) Append(new Command(CommandType.AcknowledgeDestroyed, Side) { Targets = [(o, GroupMode.Object)] });
     }
 
     /// <summary>Stage 6 before the queued messages (computer: the field changes it observes per tick).</summary>
@@ -120,7 +120,7 @@ public abstract class Controller
     }
 }
 
-/// <summary>Human controller (type 1): tokens and 0x205 acknowledgements; its orders come from the UI and the advisor's delegation cycle.</summary>
+/// <summary>Human controller (type 1): tokens and AcknowledgeDestroyed acknowledgements; its orders come from the UI and the advisor's delegation cycle.</summary>
 public sealed class HumanController(Owner side) : Controller(side)
 {
     public override int Kind => 1;
@@ -159,13 +159,13 @@ public sealed class HumanController(Owner side) : Controller(side)
     protected override void Start(GameState game) => WorldModel.CatalogueLists(game, Side, Rand);
 
     /// <summary>
-    /// Slot: view message 0x14B whose new value is set = the uprising alarm 621. Counted
+    /// Slot: Uprising view message whose new value is set = the uprising alarm 621. Counted
     /// here; the screen plays the sound and clears the count (not saved).
     /// </summary>
     public int UprisingAlarms { get; set; }
 
     /// <summary>
-    /// Slot: view message 0x14C with the new value set (A = the system) =
+    /// Slot: NeverBeenControlled view message with the new value set (A = the system) =
     /// sound 620 (a never-controlled system newly seen). Counted here; the screen plays the sound and clears the count (not saved).
     /// </summary>
     public int NeverControlledAlarms { get; set; }
@@ -185,13 +185,19 @@ public sealed class HumanController(Owner side) : Controller(side)
     /// <summary>Stage 13 on the DayDue tick: the delegation budget resets.</summary>
     internal override void DayDue() => Advisor?.DayDue();
 
-    internal override void Receive(GameState game, int type, GameObject o, GameObject? a, GameObject? b)
+    internal override void Receive(GameState game, ViewMessageType type, GameObject o, GameObject? a, GameObject? b)
     {
-        if (type == 0x14B && o is StarSystem s && Knowledge.See(game, s, Side).Uprising) UprisingAlarms++;
-        if (type == 0x14C && a is not null) NeverControlledAlarms++;
+        if (type == ViewMessageType.Uprising && o is StarSystem s && Knowledge.See(game, s, Side).Uprising) UprisingAlarms++;
+        if (type == ViewMessageType.NeverBeenControlled && a is not null) NeverControlledAlarms++;
         base.Receive(game, type, o, a, b);
     }
 }
+
+/// <summary>Think state of the computer controller: new (model not built), model built (planners not yet created), issuing commands, idle between thinks.</summary>
+public enum ComputerThinkState { New, ModelReady, Issuing, Idle }
+
+/// <summary>Planner status: active, suspended, other = idle.</summary>
+public enum PlannerStatus { Idle, Active, Suspended }
 
 /// <summary>
 /// Planner (base): status (1 active, 2 suspended, other idle), done flag, priority. The shared think makes an
@@ -199,10 +205,10 @@ public sealed class HumanController(Owner side) : Controller(side)
 /// planner done and clears its priority. The planners' decisions are later rounds: this base is the empty stub, it
 /// finishes at once without a command.
 /// </summary>
-public class Planner(int type)
+public class Planner(PlannerType type)
 {
-    public int Type { get; } = type;
-    public int Status { get; set; }
+    public PlannerType Type { get; } = type;
+    public PlannerStatus Status { get; set; }
     public bool Done { get; set; }
     public int Priority { get; set; }
     /// <summary>Phase and state (planners without phases use the state only).</summary>
@@ -212,8 +218,8 @@ public class Planner(int type)
     /// <summary>Think (shared; planner 14 only while the model value is &gt; 0).</summary>
     public virtual void Think(ComputerController controller)
     {
-        if (Type == 14 && controller.Model.UnnamedShips <= 0) return;
-        if (Status is not (1 or 2)) (Status, Done) = (1, false);
+        if (Type == PlannerType.Naming && controller.Model.UnnamedShips <= 0) return;
+        if (Status is not (PlannerStatus.Active or PlannerStatus.Suspended)) (Status, Done) = (PlannerStatus.Active, false);
     }
 
     /// <summary>Step: at most one command; stub = finished, no command.</summary>
@@ -236,17 +242,17 @@ public class Planner(int type)
 /// <summary>
 /// Computer controller (type 3): think state machine (1 model init, 2 planners, 4 model update,
 /// 5 planner think, 3 issue), 14 planners in type order, the world model, the command budget (10 counted commands per budget
-/// period; the period is 0 days, so it resets on every DayDue tick; 0x203, 0x205 and tokens not counted). Each think call runs
+/// period; the period is 0 days, so it resets on every DayDue tick; Rename and AcknowledgeDestroyed commands and tokens not counted). Each think call runs
 /// one complete cycle (the clock waits for it). Draws only from <see cref="UiRandom"/> (planners; the model draws nothing).
 /// </summary>
 public sealed class ComputerController(Owner side) : Controller(side)
 {
     /// <summary>Planner creation order (state 2); the list itself is kept in type order.</summary>
-    public static readonly int[] CreationOrder = [13, 2, 1, 3, 6, 7, 4, 5, 8, 9, 10, 11, 12, 14];
+    public static readonly PlannerType[] CreationOrder = [PlannerType.Strategy, PlannerType.Mine, PlannerType.Construction, PlannerType.Defence, PlannerType.Troop, PlannerType.SystemFighter, PlannerType.MissionOperation, PlannerType.SpecialForce, PlannerType.FleetOperation, PlannerType.FleetTask, PlannerType.FleetFighter, PlannerType.CapitalShip, PlannerType.CharacterOperation, PlannerType.Naming];
 
     public override int Kind => 3;
     /// <summary>Think state.</summary>
-    public int State { get; private set; } = 1;
+    public ComputerThinkState State { get; private set; } = ComputerThinkState.New;
     /// <summary>Command budget (10, set in state 2).</summary>
     public int Budget { get; private set; }
     /// <summary>Counted commands of the current budget period.</summary>
@@ -259,22 +265,22 @@ public sealed class ComputerController(Owner side) : Controller(side)
     /// Planner factory by type: production planners 1, 2, 3, 5, 6, 7, 10, 11 (planner 11's moves round 7),
     /// 14 names; 4, 8, 9, 12, 13 are empty stubs until their rounds.
     /// </summary>
-    public Func<int, Planner> PlannerFactory { get; init; } = type => type switch
+    public Func<PlannerType, Planner> PlannerFactory { get; init; } = type => type switch
     {
-        1 => new ConstructionPlanner(),
-        4 => new MissionOpPlanner(),
-        8 => new FleetOpPlanner(),
-        9 => new FleetTaskPlanner(),
-        12 => new CharacterOpPlanner(),
-        13 => new StrategyPlanner(),
-        2 => new MinePlanner(),
-        3 => new DefencePlanner(),
-        5 => new SpecialForcePlanner(),
-        6 => new TroopPlanner(),
-        7 => new SystemFighterPlanner(),
-        10 => new FleetFighterPlanner(),
-        11 => new CapitalShipPlanner(),
-        14 => new NamingPlanner(),
+        PlannerType.Construction => new ConstructionPlanner(),
+        PlannerType.MissionOperation => new MissionOpPlanner(),
+        PlannerType.FleetOperation => new FleetOpPlanner(),
+        PlannerType.FleetTask => new FleetTaskPlanner(),
+        PlannerType.CharacterOperation => new CharacterOpPlanner(),
+        PlannerType.Strategy => new StrategyPlanner(),
+        PlannerType.Mine => new MinePlanner(),
+        PlannerType.Defence => new DefencePlanner(),
+        PlannerType.SpecialForce => new SpecialForcePlanner(),
+        PlannerType.Troop => new TroopPlanner(),
+        PlannerType.SystemFighter => new SystemFighterPlanner(),
+        PlannerType.FleetFighter => new FleetFighterPlanner(),
+        PlannerType.CapitalShip => new CapitalShipPlanner(),
+        PlannerType.Naming => new NamingPlanner(),
         _ => new Planner(type),
     };
     /// <summary>The UI generator's rand(n) for the planners and the model's list ties (default the process-wide generator).</summary>
@@ -285,53 +291,55 @@ public sealed class ComputerController(Owner side) : Controller(side)
     public List<Planner> Planners { get; } = [];
 
     /// <summary>Optional log of every planner command with its validation result (differential tests).</summary>
-    public List<(int Planner, Command Command, OrderResult Result)>? IssueTrace { get; set; }
+    public List<(PlannerType Planner, Command Command, OrderResult Result)>? IssueTrace { get; set; }
     /// <summary>Optional per-step log of the issue phase: tick, planner (0 = null pick), phase before the step, command type (0 none), done, model dirty after it.</summary>
-    public List<(int Tick, int Planner, int Phase, int Command, bool Done, bool Dirty)>? StepTrace { get; set; }
+    public List<(int Tick, PlannerType Planner, int Phase, int Command, bool Done, bool Dirty)>? StepTrace { get; set; }
 
     Planner? _current;
     int _urgent = -1, _roundRobin = -1; // list cursors; -1 = none (0 in the original)
 
     /// <summary>
-    /// The AI's message handlers: 0x100 ControlKind (a system -> the theaters are due) and 0x101-0x104, 0x106 Damaged, system 0x140 / 0x149-0x14E (0x14C NeverBeenControlled), manager queue count 0x160 -> changed;
-    /// 0x300 Parent -> <see cref="WorldModel.ParentChanged"/>; 0x302 Destroyed -> changed(parent), detach (Inferred: as changed;
-    /// records are never removed), then the base acknowledgement; 0x500 Name -> the ship record's Named bit. Before the model
+    /// The AI's message handlers: the Owner message (ControlKind; a system gives the theaters are due), the Usable, Created, Completed and Enroute messages, Damaged, the system fields (Support, Populated, Explored, Uprising, NeverBeenControlled, Battle, Blockade), the manager queue count gives changed;
+    /// Parent gives <see cref="WorldModel.ParentChanged"/>; Destroyed gives changed(parent), detach (Inferred: as changed;
+    /// records are never removed), then the base acknowledgement; Name gives the ship record's Named bit. Before the model
     /// exists (the first think builds it) messages only acknowledge.
     /// </summary>
-    internal override void Receive(GameState game, int type, GameObject o, GameObject? a, GameObject? b)
+    internal override void Receive(GameState game, ViewMessageType type, GameObject o, GameObject? a, GameObject? b)
     {
         // a foreign mission's messages (the opposing view's refresh and staging pass): no record, no dirty; only the
-        // base acknowledgement of its 0x302
-        if (State > 1 && !(o is Mission && o.Owner != Side))
+        // base acknowledgement of its Destroyed message
+        if (State != ComputerThinkState.New && !(o is Mission && o.Owner != Side))
             switch (type)
             {
-                case 0x100:
+                case ViewMessageType.Owner:
                     if (o is StarSystem) Model.TheatersDue = true;
                     Model.Changed(game, o);
                     break;
-                case >= 0x101 and <= 0x104 or 0x106 or 0x140 or >= 0x149 and <= 0x14E or 0x160:
+                case ViewMessageType.Usable or ViewMessageType.Created or ViewMessageType.Completed or ViewMessageType.Enroute or ViewMessageType.Damaged or ViewMessageType.Support
+                    or ViewMessageType.Populated or ViewMessageType.Explored or ViewMessageType.Uprising or ViewMessageType.NeverBeenControlled or ViewMessageType.Battle or ViewMessageType.Blockade
+                    or ViewMessageType.QueueCount:
                     Model.Changed(game, o);
                     break;
-                case 0x300:
+                case ViewMessageType.Parent:
                     Model.ParentChanged(game, o, a, b);
                     break;
-                case 0x302:
+                case ViewMessageType.Destroyed:
                     if (o is Mission) MissionOps.MissionEnded(Model, o);
                     if (a is not null) Model.Changed(game, a);
                     Model.Changed(game, o);
                     Model.Detach(o);
                     break;
-                case 0x370: // espionage ExtraSystem: changed(mission), then the system's day field := day
+                case ViewMessageType.EspionageExtraSystem: // espionage ExtraSystem: changed(mission), then the system's day field := day
                     Model.Changed(game, o);
                     if (Model.Record(a) is { } xr) { xr.BlockadeDay = game.Day; Model.DirtySystem(xr); }
                     break;
-                case 0x500:
+                case ViewMessageType.Name:
                     Model.Named(game, o);
                     break;
-                case 0x1F0:
+                case ViewMessageType.TaskStatus:
                     if (o is Mission tm) MissionOps.TaskStatus(game, Model, tm);
                     break;
-                case 0x1F1:
+                case ViewMessageType.CompletionStatus:
                     if (o is Mission cm) MissionOps.Completion(Model, cm);
                     break;
             }
@@ -341,31 +349,31 @@ public sealed class ComputerController(Owner side) : Controller(side)
     /// <summary>Messages derived from per-tick field changes of the side's live views (systems, managers, units, side object).</summary>
     internal override void Observe(GameState game)
     {
-        if (State > 1) Model.Observe(game);
+        if (State != ComputerThinkState.New) Model.Observe(game);
     }
 
     /// <summary>Slot: think state 1, the model init (its only draws are the catalogue lists).</summary>
     protected override void Start(GameState game)
     {
-        if (State == 1) { Model.Init(game); State = 2; }
+        if (State == ComputerThinkState.New) { Model.Init(game); State = ComputerThinkState.ModelReady; }
     }
 
     internal override void Think(GameState game)
     {
         Start(game);
-        if (State == 2)
+        if (State == ComputerThinkState.ModelReady)
         {
-            foreach (int type in CreationOrder)
+            foreach (PlannerType type in CreationOrder)
                 if (Planners.All(p => p.Type != type)) Planners.Add(PlannerFactory(type));
-            Planners.Sort((a, b) => a.Type.CompareTo(b.Type));
+            Planners.Sort((a, b) => a.Type.CompareTo(b.Type)); // declaration order = planner number order
             Budget = 10;
-            State = 4;
+            State = ComputerThinkState.Idle;
         }
         Model.Update(game);
         foreach (var p in Planners) p.Think(this); // the disable flag is never set
-        State = 3;
+        State = ComputerThinkState.Issuing;
         Issue(game);
-        State = 4;
+        State = ComputerThinkState.Idle;
     }
 
     const int MaxIssueSteps = 100_000; // issue-loop steps per cycle
@@ -381,7 +389,7 @@ public sealed class ComputerController(Owner side) : Controller(side)
             if (++steps > MaxIssueSteps) { _current = null; return; }
             if (_current is null)
             {
-                if ((_current = Pick()) is null) { StepTrace?.Add((game.Clock.Tick, 0, 0, 0, true, Model.Dirty)); return; }
+                if ((_current = Pick()) is null) { StepTrace?.Add((game.Clock.Tick, PlannerType.None, 0, 0, true, Model.Dirty)); return; }
                 continue;
             }
             var p = _current;
@@ -391,7 +399,7 @@ public sealed class ComputerController(Owner side) : Controller(side)
             if (c is not null)
             {
                 if (c.Side != Side) throw new InvalidOperationException($"Planner {p.Type} issued a command for side {c.Side}.");
-                // targets and the 0x240 decoys go into ordered trees: ascending SdRef
+                // targets and the decoys of a CreateMission command go into ordered trees: ascending SdRef
                 var ordered = c.Targets.OrderBy(t => t.Target.Ref).ToList();
                 c.Targets.Clear();
                 c.Targets.AddRange(ordered);
@@ -403,22 +411,22 @@ public sealed class ComputerController(Owner side) : Controller(side)
                 if (result.Success)
                 {
                     Append(c);
-                    if (c.Type != 0x203) Issued++;
+                    if (c.Type != CommandType.Rename) Issued++;
                 }
                 else p.Failure(result, c);
             }
-            StepTrace?.Add((game.Clock.Tick, p.Type, phase, c?.Type ?? 0, p.Done, Model.Dirty));
+            StepTrace?.Add((game.Clock.Tick, p.Type, phase, (int)(c?.Type ?? 0), p.Done, Model.Dirty));
             if (!p.Done) continue; // not done: stepped again in the next frame, no dirty test
-            p.Status = 0;
+            p.Status = PlannerStatus.Idle;
             _current = null;
             if (c is not null || Model.Dirty) return;
         }
     }
 
     /// <summary>
-    /// Planner pick: the urgent cursor advances by one entry on every call (none / end -> first),
+    /// Planner pick: the urgent cursor advances by one entry on every call (none / end gives first),
     /// then one cycle from it keeps the active planner with the largest priority compared unsigned (strictly greater, from 0);
-    /// else the round-robin cursor advances first, then forward cyclically to the first active planner (back at the start -> 
+    /// else the round-robin cursor advances first, then forward cyclically to the first active planner (back at the start gives
     /// none); it stays on the planner returned. The urgent cursor does not move to the urgent pick.
     /// </summary>
     Planner? Pick()
@@ -428,21 +436,21 @@ public sealed class ComputerController(Owner side) : Controller(side)
         _urgent = (_urgent + 1) % n;
         Planner? best = null;
         for (int k = 0; k < n; k++)
-            if (Planners[(_urgent + k) % n] is { Status: 1 } p && (uint)p.Priority > (uint)(best?.Priority ?? 0)) best = p;
+            if (Planners[(_urgent + k) % n] is { Status: PlannerStatus.Active } p && (uint)p.Priority > (uint)(best?.Priority ?? 0)) best = p;
         if (best is not null) return best;
         _roundRobin = (_roundRobin + 1) % n;
         for (int k = 0; k < n; k++)
-            if (Planners[(_roundRobin + k) % n].Status == 1) return Planners[_roundRobin = (_roundRobin + k) % n];
+            if (Planners[(_roundRobin + k) % n].Status == PlannerStatus.Active) return Planners[_roundRobin = (_roundRobin + k) % n];
         return null;
     }
 
     /// <summary>
-    /// Strategy slot: S not own or without usable fighters (S fighters <= 0) -> 0.9; own HQ / Coruscant (a key system) -> 0.0;
-    /// else own / enemy sum of the fleets' strength at S, capped at 0.9 (no enemy strength -> 0.9). Before the model exists: 0.9 (Inferred).
+    /// Strategy slot: S not own or without usable fighters (S fighters <= 0) gives 0.9; own HQ / Coruscant (a key system) gives 0.0;
+    /// else own / enemy sum of the fleets' strength at S, capped at 0.9 (no enemy strength gives 0.9). Before the model exists: 0.9 (Inferred).
     /// </summary>
     internal override double BattleFloat(GameState game, StarSystem s)
     {
-        if (State == 1 || Model.Record(s) is not { } r || !r.Own || r.UsableFighters <= 0) return 0.9;
+        if (State == ComputerThinkState.New || Model.Record(s) is not { } r || !r.Own || r.UsableFighters <= 0) return 0.9;
         if (r.KeySystem) return 0.0;
         var here = Model.FleetRecords().Where(f => f.Location == s).ToList();
         double own = here.Where(f => f.Own).Sum(f => f.Firepower), enemy = here.Where(f => !f.Own).Sum(f => f.Firepower);
@@ -457,22 +465,22 @@ public sealed class ComputerController(Owner side) : Controller(side)
     /// <summary>Restores the saved counters (<see cref="SaveGame"/>); without <see cref="Load"/> (old save) model and planners are rebuilt by the next think.</summary>
     internal void Restore(int issued, int daysSinceReset) => (Issued, DaysSinceReset) = (issued, daysSinceReset);
 
-    int TypeAt(int index) => index < 0 ? 0 : Planners[index].Type;
-    int IndexOf(int type) => Planners.FindIndex(p => p.Type == type);
+    string TypeAt(int index) => (index < 0 ? PlannerType.None : Planners[index].Type).ToString();
+    int IndexOf(string type) => Planners.FindIndex(p => p.Type == Enum.Parse<PlannerType>(type));
 
     /// <summary>
     /// The computer object of the save: think state, budget, current planner and
-    /// the two pick cursors (as planner types, 0 = none), the world model, the planners in type order, then the table of records,
+    /// the two pick cursors (as planner types, None = none), the world model, the planners in type order, then the table of records,
     /// operations and tasks. The received-command list has no counterpart.
     /// </summary>
     internal System.Text.Json.Nodes.JsonObject Save(Func<GameObject, uint> r)
     {
         var w = new AiSave.Writer(r);
         var planners = new System.Text.Json.Nodes.JsonArray();
-        foreach (var p in Planners) planners.Add(new System.Text.Json.Nodes.JsonObject { ["type"] = p.Type, ["f"] = w.Fields(p) });
+        foreach (var p in Planners) planners.Add(new System.Text.Json.Nodes.JsonObject { ["type"] = p.Type.ToString(), ["f"] = w.Fields(p) });
         var j = new System.Text.Json.Nodes.JsonObject
         {
-            ["state"] = State, ["budget"] = Budget, ["current"] = _current?.Type ?? 0, ["urgent"] = TypeAt(_urgent), ["roundRobin"] = TypeAt(_roundRobin),
+            ["state"] = State.ToString(), ["budget"] = Budget, ["current"] = (_current?.Type ?? PlannerType.None).ToString(), ["urgent"] = TypeAt(_urgent), ["roundRobin"] = TypeAt(_roundRobin),
             ["model"] = w.Fields(Model), ["planners"] = planners,
         };
         j["table"] = w.Table();
@@ -487,15 +495,15 @@ public sealed class ComputerController(Owner side) : Controller(side)
         Planners.Clear();
         foreach (var e in j["planners"]!.AsArray())
         {
-            var p = PlannerFactory((int)e!["type"]!);
+            var p = PlannerFactory(Enum.Parse<PlannerType>((string)e!["type"]!));
             reader.Fill(p, e["f"]!.AsObject());
             Planners.Add(p);
         }
         reader.FillTable();
-        (State, Budget) = ((int)j["state"]!, (int)j["budget"]!);
-        int current = IndexOf((int)j["current"]!);
+        (State, Budget) = (Enum.Parse<ComputerThinkState>((string)j["state"]!), (int)j["budget"]!);
+        int current = IndexOf((string)j["current"]!);
         _current = current < 0 ? null : Planners[current];
-        (_urgent, _roundRobin) = (IndexOf((int)j["urgent"]!), IndexOf((int)j["roundRobin"]!));
+        (_urgent, _roundRobin) = (IndexOf((string)j["urgent"]!), IndexOf((string)j["roundRobin"]!));
     }
 
     /// <summary>The computer side of <see cref="Controller.AfterLoad"/>.</summary>

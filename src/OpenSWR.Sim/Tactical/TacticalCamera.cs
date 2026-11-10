@@ -1,5 +1,11 @@
 namespace OpenSWR.Sim;
 
+/// <summary>One camera operation: zoom in and out, rotate left and right, tilt up and down, reset view, remember, reset subject.</summary>
+public enum TacticalCameraOperation
+{
+    ZoomIn, ZoomOut, RotateLeft, RotateRight, TiltUp, TiltDown, ResetView, Remember, ResetSubject,
+}
+
 /// <summary>
 /// The tactical cameras, in world coordinates (y up, left-handed as the original; the front end converts). Orbit camera:
 /// distance 1.7 times W (Inferred: the scene-size argument is W), integer degrees, step clamp(z, 1, 5), field times 0.9 or
@@ -14,9 +20,6 @@ public sealed class TacticalCamera
         _b = battle;
         Reset();
     }
-
-    /// <summary>Operations: 1 zoom in, 2 zoom out, 3 / 4 rotate left / right, 5 / 6 tilt up / down, 7 reset view, 8 remember, 9 reset subject.</summary>
-    public const int ZoomIn = 1, ZoomOut = 2, RotateLeft = 3, RotateRight = 4, TiltUp = 5, TiltDown = 6, ResetView = 7, Remember = 8, ResetSubject = 9;
 
     /// <summary>Orbit camera fields: yaw (integer degrees in [-180, 180]), pitch (integer degrees), field f, zoom level z (starts 5), subject (none = the origin).</summary>
     public int Yaw { get; private set; }
@@ -42,43 +45,43 @@ public sealed class TacticalCamera
     /// <summary>Reset values: pitch 30, yaw -30 (local Alliance) / 150 (Empire), f = 0.2, no subject.</summary>
     void Reset() => (Pitch, Yaw, Field, Subject) = (30, _b.Local == 0 ? -30 : 150, 0.2, null);
 
-    /// <summary>One camera operation. While a follow camera is active only zoom works on it (others ignored), except 7 (drops it) and 9 (does 7 first).</summary>
-    public void Operate(int op, TacticalUnit? modeSubject = null)
+    /// <summary>One camera operation. While a follow camera is active only zoom works on it (others ignored), except ResetView (drops it) and ResetSubject (does ResetView first).</summary>
+    public void Operate(TacticalCameraOperation op, TacticalUnit? modeSubject = null)
     {
         if (Follow is { } f)
         {
             switch (op)
             {
-                case ZoomIn: f.Field = Math.Max(0.005, f.Field * 0.9); return;
-                case ZoomOut: f.Field = Math.Min(0.2, f.Field * 1.1); return;
-                case ResetView: break;
-                case ResetSubject: Operate(ResetView); break;
+                case TacticalCameraOperation.ZoomIn: f.Field = Math.Max(0.005, f.Field * 0.9); return;
+                case TacticalCameraOperation.ZoomOut: f.Field = Math.Min(0.2, f.Field * 1.1); return;
+                case TacticalCameraOperation.ResetView: break;
+                case TacticalCameraOperation.ResetSubject: Operate(TacticalCameraOperation.ResetView); break;
                 default: return;
             }
         }
         int step = Math.Clamp(Zoom, 1, 5);
         switch (op)
         {
-            case ZoomIn: (Field, Zoom) = (Math.Max(0.005, Field * 0.9), Zoom - 1); break;
-            case ZoomOut: (Field, Zoom) = (Math.Min(1.5, Field * 1.1), Zoom + 1); break;
-            case RotateLeft: Yaw = Wrap(Yaw - step); break;
-            case RotateRight: Yaw = Wrap(Yaw + step); break;
-            case TiltUp: if (Pitch < 90) Pitch += step; break;
-            case TiltDown: if (Pitch > -90) Pitch -= step; break;
-            case ResetView:
+            case TacticalCameraOperation.ZoomIn: (Field, Zoom) = (Math.Max(0.005, Field * 0.9), Zoom - 1); break;
+            case TacticalCameraOperation.ZoomOut: (Field, Zoom) = (Math.Min(1.5, Field * 1.1), Zoom + 1); break;
+            case TacticalCameraOperation.RotateLeft: Yaw = Wrap(Yaw - step); break;
+            case TacticalCameraOperation.RotateRight: Yaw = Wrap(Yaw + step); break;
+            case TacticalCameraOperation.TiltUp: if (Pitch < 90) Pitch += step; break;
+            case TacticalCameraOperation.TiltDown: if (Pitch > -90) Pitch -= step; break;
+            case TacticalCameraOperation.ResetView:
                 Follow = null;
                 if (_remembered is { } r) (Yaw, Pitch, Field, Zoom, Subject) = r;
                 else Reset();
                 break;
-            case Remember: _remembered = (Yaw, Pitch, Field, Zoom, Subject); break;
-            case ResetSubject: Subject = modeSubject; break;
+            case TacticalCameraOperation.Remember: _remembered = (Yaw, Pitch, Field, Zoom, Subject); break;
+            case TacticalCameraOperation.ResetSubject: Subject = modeSubject; break;
         }
     }
 
     static int Wrap(int deg) => deg > 180 ? deg - 360 : deg < -180 ? deg + 360 : deg;
 
     /// <summary>
-    /// Follow camera on F1-F12 (operation 0xB, index 0-11): task force i (used slots only): k1 = the info unit when the
+    /// Follow camera on F1-F12 (follow operation, index 0-11): task force i (used slots only): k1 = the info unit when the
     /// TF mode of that slot is current and has one, else the leader; k2 = its current target; fighter group (index 8-11): k1 = the
     /// leader, k2 = its target (on Recover the carrier, Inferred).
     /// </summary>
@@ -92,7 +95,7 @@ public sealed class TacticalCamera
     }
 
     TacticalUnit? LookAt(TacticalGroup g) =>
-        g.Fighters && g.Mission == 2 && g.UiLeader?.U.Carrier is { } c ? _b.Units.FirstOrDefault(u => u.U == c) : _b.TargetList(g).FirstOrDefault();
+        g.Fighters && g.Mission == TacticalMissionNumber.Recover && g.UiLeader?.U.Carrier is { } c ? _b.Units.FirstOrDefault(u => u.U == c) : _b.TargetList(g).FirstOrDefault();
 
     /// <summary>Per frame: when k1 is gone (not active, Inferred) the orbit camera returns; k2 follows the group's current target.</summary>
     internal void Frame()

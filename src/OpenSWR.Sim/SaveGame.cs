@@ -6,7 +6,7 @@ using OpenSWR.Data.Dat;
 namespace OpenSWR.Sim;
 
 /// <summary>
-/// openswr's own save format (original saves are not read): JSON {"format": "openswr-save", "version": 2, ...} holding the complete
+/// openswr's own save format (original saves are not read): JSON {"format": "openswr-save", "version": 4, ...} holding the complete
 /// live state: every object (class, ids, flags, fields, contents in key order; references as object refs: family and id),
 /// the game lists, sides, views, timer slots, the timed queue's timer events, pending commands, the clock, the id counter and
 /// the generator state, the event log (optional), the side controllers (optional; with them the UI generator state, which a load discards). Definitions are not saved: <see cref="Load"/> takes them from the install and resolves records by SdRef.
@@ -18,12 +18,14 @@ namespace OpenSWR.Sim;
 public static class SaveGame
 {
     public const string Format = "openswr-save";
-    public const int Version = 2;
+    public const int Version = 4; // version 4: message categories, helper kind, group modes, prisoner states and window kinds are enum names (version 3 stored numbers)
 
     static readonly JsonSerializerOptions Options = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault,
+        // internal codes have no fixed numbers: enums are saved and read by name only, so a number is refused instead of misread
+        Converters = { new JsonStringEnumConverter(allowIntegerValues: false) },
     };
 
     // ---- DTOs ----
@@ -71,7 +73,7 @@ public static class SaveGame
         public int? UiRngState { get; set; }
         /// <summary>Active mods in load order. A load needs the same list.</summary>
         public List<ModDto>? Mods { get; set; }
-        /// <summary>Map filter mode (optional: absent for 0x80 (off) and in older saves, version 1).</summary>
+        /// <summary>Map filter mode (optional: absent for the off value 128 and in older saves, version 1).</summary>
         public int? FilterMode { get; set; }
         /// <summary>Open strategy-screen windows.</summary>
         public List<SavedWindow>? Windows { get; set; }
@@ -163,8 +165,8 @@ public static class SaveGame
         public SystemControl Control { get; set; }
         /// <summary>Manager view queue count, mission view TaskStatus / CompletionStatus.</summary>
         public int QueueCount { get; set; }
-        public int TaskStatus { get; set; }
-        public int CompletionStatus { get; set; }
+        public MissionTaskStatus TaskStatus { get; set; }
+        public MissionCompletion CompletionStatus { get; set; }
         /// <summary>openswr view update day.</summary>
         public int Updated { get; set; }
         /// <summary>System view NeverBeenControlled.</summary>
@@ -173,7 +175,7 @@ public static class SaveGame
 
     sealed class TimerDto
     {
-        public int Type { get; set; }
+        public TimerType Type { get; set; }
         public uint Target { get; set; }
         /// <summary>Subject: an object ref, or a side (<see cref="SubjectSide"/>), or neither.</summary>
         public uint? Subject { get; set; }
@@ -186,7 +188,7 @@ public static class SaveGame
 
     sealed class EventDto
     {
-        public int Type { get; set; }
+        public TimerType Type { get; set; }
         public uint Target { get; set; }
         public int FireDay { get; set; }
         public uint Serial { get; set; }
@@ -199,7 +201,7 @@ public static class SaveGame
         public int Type { get; set; }
         public Owner Side { get; set; }
         public List<uint> Targets { get; set; } = [];
-        public List<int> Modes { get; set; } = [];
+        public List<GroupMode> Modes { get; set; } = [];
         public uint? ArgRef { get; set; }
         public uint ArgInt { get; set; }
         public uint[] Fields { get; set; } = [];
@@ -230,7 +232,7 @@ public static class SaveGame
         public bool ReadyForDelete { get; set; }
         public bool Constructed { get; set; }
         public bool AutoscrapRequested { get; set; }
-        public int DestroyedReason { get; set; }
+        public DestroyedReason DestroyedReason { get; set; }
         public SideSet Observed { get; set; }
         /// <summary>Live sides; absent = not yet computed.</summary>
         public SideSet? LiveSides { get; set; }
@@ -290,7 +292,7 @@ public static class SaveGame
     sealed class CharacterDto
     {
         public int ForceBonus { get; set; }
-        public int State { get; set; }
+        public PrisonerState State { get; set; }
         public bool Captured { get; set; }
         public bool CanEscape { get; set; }
         public bool EscapeRequest { get; set; }
@@ -391,8 +393,8 @@ public static class SaveGame
     sealed class MissionDto
     {
         public uint UserId { get; set; }
-        public int TaskStatus { get; set; }
-        public int CompletionStatus { get; set; }
+        public MissionTaskStatus TaskStatus { get; set; }
+        public MissionCompletion CompletionStatus { get; set; }
         public int Phase { get; set; }
         public int LastPhase { get; set; }
         public bool Ready { get; set; }
@@ -468,7 +470,7 @@ public static class SaveGame
         uint R(GameObject o)
         {
             if (!index.TryGetValue(o.Ref, out var known)) { index[o.Ref] = o; table.Add(o); }
-            else if (known != o) throw new InvalidOperationException($"Two objects share the reference {o.Ref:X8}.");
+            else if (known != o) throw new InvalidOperationException($"Two objects share the reference {Family.Of(o.Ref)}:{SdRef.IndexOf(o.Ref)}.");
             return o.Ref;
         }
         uint? N(GameObject? o) => o is null ? null : R(o);
@@ -537,7 +539,7 @@ public static class SaveGame
                 {
                     null or SideState => null,
                     GameObject o => R(o),
-                    var x => throw new InvalidOperationException($"Timer {slot.Type:X} subject {x} cannot be saved."),
+                    var x => throw new InvalidOperationException($"Timer {slot.Type} subject {x} cannot be saved."),
                 },
                 SubjectSide = slot.Subject is SideState side ? side.Owner : Owner.None,
             });
@@ -549,7 +551,7 @@ public static class SaveGame
         }
         CommandDto C(Command x) => new()
         {
-            Type = x.Type, Side = x.Side, Targets = [.. x.Targets.Select(t => R(t.Target))], Modes = [.. x.Targets.Select(t => t.Mode)],
+            Type = (int)x.Type, Side = x.Side, Targets = [.. x.Targets.Select(t => R(t.Target))], Modes = [.. x.Targets.Select(t => t.Mode)],
             ArgRef = N(x.ArgRef), ArgInt = x.ArgInt, Fields = [.. x.Fields], Decoys = L(x.Decoys), Serial = x.Serial, Sequence = x.Sequence, Text = x.Text,
         };
         foreach (var x in c.PendingCommands) d.Commands.Add(C(x));
@@ -664,7 +666,7 @@ public static class SaveGame
     {
         if (!stream.CanSeek) { var copy = new MemoryStream(); stream.CopyTo(copy); copy.Position = 0; stream = copy; }
         long start = stream.Position;
-        bool gzip = stream.ReadByte() == 0x1F && stream.ReadByte() == 0x8B;
+        bool gzip = stream.ReadByte() == 31 && stream.ReadByte() == 139;
         stream.Position = start;
         using var unzipped = gzip ? new System.IO.Compression.GZipStream(stream, System.IO.Compression.CompressionMode.Decompress, true) : null;
         JsonNode? root;
@@ -676,7 +678,7 @@ public static class SaveGame
             string? format = root?["format"]?.GetValueKind() == JsonValueKind.String ? (string?)root["format"] : null;
             if (format != Format) throw new InvalidDataException("Not an Open-SWR save game.");
             int version = root!["version"]?.GetValueKind() == JsonValueKind.Number ? (int)root["version"]! : 0;
-            if (version == 1) throw new InvalidDataException("This save was made by an older version and can't be loaded.");
+            if (version is 1 or 2 or 3) throw new InvalidDataException("This save was made by an older version and can't be loaded.");
             if (version != Version) throw new InvalidDataException($"Save game version {version} is not supported (expected {Version}).");
             var d = root.Deserialize<SaveDto>(Options)!;
             // the save names the mods it was played with; the definitions must come from the same mods, in order
@@ -882,7 +884,7 @@ public static class SaveGame
         game.Facilities.AddRange(d.Facilities.Select(r => (Facility)O(r)));
         game.Missions.AddRange(d.Missions.Select(r => (Mission)O(r)));
         foreach (uint r in d.Abodes) game.Abodes[O(r).Type] = O(r);
-        // a save holds ReadyForDelete only on deleted objects (their 0x31A ran in the same tick); they are in no container
+        // a save holds ReadyForDelete only on deleted objects (their delete handling ran in the same tick); they are in no container
         foreach (var x in map.Values) x.Deleted = x.ReadyForDelete && x.Container is null;
         game.IdCounter = d.NextId;
         game.Ready = d.Ready;
@@ -927,7 +929,7 @@ public static class SaveGame
         }
         foreach (var e in d.Events)
             game.Clock.RestoreTimed(new TimerEvent(game.Timers[(e.Type, e.Target)], e.Serial, e.Base, e.Variance) { FireDay = e.FireDay });
-        Command C(CommandDto c) => new(c.Type, c.Side)
+        Command C(CommandDto c) => new((CommandType)c.Type, c.Side)
         {
             Targets = [.. c.Targets.Select((r, i) => (O(r), c.Modes[i]))], ArgRef = N<GameObject>(c.ArgRef), ArgInt = c.ArgInt,
             Fields = c.Fields, Decoys = [.. c.Decoys.Select(O)], Serial = c.Serial, Sequence = c.Sequence, Text = c.Text,
@@ -969,8 +971,8 @@ public static class SaveGame
     /// <summary>An object whose id comes from its definition must have the saved id.</summary>
     // kinds whose type comes straight from the save: it must name a record of the game data (readers resolve it)
     static uint Typed(ObjectDto d, GameDefinitions defs) =>
-        defs.Resolve(d.Type) is not null ? d.Type : throw new InvalidDataException($"Object {d.Id:X} has type {d.Type:X8}, not in the game data.");
+        defs.Resolve(d.Type) is not null ? d.Type : throw new InvalidDataException($"Object {d.Id} has type {Family.Of(d.Type)}:{SdRef.IndexOf(d.Type)}, not in the game data.");
 
     static T Check<T>(T o, ObjectDto d) where T : GameObject =>
-        o.Id == d.Id ? o : throw new InvalidDataException($"Object {d.Type:X8} has id {o.Id:X}, saved {d.Id:X}.");
+        o.Id == d.Id ? o : throw new InvalidDataException($"Object {Family.Of(d.Type)}:{SdRef.IndexOf(d.Type)} has id {o.Id}, saved {d.Id}.");
 }

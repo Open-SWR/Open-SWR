@@ -6,16 +6,37 @@ namespace OpenSWR.Sim;
 public enum Owner { None = 0, Alliance = 1, Empire = 2, Neutral = 3 }
 
 /// <summary>
-/// Observable state event, as the trace tool logs it: Kind 0x300 / 0x301 / 0x302 / 0x306 / 0x308 / 0x30C / 0x30D / 0x320 /
-/// 0x321 = notification run (Old / New as carried: Existing, Usable, owner, HyperdriveActive, Completed, mission ready, phase,
-/// parent SdRef (no parent = the staging container), agent mission SdRef (none = 2)); 0x60 / 0x64 = mission TaskStatus /
-/// CompletionStatus change;
-/// 0x387 = travel timer start (Old = Base, New = fire day).
+/// Observable state event, as the trace tool logs it. Kind is a notification run (Existing, Usable, owner, HyperdriveActive,
+/// Completed, mission ready, phase, parent, role mission key; Old / New as carried: parent SdRef (no parent = the staging container),
+/// agent mission SdRef (none = 2)).
+/// Mission TaskStatus or CompletionStatus change: Old and New as carried.
+/// Travel timer start: Old = Base, New = fire day.
 /// </summary>
-public readonly record struct Fact(int Day, int Kind, uint Object, long Old, long New);
+public readonly record struct Fact(int Day, FactKind Kind, uint Object, long Old, long New);
+
+/// <summary>Observable state event kinds: the original's notification ids, plus the mission status changes and travel starts.</summary>
+public enum FactKind
+{
+    /// <summary>Not set (the default value).</summary>
+    None,
+    TaskStatus,
+    CompletionStatus,
+    ExistingChanged,
+    UsableChanged,
+    OwnerChanged,
+    HyperdriveChanged,
+    Completed,
+    MissionReady,
+    MissionPhase,
+    ParentChanged,
+    /// <summary>An agent's mission changed.</summary>
+    AgentMission,
+    /// <summary>Travel timer start (Old = Base, New = fire day).</summary>
+    TravelStart,
+}
 
 /// <summary>The computer side's controller (openswr option, not in the original): the original-faithful AI or openswr's own AI.</summary>
-public enum ComputerOpponent { Original = 0, OpenSWR = 1 }
+public enum ComputerOpponent { Original, OpenSWR }
 
 /// <summary>New-game options. <see cref="Opponent"/> is an openswr option, not in the original.</summary>
 public sealed record GameSettings(Owner PlayerSide, int GalaxySize, int Difficulty, int VictoryFlag, int Seed, bool HeadToHead = false,
@@ -61,23 +82,14 @@ public readonly record struct CriticalHitCounts(int ShieldRecharge, int WeaponRe
 /// <summary>A system's control: the owner, the support control and the military control (<see cref="Systems.Control"/>).</summary>
 public readonly record struct SystemControl(Owner Owner, Owner Support, Owner Military);
 
-/// <summary>Families (the family part of an SdRef).</summary>
+/// <summary>Family helpers; the family constants are <see cref="Families"/>.</summary>
 public static class Family
 {
-    public const uint Fleet = 0x08, System = 0x90, Sector = 0x80;
     public static uint Of(uint sdRef) => SdRef.FamilyOf(sdRef);
-    public static bool IsTroop(uint sdRef) => Of(sdRef) is >= 0x10 and < 0x14;
-    public static bool IsCapitalShip(uint sdRef) => Of(sdRef) is >= 0x14 and < 0x1C;
-    public static bool IsFacility(uint sdRef) => Of(sdRef) is >= 0x20 and < 0x30;
-    public static bool IsSpecialForce(uint sdRef) => Of(sdRef) is >= 0x3C and < 0x40;
-}
-
-/// <summary>Well-known SdRefs used by setup.</summary>
-public static class Refs
-{
-    public const uint Coruscant = 0x90000109, Yavin = 0x92000121, Fleet = 0x08000004, Mine = 0x2C000001,
-        AllianceArmy = 0x10000002, EmpireArmy = 0x10000008, Vader = 0x35000281, Luke = 0x32000242, Han = 0x33000243,
-        Leia = 0x31000241, Chewbacca = 0x38000343, Palpatine = 0x34000280;
+    public static bool IsTroop(uint sdRef) => Of(sdRef) is >= Families.Troop and < Families.CapitalShip;
+    public static bool IsCapitalShip(uint sdRef) => Of(sdRef) is >= Families.CapitalShip and < Families.Fighter;
+    public static bool IsFacility(uint sdRef) => Of(sdRef) is >= Families.Headquarters and < Families.MajorCharacter;
+    public static bool IsSpecialForce(uint sdRef) => Of(sdRef) is >= Families.SpecialForce and < Families.Mission;
 }
 
 /// <summary>
@@ -90,9 +102,9 @@ public class GameObject(uint type, Owner owner, uint id)
     public uint Type { get; } = type;
     /// <summary>Object id: SD Index for characters, sectors, systems, abodes; otherwise auto-assigned (<see cref="GameState.NextId"/>).</summary>
     public uint Id { get; } = id;
-    /// <summary>Owner side. Changes after setup go through <see cref="Objects.SetOwner"/> (notification 0x302).</summary>
+    /// <summary>Owner side. Changes after setup go through <see cref="Objects.SetOwner"/> (owner notification).</summary>
     public virtual Owner Owner { get; set; } = owner;
-    /// <summary>Autoscrap request flag. Set on one unit per firing of timer 0x382 while the side's maintenance is exceeded.</summary>
+    /// <summary>Autoscrap request flag. Set on one unit per firing of timer Maintenance while the side's maintenance is exceeded.</summary>
     public bool AutoscrapRequested { get; set; }
     // Object flags (names from the debug notifications), all stored, the derived ones (Usable, Enroute, Existing) included.
     // Objects created by setup steps 9-18 start Created, Completed, Constructed and so Existing and Usable (SetSetupFlags).
@@ -122,8 +134,8 @@ public class GameObject(uint type, Owner owner, uint id)
         ClearFlags();
         (Created, Completed, Constructed, Existing, Usable) = (true, true, true, true, true);
     }
-    /// <summary>DestroyedReason: 0x14 scrap, 0x16 production cancelled. Set through <see cref="Objects.Destroy"/>.</summary>
-    public int DestroyedReason { get; set; }
+    /// <summary>DestroyedReason: Scrapped or ProductionCancelled. Set through <see cref="Objects.Destroy"/>.</summary>
+    public DestroyedReason DestroyedReason { get; set; }
     /// <summary>ObservedBy per side.</summary>
     public SideSet Observed { get; set; }
     /// <summary>The sides whose view of the object is live; null = not yet computed (then live for the owner's side).</summary>
@@ -135,7 +147,7 @@ public class GameObject(uint type, Owner owner, uint id)
     /// <summary>DestinationLocationAtDepartureKey ("DepDest") and ETA of a travel.</summary>
     public GameObject? Destination { get; set; }
     public int Eta { get; set; }
-    /// <summary>Troop flag "DestroyedRunningBlockade": set by a failed withdraw draw; its hook gives DestroyedReason 0xD.</summary>
+    /// <summary>Troop flag "DestroyedRunningBlockade": set by a failed withdraw draw; its hook gives DestroyedReason RanBlockade.</summary>
     public bool DestroyedRunningBlockade { get; set; }
     /// <summary>
     /// Systems: TroopRegWithdrawPercent; troops: their copy, drawn on departure. Initial 100
@@ -147,7 +159,7 @@ public class GameObject(uint type, Owner owner, uint id)
     /// <summary>Capital ships: HullDamage; fighters: SquadSizeDamage.</summary>
     public int HullDamage { get; set; }
     public int SquadSizeDamage { get; set; }
-    /// <summary>Unit flags RepairActive (Damaged and Usable, timer 0x380 Active) and FastRepair (timer Base).</summary>
+    /// <summary>Unit flags RepairActive (Damaged and Usable, timer Repair, Active) and FastRepair (timer Base).</summary>
     public bool RepairActive { get; set; }
     public bool FastRepair { get; set; }
     /// <summary>Capital ship critical-hit counters (<see cref="CriticalHitCounts"/>).</summary>
@@ -163,8 +175,8 @@ public class GameObject(uint type, Owner owner, uint id)
     public bool AckedReal { get; set; }
     public SideSet AckedViews { get; set; }
     /// <summary>
-    /// Deleted by its 0x31A run: out of every game list, its container and the views; readers still holding the
-    /// object see it as the original sees a missing key. A save holds ReadyForDelete only for deleted objects (the 0x31A runs in
+    /// Deleted by its delete notification run: out of every game list, its container and the views; readers still holding the
+    /// object see it as the original sees a missing key. A save holds ReadyForDelete only for deleted objects (the delete notification runs in
     /// the same tick), so a load derives it.
     /// </summary>
     public bool Deleted { get; internal set; }
@@ -175,10 +187,10 @@ public class GameObject(uint type, Owner owner, uint id)
 
     /// <summary>
     /// Container key: familyClass, then id. familyClass is taken as the SD record family; the original's class constants
-    /// (0x90/0x92 systems, 8 fleets, 0x14 capital ships, 0x30-0x35 majors, 0x38 minors) equal it in shipped data
-    /// (Inferred for classes it does not list, e.g. the one 0x18 capital ship).
+    /// (family 144 and 146 systems, 8 fleets, family 20 capital ships, families 48-53 majors, 56 minors) equal it in shipped data
+    /// (Inferred for classes it does not list, e.g. the one capital ship of family 24).
     /// </summary>
-    public ulong Key => (ulong)Family.Of(Type) * 0x1_0000_0000 + Id;
+    public ulong Key => (ulong)Family.Of(Type) * 4294967296 + Id;
 
     public T Add<T>(T item) where T : GameObject
     {
@@ -202,10 +214,10 @@ public class GameObject(uint type, Owner owner, uint id)
     /// <summary>Object reference as events hold it: family and object id.</summary>
     public uint Ref => SdRef.Make(Family.Of(Type), Id);
 
-    public override string ToString() => $"{Type:X8}#{Id:X} ({Owner})";
+    public override string ToString() => $"{Family.Of(Type)}:{SdRef.IndexOf(Type)}#{Id} ({Owner})";
 }
 
-/// <summary>Fleet (family 0x08): real fleet or placeholder. Flag names Inferred except Battle, Blockade, Bombard, Assault.</summary>
+/// <summary>Fleet (family 8): real fleet or placeholder. Flag names Inferred except Battle, Blockade, Bombard, Assault.</summary>
 public sealed class Fleet(uint type, Owner owner, uint id) : GameObject(type, owner, id)
 {
     /// <summary>A real fleet (it has held a capital ship of its owner), not a placeholder.</summary>
@@ -233,11 +245,11 @@ public class Agent(uint type, Owner owner, uint id) : GameObject(type, owner, id
     public bool ResignRequest { get; set; }
     /// <summary>Agent flag: the mission record's ResignOnInjury at the join, cleared on leaving; gates the injury and evasion resignations.</summary>
     public bool ResignOnInjury { get; set; }
-    /// <summary>Agent MissionRemoveRequest: set through <see cref="Prisoners.SetRemoveRequest"/> (0x30B).</summary>
+    /// <summary>Agent MissionRemoveRequest: set through <see cref="Prisoners.SetRemoveRequest"/> (remove request notification).</summary>
     public bool RemoveRequest { get; set; }
     /// <summary>Removed from its mission (member filter, leader, phase check).</summary>
     public bool Removed => ResignRequest || RemoveRequest;
-    /// <summary>Agent Adrift: set through <see cref="Prisoners.SetAdrift"/> when the parent is destroyed (0x30E).</summary>
+    /// <summary>Agent Adrift: set through <see cref="Prisoners.SetAdrift"/> when the parent is destroyed (adrift notification).</summary>
     public bool Adrift { get; set; }
     /// <summary>Agent IsDecoying: set by a successful decoy check. The clearing rule is not known.</summary>
     public bool IsDecoying { get; set; }
@@ -254,6 +266,12 @@ public static class SkillIndex
         FacilityDesign = 4 /* ConstructionYardRD */, Combat = 5, Leadership = 6, Loyalty = 7;
 }
 
+/// <summary>Character command kinds (<see cref="Character.CommandKind"/>): 0 none, then commander, admiral, general.</summary>
+public static class CommandKind
+{
+    public const int Commander = 1, Admiral = 2, General = 3;
+}
+
 public sealed class Character(CharacterRecord definition, Owner owner) : Agent(definition.Common.Ref, owner, definition.Common.Index)
 {
     public CharacterRecord Definition { get; } = definition;
@@ -262,22 +280,22 @@ public sealed class Character(CharacterRecord definition, Owner owner) : Agent(d
     /// <summary>ForceTraining, 0 at placement, written only by Jedi training (<see cref="Jedi.SetForceTraining"/>); Force = rank + training.</summary>
     public int ForceBonus { get; set; }
     /// <summary>
-    /// Character State: 0 captured, 1 escaped, 2 released, 3 rescued, 4 free (constructor value); changed only through
+    /// Character State: captured, escaped, released, rescued, free (constructor value); changed only through
     /// <see cref="Prisoners.SetState"/>.
     /// </summary>
-    public int State { get; set; } = Prisoners.Free;
-    /// <summary>Character Captured = (State = 0), recomputed by the state hook.</summary>
+    public PrisonerState State { get; set; } = PrisonerState.Free;
+    /// <summary>Character Captured = (State = Captured), recomputed by the state hook.</summary>
     public bool Captured { get; set; }
-    /// <summary>CanEscape (= Captured, drives timer 0x38A), EscapeRequest.</summary>
+    /// <summary>CanEscape (= Captured, drives timer Escape), EscapeRequest.</summary>
     public bool CanEscape { get; set; }
     public bool EscapeRequest { get; set; }
-    /// <summary>CanHeal, Healing (drives timer 0x388), FastHeal (Force >= G 0xA00).</summary>
+    /// <summary>CanHeal, Healing (drives timer Heal), FastHeal (Force >= G FastHealForce).</summary>
     public bool CanHeal { get; set; }
     public bool Healing { get; set; }
     public bool FastHeal { get; set; }
     /// <summary>Captor: the capturing object, or none.</summary>
     public GameObject? Captor { get; set; }
-    /// <summary>Injury: lowers EnhancedCombat; healed by timer 0x388. Changes after setup go through <see cref="Prisoners.SetInjury"/>.</summary>
+    /// <summary>Injury: lowers EnhancedCombat; healed by timer Heal. Changes after setup go through <see cref="Prisoners.SetInjury"/>.</summary>
     public int Injury { get; set; }
     /// <summary>Force = ForceExperience (rank) + ForceTraining (bonus).</summary>
     public int Force => ForceRank + ForceBonus;
@@ -301,25 +319,25 @@ public sealed class Character(CharacterRecord definition, Owner owner) : Agent(d
     public uint EncounterSerial { get; set; }
     /// <summary>ForceUserDiscoveredKey on the discoverer: the Force user it discovered last.</summary>
     public Character? DiscoveredForceUser { get; set; }
-    /// <summary>Character flag that drives timer 0x389 Active.</summary>
+    /// <summary>Character flag that drives timer ForceDiscovery Active.</summary>
     public bool ForceActive { get; set; }
-    /// <summary>MissionHyperdriveModifier, the character's speed; null = the initial G 0x1. Set on mission phase 2 (Han rule).</summary>
+    /// <summary>MissionHyperdriveModifier, the character's speed; null = the initial G HyperdriveModifier. Set on mission phase 2 (Han rule).</summary>
     public int? MissionHyperdriveModifier { get; set; }
-    /// <summary>CommandKind, set by commands 0x260-0x263 (kind = type - 0x260); 0 initially (Inferred).</summary>
+    /// <summary>CommandKind, set by the ClearCommand to MakeGeneral commands (kind = type minus the ClearCommand value); 0 initially (Inferred).</summary>
     public int CommandKind { get; set; }
 }
 
 /// <summary>Processing facility state.</summary>
-public enum FacilityState { Waiting = 1, Processing = 2, Done = 3, Idle = 4 }
+public enum FacilityState { None, Waiting, Processing, Done, Idle }
 
 /// <summary>
-/// Processing facility (families 0x28-0x2F): shipyard, training facility, construction yard, Mine, Refinery.
+/// Processing facility (families 40-47): shipyard, training facility, construction yard, Mine, Refinery.
 /// </summary>
 public sealed class Facility(uint type, Owner owner, uint id, int processingRate) : GameObject(type, owner, id)
 {
     /// <summary>ProcessingRate.</summary>
     public int ProcessingRate { get; } = processingRate;
-    public bool IsMineOrRefinery => Family.Of(Type) is 0x2C or 0x2D;
+    public bool IsMineOrRefinery => Family.Of(Type) is Families.Mine or Families.Refinery;
     /// <summary>Allocation pair: capacity 50 once active, allocated maintenance points (Mine/Refinery).</summary>
     public int Capacity { get; set; }
     public int Allocated { get; set; }
@@ -341,11 +359,11 @@ public sealed class Facility(uint type, Owner owner, uint id, int processingRate
 }
 
 /// <summary>
-/// Side object (family 0xF3): maintenance pair, demand, stocks, wait lists, speed.
+/// Side object (family 243): maintenance pair, demand, stocks, wait lists, speed.
 /// </summary>
 public sealed class SideState(uint sdRef)
 {
-    /// <summary>Side object reference (0xF300000F Alliance, 0xF3000010 Empire).</summary>
+    /// <summary>Side object reference (Refs.AllianceSide Alliance, Refs.EmpireSide Empire).</summary>
     public uint Ref { get; } = sdRef;
     public int MaintenanceCapacity { get; set; }
     public int MaintenanceAllocated { get; set; }
@@ -360,8 +378,8 @@ public sealed class SideState(uint sdRef)
     /// <summary>Refineries waiting for raw, manufacturing facilities waiting for refined, FIFO.</summary>
     public List<WaitEntry> RefineryWaitList { get; } = [];
     public List<WaitEntry> ManufacturingWaitList { get; } = [];
-    /// <summary>Side number from the side's own SdRef (index 0xF -> 1, 0x10 -> 2).</summary>
-    public Owner Owner => SdRef.IndexOf(Ref) == 0xF ? Owner.Alliance : Owner.Empire;
+    /// <summary>Side number from the side's own SdRef (index 15 gives 1, 16 gives 2).</summary>
+    public Owner Owner => SdRef.IndexOf(Ref) == 15 ? Owner.Alliance : Owner.Empire;
     /// <summary>
     /// Research lines by mission kind k (0 ship, 1 facility, 2 troop): points, current
     /// order, and exhausted flag per kind; all 0 at start.
@@ -379,14 +397,14 @@ public sealed class SideState(uint sdRef)
 public readonly record struct WaitEntry(Facility Facility, int Counter);
 
 /// <summary>Manufacturing manager kind.</summary>
-public enum ManufacturingKind { Ship = 0, Construction = 1, Training = 2 }
+public enum ManufacturingKind { Ship, Construction, Training }
 
 /// <summary>
-/// Per-system manufacturing manager (MANMGRSD 0xA0 construction, 0xA2 shipyard, 0xA4 training), created at system init; not in
+/// Per-system manufacturing manager (MANMGRSD 160 construction, 162 shipyard, 164 training), created at system init; not in
 /// the system's contents; counter ids at system creation. Its owner is the system's owner (Inferred).
 /// </summary>
 public sealed class ManufacturingManager(StarSystem system, ManufacturingKind kind, uint id)
-    : GameObject(kind switch { ManufacturingKind.Construction => 0xA0000005u, ManufacturingKind.Ship => 0xA2000006u, _ => 0xA4000007u }, Owner.Neutral, id)
+    : GameObject(kind switch { ManufacturingKind.Construction => Refs.ConstructionManager, ManufacturingKind.Ship => Refs.ShipyardManager, _ => Refs.TrainingManager }, Owner.Neutral, id)
 {
     public override StarSystem System { get; } = system;
     public ManufacturingKind Kind { get; } = kind;
@@ -397,7 +415,7 @@ public sealed class ManufacturingManager(StarSystem system, ManufacturingKind ki
     /// <summary>CompletedPointCount, OverflowPointCount.</summary>
     public int CompletedPoints { get; set; }
     public int Overflow { get; set; }
-    /// <summary>TargetKey: the manager's own system until order 0x214; reset to it by another routine.</summary>
+    /// <summary>TargetKey: the manager's own system until order SetProductionTarget; reset to it by another routine.</summary>
     public GameObject TargetKey { get; set; } = system;
     /// <summary>
     /// TargetKey of each side's frozen view (index = side) at its last refresh: setup step 24 and the knowledge updates that
@@ -405,7 +423,7 @@ public sealed class ManufacturingManager(StarSystem system, ManufacturingKind ki
     /// </summary>
     public GameObject?[] ViewTargetKey { get; } = new GameObject?[3];
     /// <summary>
-    /// Reserved: toggled by 0x216, cleared by the owner and Existing hooks; read only by the advisor model (no delegated producer here).
+    /// Reserved: toggled by SetReserved, cleared by the owner and Existing hooks; read only by the advisor model (no delegated producer here).
     /// </summary>
     public bool Reserved { get; set; }
 }
@@ -438,7 +456,7 @@ public sealed class StarSystem(SystemRecord definition, Sector sector) : GameObj
     public int ProductionModifier { get; set; } = 100;
     /// <summary>SmugglingPercent (-100...100).</summary>
     public int SmugglingPercent { get; set; }
-    /// <summary>Garrisoned (system flag): >= 1 troop directly in the system; drives timer 0x385.</summary>
+    /// <summary>Garrisoned (system flag): >= 1 troop directly in the system; drives timer GarrisonSupport.</summary>
     public bool Garrisoned { get; set; }
     /// <summary>
     /// Control: owner, support control and military control (<see cref="SystemControl"/>). Inferred: computed by the setup's final
@@ -479,8 +497,8 @@ public sealed class StarSystem(SystemRecord definition, Sector sector) : GameObj
     /// <summary>Stored blockading side; set when Blockade is set with a blockading side 1 or 2.</summary>
     public Owner Blockader { get; set; }
     /// <summary>
-    /// Per-side loss records, index side - 1 (sides 1-3): battle losses (DestroyedReason 0xC), assault
-    /// losses (0xE), bombardment losses (0xF).
+    /// Per-side loss records, index side - 1 (sides 1-3): battle losses (DestroyedReason Battle), assault
+    /// losses (DestroyedReason Assault), bombardment losses (DestroyedReason Bombardment).
     /// </summary>
     public int[] BattleLoss { get; } = new int[3];
     public int[] AssaultLoss { get; } = new int[3];
@@ -492,17 +510,20 @@ public sealed class StarSystem(SystemRecord definition, Sector sector) : GameObj
 }
 
 /// <summary>An open strategy-screen window: window kind and index (the object or dialog the window is for, 0 for the single windows), position, minimise slot (-1 when not minimised; slot Inferred).</summary>
-public sealed record SavedWindow(int Kind, int Index, int X, int Y, int Slot);
+public sealed record SavedWindow(WindowKind Kind, int Index, int X, int Y, int Slot);
 
 public sealed class GameState(GameSettings settings, GameDefinitions definitions)
 {
     public GameSettings Settings { get; } = settings;
     public GameDefinitions Definitions { get; } = definitions;
     public Params Params { get; } = new(definitions, settings.Column);
+    RuleSettings? _rules;
+    /// <summary>Named values of the settings column; built on first use from Params.</summary>
+    public RuleSettings Rules => _rules ??= new(Params);
     public GameRandom Random { get; } = new(settings.Seed);
 
     public List<Sector> Sectors { get; } = [];
-    /// <summary>All placed systems in registry order: core family (0x90) by Index, then rim family (0x92) by Index.</summary>
+    /// <summary>All placed systems in registry order: core family (144) by Index, then rim family (146) by Index.</summary>
     public List<StarSystem> Systems { get; } = [];
     public List<Character> Characters { get; } = [];
     /// <summary>Fleets incl. placeholders in creation order (= registry order: auto ids increase).</summary>
@@ -512,31 +533,34 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
     public List<Facility> Facilities { get; } = [];
     /// <summary>Every object with an auto id (units, facilities, fleets, missions), in creation order; destroyed ones stay listed.</summary>
     public List<GameObject> Created { get; } = [];
-    /// <summary>Missions (manager 0xF8's contents) in creation order.</summary>
+    /// <summary>Missions (manager 248's contents) in creation order.</summary>
     public List<Mission> Missions { get; } = [];
-    /// <summary>Staging container 0xF2000003: destroyed objects end here by their final move 0x372.</summary>
-    public GameObject Staging { get; } = new(0xF2000003, Owner.Neutral, 3);
+    /// <summary>Staging container Refs.Staging: destroyed objects end here by their final move notification.</summary>
+    public GameObject Staging { get; } = new(Refs.Staging, Owner.Neutral, 3);
     /// <summary>
-    /// Manager 0xF8 (fixed id 6): the container missions are created in; Created, Completed, Existing and Usable from setup step 9
+    /// Manager 248 (fixed id 6): the container missions are created in; Created, Completed, Existing and Usable from setup step 9
     /// </summary>
-    public GameObject MissionManager { get; } = new(0xF8000006, Owner.Neutral, 6);
+    public GameObject MissionManager { get; } = new(Refs.MissionManager, Owner.Neutral, 6);
     /// <summary>
-    /// Manager 0xFA flag "Emperor at Coruscant": Palpatine 0x34000280 is Usable, not Captured, his parent
-    /// is Coruscant itself, and Coruscant's owner is 2. Empire characters get LeadershipAdjustment G 0xC04 while it is set.
-    /// Evaluated on read (the original recomputes it in manager 0xFA hooks).
+    /// Manager 250 flag "Emperor at Coruscant": Palpatine Refs.Palpatine is Usable, not Captured, his parent
+    /// is Coruscant itself, and Coruscant's owner is 2. Empire characters get LeadershipAdjustment G EmperorLeadershipBonus while it is set.
+    /// Evaluated on read (the original recomputes it in manager 250 hooks).
     /// </summary>
-    public bool EmperorAtCoruscant => Characters.FirstOrDefault(c => c.Type == 0x34000280) is { Usable: true, Captured: false } p
+    public bool EmperorAtCoruscant => Known.Palpatine is { Usable: true, Captured: false } p
         && p.Container is StarSystem { Type: Refs.Coruscant, Owner: Owner.Empire };
     /// <summary>Sector-wave gate: tick of the counters and per-side counts.</summary>
     public int WaveTick { get; set; }
     public Dictionary<Owner, int> WaveCounts { get; } = [];
-    public Dictionary<Owner, SideState> Sides { get; } = new() { [Owner.Alliance] = new(0xF300000F), [Owner.Empire] = new(0xF3000010) };
+    public Dictionary<Owner, SideState> Sides { get; } = new() { [Owner.Alliance] = new(Refs.AllianceSide), [Owner.Empire] = new(Refs.EmpireSide) };
+    /// <summary>Well-known game objects by fixed ref (<see cref="KnownObjects"/>).</summary>
+    KnownObjects? _known;
+    public KnownObjects Known => _known ??= new(this);
     public Clock Clock { get; } = new();
     /// <summary>Timer slots by (type, target reference).</summary>
-    public Dictionary<(int Type, uint Target), TimerSlot> Timers { get; } = [];
+    public Dictionary<(TimerType Type, uint Target), TimerSlot> Timers { get; } = [];
     /// <summary>Clock day; setup runs on day 1.</summary>
     public int Day => Clock.Day;
-    /// <summary>"battle management required" flag, set by 0x304 (BattlePending set); read by host stage 13.</summary>
+    /// <summary>"battle management required" flag, set by battle pending notification (BattlePending set); read by host stage 13.</summary>
     public bool BattleRequired { get; set; }
     /// <summary>The system picked by the battle start walk while a controller has not answered (host state 6; not saved: a save is refused then).</summary>
     public StarSystem? HostedBattle { get; internal set; }
@@ -546,13 +570,13 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
     /// </summary>
     public Func<StarSystem, BattleResult?>? BattleResults { get; set; }
     /// <summary>
-    /// The running tactical battle (host states 7 / 0x14) while the host waits for it with
+    /// The running tactical battle (host states 7 / 20) while the host waits for it with
     /// <see cref="HostedBattle"/> set; the front end runs its turns until <see cref="TacticalBattle.Done"/>. Not saved (a save is refused then).
     /// </summary>
     public TacticalBattle? Tactical { get; internal set; }
     /// <summary>The tactical battle's units for its report (taken at the battle start).</summary>
     internal List<GameObject>? TacticalUnits { get; set; }
-    /// <summary>Game-ready flag = (init step = 0x1A), set after step 25; no notification is created before.</summary>
+    /// <summary>Game-ready flag = (init step = 26), set after step 25; no notification is created before.</summary>
     public bool Ready { get; set; }
     /// <summary>Optional log of observable state events (differential tests, <see cref="Fact"/>); no behaviour change.</summary>
     public List<Fact>? FactTrace { get; set; }
@@ -560,30 +584,30 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
     public Action<GameObject>? LockFloor { get; set; }
     /// <summary>When set, every hosted space battle appends its report (<see cref="Messages"/>, battle windows; not saved).</summary>
     public List<BattleReport>? BattleTrace { get; set; }
-    /// <summary>When set, every bombardment / assault appends its record (<see cref="Messages"/> type 0xF; not saved).</summary>
+    /// <summary>When set, every bombardment / assault appends its record (<see cref="Messages"/> type Strike; not saved).</summary>
     public List<StrikeReport>? StrikeTrace { get; set; }
-    /// <summary>When set, every InformantIncident pulse appends its record (<see cref="Messages"/> type 0x18; not saved).</summary>
+    /// <summary>When set, every InformantIncident pulse appends its record (<see cref="Messages"/> type Informants; not saved).</summary>
     public List<InformantReport>? InformantTrace { get; set; }
-    /// <summary>When set, every galaxy event 0x38F / 0x390 that changes the system appends its record (<see cref="Messages"/> type 0x20; not saved).</summary>
+    /// <summary>When set, every galaxy event timer Disaster / timer ResourceEvent that changes the system appends its record (<see cref="Messages"/> type ResourceEvent; not saved).</summary>
     public List<ResourceReport>? ResourceTrace { get; set; }
-    /// <summary>When set, every story / Force UI notification appends its record (<see cref="Messages"/> types 0x1B-0x29; not saved).</summary>
+    /// <summary>When set, every story / Force UI notification appends its record (<see cref="Messages"/> story and Force message types; not saved).</summary>
     public List<StoryEvent>? StoryTrace { get; set; }
-    /// <summary>The context of the running duel pairing / resolution (kind-4 groups of type 0x24); 0 outside one. Not saved.</summary>
+    /// <summary>The context of the running duel pairing / resolution (kind-4 groups of type 36); 0 outside one. Not saved.</summary>
     internal int StoryGroup { get; set; }
     int _storyGroups;
     internal int NextStoryGroup() => ++_storyGroups;
     /// <summary>
     /// Posts a story / Force UI notification (only after game-ready): <paramref name="live"/> = the sides whose
-    /// views post it (default: the key's live views at the post); key none = a manager (0xF8 / 0xFA). No sim effect.
+    /// views post it (default: the key's live views at the post); key none = a manager (248 / 250). No sim effect.
     /// </summary>
-    internal void StoryPost(int kind, GameObject? key, long old, long now, GameObject? other = null, SideSet? live = null)
+    internal void StoryPost(StoryPostKind kind, GameObject? key, long old, long now, GameObject? other = null, SideSet? live = null)
     {
         if (StoryTrace is null || !Ready) return;
         StoryTrace.Add(new(Day, kind, key, live ?? Combat.LiveSides(key!), old, now, other, StoryGroup));
     }
     /// <summary>Open strike: every object destroyed meanwhile with its live views and Completed at the destroy.</summary>
     internal List<(GameObject Unit, SideSet Live, bool Completed)>? StrikeDestroys { get; set; }
-    internal void Record(int kind, uint obj, long old, long now) => FactTrace?.Add(new(Day, kind, obj, old, now));
+    internal void Record(FactKind kind, uint obj, long old, long now) => FactTrace?.Add(new(Day, kind, obj, old, now));
     /// <summary>
     /// Side controllers by side (side 1 first; <see cref="Ai.Controller"/>): human or computer. Empty = no controller stages (tests,
     /// command replays inject the recorded commands instead).
@@ -595,10 +619,10 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
     /// controller and a live view of the object get one (a frozen view does not change). shortcut: not saved (a save taken
     /// after a mid-day UI order before the next tick drops them); save them when saves can happen inside a tick.
     /// </summary>
-    internal List<(Owner Side, int Type, GameObject Object, GameObject? A, GameObject? B)> Messages { get; } = [];
+    internal List<(Owner Side, ViewMessageType Type, GameObject Object, GameObject? A, GameObject? B)> Messages { get; } = [];
 
     /// <summary>Posts a view message to every side with a controller whose view of the object is live (only while the game runs).</summary>
-    internal void ViewMessage(int type, GameObject o, GameObject? a = null, GameObject? b = null)
+    internal void ViewMessage(ViewMessageType type, GameObject o, GameObject? a = null, GameObject? b = null)
     {
         if (Controllers.Count == 0 || !Ready) return;
         foreach (var side in Controllers.Keys)
@@ -607,44 +631,44 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
 
     /// <summary>
     /// A refresh of a frozen view (it became live) posts one message per field that differs from the view:
-    /// parent 0x300, owner 0x100, Usable 0x101, Created 0x102, Completed 0x103, Destroyed 0x302 (with a parent), Enroute 0x104, Damaged 0x106, system
-    /// fields 0x140 / 0x149 / 0x14A / 0x14B / 0x14C (NeverBeenControlled) / 0x14D (Battle) / 0x14E (Blockade), manager queue count 0x160, mission TaskStatus 0x1F0 /
-    /// CompletionStatus 0x1F1. Only the fields the views keep are compared; base order
+    /// view field parent; view fields owner, Usable, Created, Completed, Destroyed (view Destroyed with a parent), Enroute, Damaged, system
+    /// fields Support / Populated / Explored / Uprising / NeverBeenControlled / Battle / Blockade, manager queue count, mission TaskStatus /
+    /// CompletionStatus. Only the fields the views keep are compared; base order
     /// verified, class-field order Inferred.
     /// </summary>
     internal void ViewRefreshed(GameObject o, Owner side)
     {
         if (!Controllers.ContainsKey(side) || !Ready) return;
         Views.TryGetValue((o, side), out var v); // none = a fresh view: owner 3, no parent, no flags set
-        void Post(bool differs, int type, GameObject? a = null, GameObject? b = null) { if (differs) Messages.Add((side, type, o, a, b)); }
+        void Post(bool differs, ViewMessageType type, GameObject? a = null, GameObject? b = null) { if (differs) Messages.Add((side, type, o, a, b)); }
         // copy order: parent, owner, flags, Damaged, class fields
-        // a fresh view sits in the side's staging view: its first real parent posts old = 0xF2000003;
+        // a fresh view sits in the side's staging view: its first real parent posts old = Refs.Staging;
         // roots without a real container (systems) keep none (Inferred, as Knowledge.InStaging)
         var oldParent = v?.Parent ?? (o.Container is null ? null : Staging);
-        Post(o.Container != oldParent, 0x300, o.Container, oldParent);
-        Post(o.Owner != (v?.Owner ?? Owner.Neutral), 0x100);
-        Post(o.Usable != (v?.Usable ?? false), 0x101);
-        Post(o.Created != (v?.Created ?? false), 0x102);
-        Post(o.Completed != (v?.Completed ?? false), 0x103);
-        Post(o.Destroyed != (v?.Destroyed ?? false) && o.Container is not null, 0x302, o.Container);
-        Post(o.Enroute != (v?.Enroute ?? false), 0x104);
-        Post(o.Damaged != (v?.Damaged ?? false), 0x106);
+        Post(o.Container != oldParent, ViewMessageType.Parent, o.Container, oldParent);
+        Post(o.Owner != (v?.Owner ?? Owner.Neutral), ViewMessageType.Owner);
+        Post(o.Usable != (v?.Usable ?? false), ViewMessageType.Usable);
+        Post(o.Created != (v?.Created ?? false), ViewMessageType.Created);
+        Post(o.Completed != (v?.Completed ?? false), ViewMessageType.Completed);
+        Post(o.Destroyed != (v?.Destroyed ?? false) && o.Container is not null, ViewMessageType.Destroyed, o.Container);
+        Post(o.Enroute != (v?.Enroute ?? false), ViewMessageType.Enroute);
+        Post(o.Damaged != (v?.Damaged ?? false), ViewMessageType.Damaged);
         if (o is StarSystem s)
         {
-            Post(s.Support != (v?.Support ?? 0), 0x140);
-            Post(s.Populated != (v?.Populated ?? false), 0x149);
-            Post(s.Explored != (v?.Explored ?? false), 0x14A);
-            Post(s.Uprising != (v?.Uprising ?? false), 0x14B);
+            Post(s.Support != (v?.Support ?? 0), ViewMessageType.Support);
+            Post(s.Populated != (v?.Populated ?? false), ViewMessageType.Populated);
+            Post(s.Explored != (v?.Explored ?? false), ViewMessageType.Explored);
+            Post(s.Uprising != (v?.Uprising ?? false), ViewMessageType.Uprising);
             // NeverBeenControlled copy between the Uprising and Battle copies; A = the system when the new value is set
-            Post(s.NeverBeenControlled != (v?.NeverBeenControlled ?? false), 0x14C, s.NeverBeenControlled ? s : null);
-            Post(s.Battle != (v?.Battle ?? false), 0x14D); // full refresh
-            Post(s.Blockade != (v?.Blockade ?? false), 0x14E);
+            Post(s.NeverBeenControlled != (v?.NeverBeenControlled ?? false), ViewMessageType.NeverBeenControlled, s.NeverBeenControlled ? s : null);
+            Post(s.Battle != (v?.Battle ?? false), ViewMessageType.Battle); // full refresh
+            Post(s.Blockade != (v?.Blockade ?? false), ViewMessageType.Blockade);
         }
-        if (o is ManufacturingManager m) Post(m.Orders.Count != (v?.QueueCount ?? 0), 0x160); // queue count of the manager view
+        if (o is ManufacturingManager m) Post(m.Orders.Count != (v?.QueueCount ?? 0), ViewMessageType.QueueCount); // queue count of the manager view
         if (o is Mission ms) // mission refresh: TaskStatus before CompletionStatus
         {
-            Post(ms.TaskStatus != (v?.TaskStatus ?? 0), 0x1F0);
-            Post(ms.CompletionStatus != (v?.CompletionStatus ?? 0), 0x1F1);
+            Post(ms.TaskStatus != (v?.TaskStatus ?? 0), ViewMessageType.TaskStatus);
+            Post(ms.CompletionStatus != (v?.CompletionStatus ?? 0), ViewMessageType.CompletionStatus);
         }
     }
     /// <summary>The player's message store (built by <see cref="Messages"/>; UI only; saved).</summary>
@@ -653,7 +677,7 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
     public int FilterMode { get; set; } = MapFilter.Off;
     /// <summary>
     /// The strategy screen's open windows (window count, then one descriptor per window); UI only, filled by
-    /// the screen before a save, re-opened by it after a load. Stacking order bottom -> top, then the minimised ones in minimise order.
+    /// the screen before a save, re-opened by it after a load. Stacking order bottom gives top, then the minimised ones in minimise order.
     /// </summary>
     public List<SavedWindow> Windows { get; } = [];
     /// <summary>Manager F9 distance lists, per system: the systems by ascending distance in CRT qsort order.</summary>
@@ -669,7 +693,7 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
     public GameObject Abode(uint sdRef)
     {
         if (!Abodes.TryGetValue(sdRef, out var abode))
-            Abodes[sdRef] = abode = new GameObject(sdRef, sdRef switch { 0x98000440 => Owner.Alliance, 0x98000441 or 0x98000442 => Owner.Neutral, _ => Owner.Empire }, SdRef.IndexOf(sdRef));
+            Abodes[sdRef] = abode = new GameObject(sdRef, sdRef switch { Prisoners.AllianceJail => Owner.Alliance, Story.Dagobah or Story.Hermitage => Owner.Neutral, _ => Owner.Empire }, SdRef.IndexOf(sdRef));
         return abode;
     }
 
@@ -683,13 +707,13 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
     /// <summary>The winner once the game is over, else none.</summary>
     public Owner Winner => VictoryState.AllianceWins ? Owner.Alliance : VictoryState.EmpireWins ? Owner.Empire : Owner.None;
 
-    /// <summary>Manager 0xF8 story flags (<see cref="Story"/>).</summary>
+    /// <summary>Manager 248 story flags (<see cref="Story"/>).</summary>
     public StoryFlags StoryFlags { get; set; } = new();
 
-    uint _nextId = 0x482;
+    uint _nextId = 1154;
     /// <summary>
-    /// Auto id for objects not keyed by SD Index: one global counter in creation order, 0x482 after the step-9 abodes (Index up
-    /// to 0x481).
+    /// Auto id for objects not keyed by SD Index: one global counter in creation order, starting at 1154 after the step-9 abodes (Index up
+    /// to 1153).
     /// </summary>
     public uint NextId() => _nextId++;
     /// <summary>The id counter itself (save games).</summary>
@@ -713,9 +737,35 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
 
     /// <summary>MaintenanceCost of a unit or facility definition; 0 for anything else.</summary>
     public int MaintenanceCost(uint sdRef) =>
-        Definitions.Resolve(sdRef) is { } r && r.Has(SdField.MaintenanceCost) && Family.Of(sdRef) is >= 0x10 and < 0x40 ? r.Get(SdField.MaintenanceCost) : 0;
+        Definitions.Resolve(sdRef) is { } r && r.Has(SdField.MaintenanceCost) && Family.Of(sdRef) is >= Families.Troop and < Families.Mission ? r.Get(SdField.MaintenanceCost) : 0;
 
     /// <summary>RefinedMaterialCost of a unit or facility definition; 0 for anything else.</summary>
     public int RefinedMaterialCost(uint sdRef) =>
-        Definitions.Resolve(sdRef) is { } r && r.Has(SdField.MaintenanceCost) && Family.Of(sdRef) is >= 0x10 and < 0x40 ? r.Get(SdField.RefinedMaterialCost) : 0;
+        Definitions.Resolve(sdRef) is { } r && r.Has(SdField.MaintenanceCost) && Family.Of(sdRef) is >= Families.Troop and < Families.Mission ? r.Get(SdField.RefinedMaterialCost) : 0;
+}
+
+/// <summary>
+/// Well-known game objects by their fixed ref. Each access looks the object up again (objects can be created, destroyed or
+/// replaced, and a load reloads them); a property is null while the object is not in the game.
+/// </summary>
+public sealed class KnownObjects(GameState game)
+{
+    /// <summary>The Coruscant system (the Empire's capital).</summary>
+    public StarSystem? Coruscant => game.Systems.FirstOrDefault(s => s.Type == Refs.Coruscant);
+    /// <summary>The Yavin system (the Alliance's base).</summary>
+    public StarSystem? Yavin => game.Systems.FirstOrDefault(s => s.Type == Refs.Yavin);
+    /// <summary>The headquarters facility (fixed object ref).</summary>
+    public GameObject? Headquarters => game.Created.FirstOrDefault(o => o.Ref == Refs.Headquarters);
+
+    public Character? Luke => CharacterOf(Refs.Luke);
+    public Character? Leia => CharacterOf(Refs.Leia);
+    public Character? Han => CharacterOf(Refs.Han);
+    public Character? Chewbacca => CharacterOf(Refs.Chewbacca);
+    public Character? Vader => CharacterOf(Refs.Vader);
+    public Character? Palpatine => CharacterOf(Refs.Palpatine);
+    public Character? Mothma => CharacterOf(Refs.Mothma);
+    public Character? Wedge => CharacterOf(Refs.Wedge);
+    public Character? Dodonna => CharacterOf(Refs.Dodonna);
+
+    Character? CharacterOf(uint type) => game.Characters.FirstOrDefault(c => c.Type == type);
 }

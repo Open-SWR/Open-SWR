@@ -15,7 +15,7 @@ public partial class MoviePlayer : Control
     public Action? Finished { get; set; }
     /// <summary>
     /// Kind-6 event caption: text at (4, 404) 580 x 70, font 4, white; empty = none. REBDLOG.DLL 11061 (47 x 31) is drawn right of
-    /// the text as the continue button 0xF1 (Inferred); a click on it ends the movie like a key.
+    /// the text as the continue button (Inferred); a click on it ends the movie like a key.
     /// </summary>
     public string Caption { get; set; } = "";
     /// <summary>
@@ -80,7 +80,7 @@ public partial class MoviePlayer : Control
     }
 
     static readonly Rect2 CaptionRect = new(4, 404, 580, 70);
-    static Rect2 ButtonRect => new(new Vector2(589, 404 + (70 - Assets.BitmapSize(11061, "REBDLOG.DLL").Y) / 2), Assets.BitmapSize(11061, "REBDLOG.DLL"));
+    static Rect2 ButtonRect => new(new Vector2(589, 404 + (70 - Assets.BitmapSize(DialogBitmaps.CaptionContinue, "REBDLOG.DLL").Y) / 2), Assets.BitmapSize(DialogBitmaps.CaptionContinue, "REBDLOG.DLL"));
 
     public override void _Input(InputEvent e)
     {
@@ -150,7 +150,7 @@ public partial class MoviePlayer : Control
         DrawLog.Bitmap(this, _texture, new Rect2(0, (480 - _video.Height) / 2, _video.Width, _video.Height));
         if (Caption == "") return;
         Assets.DrawText(this, CaptionRect, Caption, 4, Colors.White, TextFormat.Wrap);
-        var button = Assets.Bitmap(11061, "REBDLOG.DLL");
+        var button = DialogArt.CaptionContinue;
         DrawTextureRect(button, ButtonRect, false);
         DrawLog.Bitmap(this, button, ButtonRect);
     }

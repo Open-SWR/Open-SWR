@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using OpenSWR.Data;
 
 namespace OpenSWR.Tests;
@@ -42,6 +41,6 @@ public class RleImageTests
         for (ushort id = 2002; id <= 2007; id++)
             DeltaSprite.Decode(pe.Find(new ResId(302), id)!.Data.Span).ApplyTo(frame);
         // C-3PO raising an arm; reference from an independent implementation, checked visually
-        Assert.Equal("a8645939a932f690386b0e32ffd78dd0", Convert.ToHexStringLower(MD5.HashData(frame)));
+        Assert.Equal("223831342680543915035766949218346307024", Digest.Md5(frame));
     }
 }

@@ -35,10 +35,10 @@ public class GameRandomTests
     [Fact]
     public void RandCanReturnN()
     {
-        // x = 0x7FFFFFFE: floor(0x7FFFFFFE / floor(0x7FFFFFFE / 101)) = 101, so rand(n) can return n itself.
-        // Seed s with 41358*s == 0x7FFFFFFE, i.e. s = m - inverse(41358).
-        long inverse = BigIntegerModInverse(41358, 0x7FFFFFFF);
-        var rng = new GameRandom((int)(0x7FFFFFFF - inverse));
+        // x = 2147483646: floor(2147483646 / floor(2147483646 / 101)) = 101, so rand(n) can return n itself.
+        // Seed s with 41358*s == 2147483646, i.e. s = m - inverse(41358).
+        long inverse = BigIntegerModInverse(41358, int.MaxValue);
+        var rng = new GameRandom((int)(int.MaxValue - inverse));
         Assert.Equal(101, rng.Rand(101));
     }
 
@@ -46,6 +46,6 @@ public class GameRandomTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(0x7FFFFFFF)]
+    [InlineData(int.MaxValue)]
     public void SeedOutsideRangeThrows(int seed) => Assert.Throws<ArgumentOutOfRangeException>(() => new GameRandom(seed));
 }

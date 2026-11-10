@@ -33,9 +33,9 @@ public sealed record UnitRoles(uint Type, UnitKind Kind, int Maintenance, IReadO
 /// <item>Torpedoes (value x squadron size, x 0.5333) hit only ships whose shields are down; fighter bombardment is a separate field.</item>
 /// <item>Durability = hull + shield + 20 x shield recharge (shields restore every battle step; 20 steps Inferred). Damage
 /// control is strategic repair, not used in battle: left out.</item>
-/// <item>Bombardment: ship bombard field (+ fighters' field); defence ion cannons (0x22) and batteries (0x23) fire at the bombarding ships,
-/// GenCore shields (0x24) subtract from the shots. Assault: every Usable defence facility fires at the landing troops with
-/// chance attack / G 0x200; troop duels compare the attacker's attack with the defender's defence.
+/// <item>Bombardment: ship bombard field (+ fighters' field); defence ion cannons (family 34) and batteries (family 35) fire at the bombarding ships,
+/// GenCore shields (family 36) subtract from the shots. Assault: every Usable defence facility fires at the landing troops with
+/// chance attack / GeneralParam.AssaultFireDivisor; troop duels compare the attacker's attack with the defender's defence.
 /// Planetary defences take no part in the space battle.</item>
 /// </list>
 /// </summary>
@@ -73,13 +73,13 @@ public static class Roles
         UnitKind.CapitalShip => ShipRoles, UnitKind.Fighter => FighterRoles, UnitKind.Troop => TroopRoles, _ => DefenceRoles,
     };
 
-    /// <summary>The kind of a unit type: capital ships [0x14, 0x18) (the Death-Star class [0x18, 0x1C) has its own rules: none), fighters, troops, defence facilities [0x22, 0x28) except the Death Star shield 0x25.</summary>
+    /// <summary>The kind of a unit type: capital ships (families 20 to 23) (the Death-Star class, families 24 to 27, has its own rules: none), fighters, troops, defence facilities (families 34 to 39) except the Death Star shield (family 37).</summary>
     public static UnitKind? KindOf(uint type) => Family.Of(type) switch
     {
-        >= 0x14 and < 0x18 => UnitKind.CapitalShip,
-        >= 0x1C and < 0x20 => UnitKind.Fighter,
-        >= 0x10 and < 0x14 => UnitKind.Troop,
-        0x22 or 0x23 or 0x24 or 0x26 or 0x27 => UnitKind.Defence,
+        >= Families.CapitalShip and < Families.DeathStar => UnitKind.CapitalShip,
+        >= Families.Fighter and < Families.Headquarters => UnitKind.Fighter,
+        >= Families.Troop and < Families.CapitalShip => UnitKind.Troop,
+        Families.IonCannon or Families.Gun or Families.PlanetaryShield or Families.DeathStarShieldEnd or 39 => UnitKind.Defence,
         _ => null,
     };
 

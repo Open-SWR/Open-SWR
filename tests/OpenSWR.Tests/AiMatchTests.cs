@@ -100,7 +100,7 @@ public class AiMatchTests(ITestOutputHelper output)
     {
         var definitions = GameDefinitions.Load(GameDir.Path);
         var r = Match.Play(definitions, 1, 532947196, Owner.Alliance, 2, 0, 150, every: 50);
-        foreach (var c in r.Changes) output.WriteLine($"day {c.Day}: {c.System:X8} {c.From} → {c.To} {c.Cause}");
+        foreach (var c in r.Changes) output.WriteLine($"day {c.Day}: {c.System} {c.From} → {c.To} {c.Cause}");
         Assert.NotEmpty(r.Changes);
         Assert.All(r.Changes, c => Assert.NotEqual(c.From, c.To));
         Assert.Contains(r.Changes, c => c.Cause != ChangeCause.Other);
@@ -121,7 +121,7 @@ public class AiMatchTests(ITestOutputHelper output)
         Assert.Contains("lost by value", assaults);
         Assert.All(new[] { "capital", "fighters", "troops", "special", "prodfac", "mines", "refineries", "deffac" }, c => Assert.Contains(c, mix));
         // the value of an own system: Coruscant for the Empire counts 100 and more
-        var coruscant = start.Systems.First(s => s.Type == Refs.Coruscant);
+        var coruscant = start.Known.Coruscant!;
         Assert.True(OpenSWRController.SystemValue(start, Owner.Empire, coruscant, OpenSWRController.HomeSector(start, Owner.Empire), x => (x.Owner, x.Populated)) >= 110);
         string table = Match.CauseTable([r], 100);
         output.WriteLine(table);

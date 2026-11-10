@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 using OpenSWR.Sim;
 using static OpenSWR.Tests.TacticalTests;
 
@@ -12,7 +13,7 @@ public class TacticalUiTests
     /// </summary>
     static (TacticalBattle B, TacticalUi Ui, List<TacticalUnit> A, List<TacticalUnit> E) Setup(int ships = 3)
     {
-        var (_, b, a, e) = Scene(new Script([], []), [.. Enumerable.Repeat(0x14000042u, ships)], [0x14000085, 0x14000085]);
+        var (_, b, a, e) = Scene(new Script([], []), [.. Enumerable.Repeat(SdRef.Make(Families.CapitalShip, 66), ships)], [SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133)]);
         b.Computer[1] = true;
         foreach (var u in a) b.LeaveTaskForce(u);
         b.RunQueued();
@@ -24,59 +25,66 @@ public class TacticalUiTests
 
     static void Left(TacticalUi ui, object? hit, bool ctrl = false) { ui.LeftDown(hit, ctrl); ui.Frame(); }
     static void Right(TacticalUi ui, object? hit, bool ctrl = false) { ui.RightDown(hit, ctrl); ui.Frame(); }
-    static void Do(TacticalUi ui, int command) { ui.Command(command); ui.Frame(); }
+    static void Do(TacticalUi ui, TacticalCommand command) { ui.Command(command); ui.Frame(); }
+    /// <summary>The mode of the screen with its task-force slot or fighter colour (0 for the other modes).</summary>
+    static (TacticalModeId Mode, int Index) ModeOf(TacticalUi ui) => ui.Current switch
+    {
+        TacticalUi.TaskForceMode t => (TacticalModeId.TaskForce, t.Slot),
+        TacticalUi.FighterMode f => (TacticalModeId.FighterGroup, f.Colour),
+        _ => (ui.Current.Id, 0),
+    };
 
     static TacticalNavPoint ShownNav(TacticalBattle b, TacticalUi ui, int i = 0)
     {
-        if (!ui.NavShown[0]) Do(ui, 0x13); // nav button 4 -> list 0 (set 1)
+        if (!ui.NavShown[0]) Do(ui, TacticalCommand.NavList1); // nav button 4 gives list 0 (set 1)
         return b.NavPoints.Where(p => p.Set == 1).ElementAt(i);
     }
 
-    /// <summary>Selecting: a plain left click passes through the empty pick ( -> idle) and selects: own -> own-ship mode (page 0x16), enemy -> enemy mode (marked), nav point -> nav mode; hidden nav points cannot be picked; observing, a right click only selects.</summary>
+    /// <summary>Selecting: a plain left click passes through the empty pick ( gives idle) and selects: own gives own-ship mode (its page), enemy gives enemy mode (marked), nav point gives nav mode; hidden nav points cannot be picked; observing, a right click only selects.</summary>
     [GameFact]
     public void LeftClickSelects()
     {
         var (b, ui, a, e) = Setup();
         Left(ui, a[1]);
-        Assert.Equal((0xE, a[1], 0x16), (ui.Current.Id, ui.Info, ui.Page));
+        Assert.Equal((TacticalModeId.OwnShip, a[1], TacticalPage.Ship), (ui.Current.Id, ui.Info, ui.Page));
         Assert.Equal(TacticalBox.Selected, ui.Box(a[1]));
         Left(ui, e[0]);
-        Assert.Equal((0xF, TacticalBox.Marked), (ui.Current.Id, ui.Box(e[0])));
+        Assert.Equal((TacticalModeId.Enemy, TacticalBox.Marked), (ui.Current.Id, ui.Box(e[0])));
         Left(ui, null);
-        Assert.Equal((0, 0x15), (ui.Current.Id, ui.Page));
+        Assert.Equal((TacticalModeId.Idle, TacticalPage.Empty), (ui.Current.Id, ui.Page));
         Left(ui, b.NavPoints[0]); // hidden: nothing after the empty pick
-        Assert.Equal(0, ui.Current.Id);
+        Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
         var n = ShownNav(b, ui);
         Left(ui, n);
-        Assert.Equal((0xD, TacticalNavStyle.Other), (ui.Current.Id, ui.NavStyle(n)));
+        Assert.Equal((TacticalModeId.NavPoint, TacticalNavStyle.Other), (ui.Current.Id, ui.NavStyle(n)));
         Left(ui, a[0]);
-        Do(ui, 0x7B); // observe
+        Do(ui, TacticalCommand.ComputerControl); // observe
         Assert.False(ui.InCommand);
         Right(ui, e[1]);
-        Assert.Equal(0xF, ui.Current.Id);
+        Assert.Equal(TacticalModeId.Enemy, ui.Current.Id);
         Assert.Empty(b.QueuedKinds());
     }
 
-    /// <summary>Own-ship mode, own unit: ctrl 0 = escort (S's unassigned task force, else a new one; voice 0x77; replace 0x36; mission 1), S leaving a numbered task force; ctrl 1 = multi-selection {S, U}.</summary>
+    /// <summary>Own-ship mode, own unit: ctrl 0 = escort (S's unassigned task force, else a new one; voice; replace order; mission 1), S leaving a numbered task force; ctrl 1 = multi-selection {S, U}.</summary>
     [GameFact]
     public void OwnShipEscortsAndMultiSelects()
     {
         var (b, ui, a, _) = Setup();
         Left(ui, a[0]);
-        Do(ui, 2 + 3); // empty slot 4 in own-ship mode -> numbered task force of {S}
-        Assert.Equal(4, ui.Current.Id);
+        Do(ui, TacticalCommand.TaskForce4); // empty slot 4 in own-ship mode gives numbered task force of {S}
+        Assert.Equal((TacticalModeId.TaskForce, 3), ModeOf(ui));
         var numbered = ui.TaskForces[3]!;
         Left(ui, a[0]);
         Right(ui, a[1]);
         var t = a[0].UiGroup!;
         Assert.NotSame(numbered, t);
         Assert.Null(ui.TaskForces[3]); // its last member left: slot freed
-        Assert.Equal((K([a[1]]), 1, 0xE), (K(t.UiTargets), t.UiMission, ui.Current.Id));
-        Assert.Equal([0x77], ui.Voices);
+        Assert.Equal((K([a[1]]), TacticalMissionNumber.Escort, TacticalModeId.OwnShip), (K(t.UiTargets), t.UiMission, ui.Current.Id));
+        Assert.Equal([119], ui.Voices);
         Right(ui, a[2]); // T is now unassigned: kept
         Assert.Same(t, a[0].UiGroup);
-        // as read: replace (0x36), then the setter's rule 2 (old UI mission 1) clears the UI target list again; at the dispatch the
-        // 0x0A handler (old mission 1) clears the simulation list after the 0x36 has set it
+        // as read: the replace order, then the setter's rule 2 (old UI mission 1) clears the UI target list again; at the dispatch the
+        // mission-message handler (old mission 1) clears the simulation list after the replace order has set it
         Assert.Empty(t.UiTargets);
         b.RunQueued();
         Assert.Empty(b.TargetList(t));
@@ -85,7 +93,7 @@ public class TacticalUiTests
         Assert.Equal([a[0], a[1]], multi.Selection);
     }
 
-    /// <summary>Own-ship mode, enemy unit and nav points: ctrl 0 = mission 0 + replace (voice 0x3B with no nav points); ctrl 1 = add / remove (Escort: mission 0 + replace); not attackable -> enemy mode; nav ctrl 0 = replace (voice 0x21), ctrl 1 = add / remove; Space = the nearest enemy capital ship.</summary>
+    /// <summary>Own-ship mode, enemy unit and nav points: ctrl 0 = mission 0 + replace (voice with no nav points); ctrl 1 = add / remove (Escort: mission 0 + replace); not attackable gives enemy mode; nav ctrl 0 = replace (voice), ctrl 1 = add / remove; Space = the nearest enemy capital ship.</summary>
     [GameFact]
     public void OwnShipAttacksAndNavigates()
     {
@@ -93,8 +101,8 @@ public class TacticalUiTests
         Left(ui, a[0]);
         Right(ui, e[1]);
         var t = a[0].UiGroup!;
-        Assert.Equal((K([e[1]]), 0), (K(t.UiTargets), t.UiMission));
-        Assert.Equal([0x3B], ui.Voices);
+        Assert.Equal((K([e[1]]), TacticalMissionNumber.None), (K(t.UiTargets), t.UiMission));
+        Assert.Equal([59], ui.Voices);
         Right(ui, e[0], ctrl: true);
         Assert.Equal([e[1], e[0]], t.UiTargets);
         Right(ui, e[1], ctrl: true);
@@ -104,45 +112,45 @@ public class TacticalUiTests
         var n1 = ShownNav(b, ui, 1);
         Right(ui, n0);
         Assert.Equal((K([n0]), 0), (K(t.UiNav), t.UiTargets.Count));
-        Assert.Equal(0x21, ui.Voices[^1]);
+        Assert.Equal(33, ui.Voices[^1]);
         Right(ui, n1, ctrl: true);
         Assert.Equal([n0, n1], t.UiNav);
         Assert.Equal((TacticalNavStyle.First, TacticalNavStyle.Other), (ui.NavStyle(n0), ui.NavStyle(n1)));
         Right(ui, n0, ctrl: true);
         Assert.Equal([n1], t.UiNav);
-        Do(ui, 0x20); // Space
+        Do(ui, TacticalCommand.Space); // Space
         Assert.Equal([b.Nearest(a[0].Position, 0)!], t.UiTargets);
         Assert.False(t.UiTargets[0].Fighter);
-        e[1].U.State = 7;
+        e[1].U.State = TacticalUnitState.Accelerating;
         Right(ui, e[1]);
-        Assert.Equal(0xF, ui.Current.Id);
+        Assert.Equal(TacticalModeId.Enemy, ui.Current.Id);
     }
 
-    /// <summary>The mission page makes a new task force for S every time (voice 0x77); the tactic too (0x3D); next / previous walk the side's capital ships with wrap; S inactive -> idle.</summary>
+    /// <summary>The mission page makes a new task force for S every time (voice); the tactic too (the tactic order); next / previous walk the side's capital ships with wrap; S inactive gives idle.</summary>
     [GameFact]
     public void OwnShipMissionsAndCycling()
     {
         var (b, ui, a, _) = Setup();
         Left(ui, a[0]);
-        ui.AssignMission(5);
+        ui.AssignMission(TacticalMissionNumber.AttackCapitalShips);
         var first = a[0].UiGroup!;
-        ui.AssignMission(4);
+        ui.AssignMission(TacticalMissionNumber.AttackFighters);
         Assert.NotSame(first, a[0].UiGroup);
-        Assert.Equal((4, 0x77), (a[0].UiGroup!.UiMission, ui.Voices[^1]));
-        ui.AssignTactic(1);
-        Assert.Equal(1, a[0].UiGroup!.Tactic);
+        Assert.Equal((TacticalMissionNumber.AttackFighters, 119), (a[0].UiGroup!.UiMission, ui.Voices[^1]));
+        ui.AssignTactic(TacticalTactic.Surround);
+        Assert.Equal(TacticalTactic.Surround, a[0].UiGroup!.Tactic);
         ui.Cycle(false);
         ui.Frame();
         Assert.Equal(a[2], ((TacticalUi.OwnShipMode)ui.Current).S);
         ui.Cycle(true);
         ui.Frame();
         Assert.Equal(a[0], ((TacticalUi.OwnShipMode)ui.Current).S);
-        a[0].U.State = 11;
+        a[0].U.State = TacticalUnitState.Destroyed;
         ui.Frame();
-        Assert.Equal(0, ui.Current.Id);
+        Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
     }
 
-    /// <summary>Multi-selection: ctrl 1 adds / removes (one left -> own-ship mode); own U ctrl 0 -> numbered task force in the first free slot escorting U (mission 1, TF voice) -> TF mode; enemy with a slot -> voice 0x3C + k, pending target, TF mode.</summary>
+    /// <summary>Multi-selection: ctrl 1 adds / removes (one left gives own-ship mode); own U ctrl 0 gives numbered task force in the first free slot escorting U (mission 1, TF voice) gives TF mode; enemy with a slot gives voice + k, pending target, TF mode.</summary>
     [GameFact]
     public void MultiSelectionMakesNumberedTaskForces()
     {
@@ -154,24 +162,24 @@ public class TacticalUiTests
         Assert.Equal([a[0], a[1], a[2]], multi.Selection);
         Assert.All(a, u => Assert.Equal(TacticalBox.Selected, ui.Box(u))); // Every selected unit is yellow
         Left(ui, a[2], ctrl: true);
-        Assert.Equal(0x10, ui.Current.Id);
+        Assert.Equal(TacticalModeId.Multi, ui.Current.Id);
         Right(ui, a[2]); // escort a[2]: slot 0
-        Assert.Equal(1, ui.Current.Id);
+        Assert.Equal((TacticalModeId.TaskForce, 0), ModeOf(ui));
         var t = ui.TaskForces[0]!;
-        Assert.Equal((K([a[0], a[1]]), K([a[2]]), 1), (K(t.UiMembers), K(t.UiTargets), t.UiMission));
-        Assert.Equal([0x78], ui.Voices);
-        Assert.Equal([0x30, 0x33, 0x34, 0x0A], b.QueuedKinds());
+        Assert.Equal((K([a[0], a[1]]), K([a[2]]), TacticalMissionNumber.Escort), (K(t.UiMembers), K(t.UiTargets), t.UiMission));
+        Assert.Equal([120], ui.Voices);
+        Assert.Equal([TacticalMessage.TaskForceCreate, TacticalMessage.TaskForceJoin, TacticalMessage.AddTarget, TacticalMessage.SetMission], b.QueuedKinds());
         Left(ui, a[2]);
         Left(ui, a[1], ctrl: true);
         Right(ui, e[0]); // slot 1 (0 taken)
-        Assert.Equal(2, ui.Current.Id);
-        Assert.Equal(0x3C + 1, ui.Voices[^1]);
+        Assert.Equal((TacticalModeId.TaskForce, 1), ModeOf(ui));
+        Assert.Equal(60 + 1, ui.Voices[^1]);
         Assert.Equal([e[0]], ui.TaskForces[1]!.UiTargets);
         Assert.Equal([a[2], a[1]], ui.TaskForces[1]!.UiMembers);
         Assert.DoesNotContain(a[1], t.UiMembers);
     }
 
-    /// <summary>Without a free slot: enemy -> every selected unit its own task force with add-target (voice 0x84) -> own-ship mode of the first; nav likewise; mission -> each its own task force; own U ctrl 0 -> own-ship mode of U.</summary>
+    /// <summary>Without a free slot: enemy gives every selected unit its own task force with add-target (voice) gives own-ship mode of the first; nav likewise; mission gives each its own task force; own U ctrl 0 gives own-ship mode of U.</summary>
     [GameFact]
     public void MultiSelectionWithoutAFreeSlot()
     {
@@ -181,122 +189,122 @@ public class TacticalUiTests
         Left(ui, a[0]);
         Left(ui, a[1], ctrl: true);
         Right(ui, e[0]);
-        Assert.Equal((0xE, 0x84), (ui.Current.Id, ui.Voices[^1]));
+        Assert.Equal((TacticalModeId.OwnShip, 132), (ui.Current.Id, ui.Voices[^1]));
         Assert.NotSame(a[0].UiGroup, a[1].UiGroup);
         Assert.Equal([e[0]], a[0].UiGroup!.UiTargets);
         Assert.Equal([e[0]], a[1].UiGroup!.UiTargets);
         Left(ui, a[1], ctrl: true);
-        ui.AssignMission(5);
-        Assert.Equal((0xE, 5, 5), (ui.Current.Id, a[0].UiGroup!.UiMission, a[1].UiGroup!.UiMission));
+        ui.AssignMission(TacticalMissionNumber.AttackCapitalShips);
+        Assert.Equal((TacticalModeId.OwnShip, TacticalMissionNumber.AttackCapitalShips, TacticalMissionNumber.AttackCapitalShips), (ui.Current.Id, a[0].UiGroup!.UiMission, a[1].UiGroup!.UiMission));
         Left(ui, a[1], ctrl: true);
         Right(ui, a[2]);
         Assert.Equal(a[2], ((TacticalUi.OwnShipMode)ui.Current).S);
     }
 
-    /// <summary>Task-force mode, own units: a member ctrl 0 splits (the others form a numbered task force escorting it); a non-member ctrl 0 = escort (mission 1, voice 0x78 + k); ctrl 1 = remove target (mission 0) / join (0x37, 0x33) / leave; the last member leaving -> idle.</summary>
+    /// <summary>Task-force mode, own units: a member ctrl 0 splits (the others form a numbered task force escorting it); a non-member ctrl 0 = escort (mission 1, voice + k); ctrl 1 = remove target (mission 0) / join (leave, join orders) / leave; the last member leaving gives idle.</summary>
     [GameFact]
     public void TaskForceModeOwnUnits()
     {
         var (b, ui, a, _) = Setup();
         Left(ui, a[0]);
         Left(ui, a[1], ctrl: true);
-        Do(ui, 2); // empty slot 1 -> TF mode 1
+        Do(ui, TacticalCommand.TaskForce1); // empty slot 1 gives TF mode 1
         var t = ui.TaskForces[0]!;
-        Assert.Equal(1, ui.Current.Id);
+        Assert.Equal((TacticalModeId.TaskForce, 0), ModeOf(ui));
         Right(ui, a[2]);
-        Assert.Equal((K([a[2]]), 1, 0x78), (K(t.UiTargets), t.UiMission, ui.Voices[^1]));
+        Assert.Equal((K([a[2]]), TacticalMissionNumber.Escort, 120), (K(t.UiTargets), t.UiMission, ui.Voices[^1]));
         Right(ui, a[2], ctrl: true);
-        Assert.Equal((0, 0), (t.UiTargets.Count, t.UiMission));
+        Assert.Equal((0, TacticalMissionNumber.None), (t.UiTargets.Count, t.UiMission));
         b.RunQueued();
         Right(ui, a[2], ctrl: true); // join
         Assert.Equal([a[0], a[1], a[2]], t.UiMembers);
-        Assert.Equal([0x33], b.QueuedKinds().Skip(b.QueuedKinds().Count - 1));
-        Right(ui, a[0]); // split: a[1], a[2] -> slot 2 escorting a[0]
-        Assert.Equal(2, ui.Current.Id);
+        Assert.Equal([TacticalMessage.TaskForceJoin], b.QueuedKinds().Skip(b.QueuedKinds().Count - 1));
+        Right(ui, a[0]); // split: a[1], a[2] gives slot 2 escorting a[0]
+        Assert.Equal((TacticalModeId.TaskForce, 1), ModeOf(ui));
         Assert.Equal([a[0]], t.UiMembers);
         Assert.Equal([a[0]], ui.TaskForces[1]!.UiTargets);
-        Do(ui, 2);
+        Do(ui, TacticalCommand.TaskForce1);
         Right(ui, a[0], ctrl: true); // the last member leaves
-        Assert.Equal(0, ui.Current.Id);
+        Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
         Assert.Null(ui.TaskForces[0]);
     }
 
-    /// <summary>Task-force mode, enemy units and nav points: ctrl 0 = mission 0 + replace (voice 0x3C + k with no nav points); ctrl 1 = add / remove, not attackable -> enemy mode; nav ctrl 0 = replace (voice 0x22 + k), ctrl 1 = add / remove; the button again -> idle; UI mission 3 -> idle; next / previous cycle the info unit.</summary>
+    /// <summary>Task-force mode, enemy units and nav points: ctrl 0 = mission 0 + replace (voice + k with no nav points); ctrl 1 = add / remove, not attackable gives enemy mode; nav ctrl 0 = replace (voice + k), ctrl 1 = add / remove; the button again gives idle; UI mission 3 gives idle; next / previous cycle the info unit.</summary>
     [GameFact]
     public void TaskForceModeEnemiesAndNavs()
     {
         var (b, ui, a, e) = Setup();
         Left(ui, a[0]);
         Left(ui, a[1], ctrl: true);
-        Do(ui, 3); // slot 2
+        Do(ui, TacticalCommand.TaskForce2); // slot 2
         var t = ui.TaskForces[1]!;
         Right(ui, e[0]);
-        Assert.Equal((K([e[0]]), 0x3C + 1), (K(t.UiTargets), ui.Voices[^1]));
+        Assert.Equal((K([e[0]]), 60 + 1), (K(t.UiTargets), ui.Voices[^1]));
         Right(ui, e[1], ctrl: true);
         Assert.Equal([e[0], e[1]], t.UiTargets);
         Assert.Equal((TacticalBox.Primary, TacticalBox.Marked, TacticalBox.Marked), (ui.Box(e[0]), ui.Box(e[1]), ui.Box(a[0] == ui.Info ? a[1] : a[0])));
         Right(ui, e[0], ctrl: true);
         Assert.Equal([e[1]], t.UiTargets);
-        e[0].U.State = 8;
+        e[0].U.State = TacticalUnitState.InHyperspace;
         Right(ui, e[0], ctrl: true);
-        Assert.Equal(0xF, ui.Current.Id);
-        Do(ui, 3);
+        Assert.Equal(TacticalModeId.Enemy, ui.Current.Id);
+        Do(ui, TacticalCommand.TaskForce2);
         var n = ShownNav(b, ui, 3);
         Right(ui, n);
-        Assert.Equal((K([n]), 0, 0x22 + 1), (K(t.UiNav), t.UiTargets.Count, ui.Voices[^1]));
+        Assert.Equal((K([n]), 0, 34 + 1), (K(t.UiNav), t.UiTargets.Count, ui.Voices[^1]));
         Right(ui, n, ctrl: true);
         Assert.Empty(t.UiNav);
         var info = ui.Info;
         ui.Cycle(true);
         ui.Frame();
         Assert.NotEqual(info, ui.Info);
-        Assert.Equal(2, ui.Current.Id);
-        Do(ui, 3);
-        Assert.Equal(0, ui.Current.Id);
-        Do(ui, 3);
+        Assert.Equal((TacticalModeId.TaskForce, 1), ModeOf(ui));
+        Do(ui, TacticalCommand.TaskForce2);
+        Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
+        Do(ui, TacticalCommand.TaskForce2);
         b.Withdraw(0);
         ui.Frame();
-        Assert.Equal(0, ui.Current.Id);
+        Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
     }
 
-    /// <summary>Fighter-group mode: commands 0xB + c (used slots; toggle -> idle), page 0x17; enemy ctrl 0 = mission 0 + replace (voice 0x44 + c), ctrl 1 = add / remove; own = escort; nav = replace (voice 0x2A + c); mission 6 without a Death Star -> idle; mission 2 frees the slot -> idle.</summary>
+    /// <summary>Fighter-group mode: commands (FighterGroup1 + c, c the colour; toggle gives idle), fighter-group page; enemy ctrl 0 = mission 0 + replace (voice + c), ctrl 1 = add / remove; own = escort; nav = replace (voice + c); mission 6 without a Death Star gives idle; mission 2 frees the slot gives idle.</summary>
     [GameFact]
     public void FighterGroupMode()
     {
-        var (game, b0, _, _) = Scene(new Script([], []), [0x14000042], [0x14000085, 0x14000085]);
-        b0.System.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId()));
+        var (game, b0, _, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133), SdRef.Make(Families.CapitalShip, 133)]);
+        b0.System.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId()));
         var b = new TacticalBattle(game, b0.System, Owner.Alliance, new Script([], []).Draw);
         var ui = b.Ui;
         var e = b.Units.Where(u => u.Side == 1).ToList();
         var ship = b.Units.Single(u => u.Side == 0 && !u.Fighter);
-        Do(ui, 0xC); // Blue: empty
-        Assert.Equal(0, ui.Current.Id);
-        Do(ui, 0xB);
-        Assert.Equal((9, 0x17), (ui.Current.Id, ui.Page));
+        Do(ui, TacticalCommand.FighterGroup2); // Blue: empty
+        Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
+        Do(ui, TacticalCommand.FighterGroup1);
+        Assert.Equal(((TacticalModeId.FighterGroup, 0), TacticalPage.FighterGroup), (ModeOf(ui), ui.Page));
         var g = ui.Fighters[0]!;
         Right(ui, e[0]);
-        Assert.Equal((K([e[0]]), 0x44), (K(g.UiTargets), ui.Voices[^1]));
+        Assert.Equal((K([e[0]]), 68), (K(g.UiTargets), ui.Voices[^1]));
         Right(ui, e[1], ctrl: true);
         Right(ui, e[0], ctrl: true);
         Assert.Equal([e[1]], g.UiTargets);
         Right(ui, ship);
-        Assert.Equal((K([ship]), 1), (K(g.UiTargets), g.UiMission));
+        Assert.Equal((K([ship]), TacticalMissionNumber.Escort), (K(g.UiTargets), g.UiMission));
         var n = ShownNav(b, ui);
         Right(ui, n);
-        Assert.Equal((K([n]), 0x2A), (K(g.UiNav), ui.Voices[^1]));
-        ui.AssignMission(6);
-        Assert.Equal(0, ui.Current.Id);
-        Do(ui, 0xB);
-        Do(ui, 0xB);
-        Assert.Equal(0, ui.Current.Id);
-        Do(ui, 0xB);
-        ui.AssignMission(2);
+        Assert.Equal((K([n]), 42), (K(g.UiNav), ui.Voices[^1]));
+        ui.AssignMission(TacticalMissionNumber.AttackDeathStar);
+        Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
+        Do(ui, TacticalCommand.FighterGroup1);
+        Do(ui, TacticalCommand.FighterGroup1);
+        Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
+        Do(ui, TacticalCommand.FighterGroup1);
+        ui.AssignMission(TacticalMissionNumber.Recover);
         Assert.Null(ui.Fighters[0]);
         ui.Frame();
-        Assert.Equal(0, ui.Current.Id);
+        Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
     }
 
-    /// <summary>An empty task-force button reacts only in own-ship / multi mode; nav buttons toggle list 3 ... 0; highlight marks a side; Observe flips in command and the computer flag; Withdraw -> observing (side state 2); Get Immediate Result only while the opponent is in state 0.</summary>
+    /// <summary>An empty task-force button reacts only in own-ship / multi mode; nav buttons toggle list 3 ... 0; highlight marks a side; Observe flips in command and the computer flag; Withdraw gives observing (side state 2); Get Immediate Result only while the opponent is in state 0.</summary>
     [GameFact]
     public void Commands()
     {
@@ -306,66 +314,66 @@ public class TacticalUiTests
             var (b, ui, a, e) = Setup();
             ui.PressTaskForce(0);
             ui.Frame();
-            Assert.Equal(0, ui.Current.Id);
+            Assert.Equal(TacticalModeId.Idle, ui.Current.Id);
             Assert.False(ui.TaskForceEnabled(0));
-            Do(ui, 0x10);
+            Do(ui, TacticalCommand.NavList4);
             Assert.Equal((true, false), (ui.NavShown[3], ui.NavShown[0]));
             Assert.All(b.NavPoints.Where(p => p.Set == 4), p => Assert.False(p.Hidden));
-            Do(ui, 0x15);
+            Do(ui, TacticalCommand.HighlightEmpire);
             Assert.Equal(TacticalBox.Marked, ui.Box(e[0]));
-            Do(ui, 0x7B);
+            Do(ui, TacticalCommand.ComputerControl);
             Assert.Equal((false, true), (ui.InCommand, b.Computer[0]));
-            Do(ui, 0x7B);
+            Do(ui, TacticalCommand.ComputerControl);
             Assert.Equal((true, false), (ui.InCommand, b.Computer[0]));
             b.Withdraw(1);
-            Do(ui, 0x7C);
+            Do(ui, TacticalCommand.Abort);
             Assert.False(b.Done);
-            Do(ui, 0x7A);
-            Assert.Equal((false, 2), (ui.InCommand, b.SideState(0)));
+            Do(ui, TacticalCommand.Withdraw);
+            Assert.Equal((false, TacticalSideState.WithdrawOrdered), (ui.InCommand, b.SideState(0)));
             Left(ui, e[0]); // observing: selection only
             Right(ui, a[0]);
-            Assert.Equal(0xE, ui.Current.Id);
+            Assert.Equal(TacticalModeId.OwnShip, ui.Current.Id);
         }
         finally { BattleEngine.RetreatAllowedOverride = null; }
     }
 
-    /// <summary>Page switch: 0x15 always; order pages lock the panel (Inferred) until closed; page 0 = the previous page.</summary>
+    /// <summary>Page switch: TacticalPage.Empty always; order pages lock the panel (Inferred) until closed; page 0 = the previous page.</summary>
     [GameFact]
     public void PageSwitch()
     {
         var (_, ui, a, _) = Setup();
         Left(ui, a[0]);
-        ui.ShowPage(0x19, a[0]);
+        ui.ShowPage(TacticalPage.Missions, a[0]);
         Assert.True(ui.Locked);
-        Left(ui, a[1]); // own-ship mode of a[1]: page 0x15 by the empty pick (clears the lock), then 0x16
-        Assert.Equal((0x16, a[1]), (ui.Page, ui.PageObject));
-        ui.ShowPage(0x1B);
-        ui.ShowPage(0x16, a[0]);
-        Assert.Equal(0x1B, ui.Page);
+        Left(ui, a[1]); // own-ship mode of a[1]: the empty pick shows TacticalPage.Empty (clears the lock), then the Ship page
+        Assert.Equal((TacticalPage.Ship, a[1]), (ui.Page, ui.PageObject));
+        ui.ShowPage(TacticalPage.Options);
+        ui.ShowPage(TacticalPage.Ship, a[0]);
+        Assert.Equal(TacticalPage.Options, ui.Page);
         ui.ClosePage();
-        Assert.Equal((0x16, false), (ui.Page, ui.Locked));
-        ui.ShowPage(0x1B);
+        Assert.Equal((TacticalPage.Ship, false), (ui.Page, ui.Locked));
+        ui.ShowPage(TacticalPage.Options);
         BattleEngine.RetreatAllowedOverride = (_, _) => true;
         try
         {
             var (b2, ui2, _, _) = Setup();
-            ui2.ShowPage(0x1B);
-            ui2.WithdrawPressed(); // 0x1C is 0x1B's child window, 0x1B stays shown and locked
-            Assert.Equal((0x1B, true, true), (ui2.Page, ui2.Locked, ui2.WithdrawShown));
+            ui2.ShowPage(TacticalPage.Options);
+            ui2.WithdrawPressed(); // the withdraw confirmation is a box over the options page (WithdrawShown): the page stays Options and locked
+            Assert.Equal((TacticalPage.Options, true, true), (ui2.Page, ui2.Locked, ui2.WithdrawShown));
             ui2.WithdrawAnswer(false);
-            Assert.Equal((0x1B, true, false), (ui2.Page, ui2.Locked, ui2.WithdrawShown));
+            Assert.Equal((TacticalPage.Options, true, false), (ui2.Page, ui2.Locked, ui2.WithdrawShown));
             ui2.WithdrawPressed();
             ui2.WithdrawAnswer(true);
-            ui2.Frame(); // 0x7A unlocks
-            Assert.Equal((0x1B, false, 2), (ui2.Page, ui2.Locked, b2.SideState(b2.Local)));
+            ui2.Frame(); // the confirmed withdraw clears the lock (TacticalCommand.Withdraw)
+            Assert.Equal((TacticalPage.Options, false, TacticalSideState.WithdrawOrdered), (ui2.Page, ui2.Locked, b2.SideState(b2.Local)));
         }
         finally { BattleEngine.RetreatAllowedOverride = null; }
         ui.WithdrawPressed(); // may not retreat: nothing
         Assert.False(ui.WithdrawShown);
-        ui.ShowPage(0x15);
-        ui.ShowPage(0x1C); // 0x1C does not lock
+        ui.ShowPage(TacticalPage.Empty);
+        ui.ShowPage(TacticalPage.WithdrawConfirm); // the withdraw page does not lock
         Assert.False(ui.Locked);
-        ui.ShowPage(0x1A, a[0]);
+        ui.ShowPage(TacticalPage.Tactics, a[0]);
         Assert.True(ui.Locked);
     }
 
@@ -378,39 +386,39 @@ public class TacticalUiTests
         Assert.Equal((-30, 30, 0.2, 5), (c.Yaw, c.Pitch, c.Field, c.Zoom));
         Assert.Equal(1.7 * b.Size, c.Distance);
         Assert.Equal(1.7 * b.Size, (c.Pose().Eye - c.Pose().At).Length, 9);
-        c.Operate(TacticalCamera.ZoomIn);
-        c.Operate(TacticalCamera.ZoomIn);
+        c.Operate(TacticalCameraOperation.ZoomIn);
+        c.Operate(TacticalCameraOperation.ZoomIn);
         Assert.Equal((0.2 * 0.9 * 0.9, 3), (c.Field, c.Zoom));
-        c.Operate(TacticalCamera.RotateLeft);
+        c.Operate(TacticalCameraOperation.RotateLeft);
         Assert.Equal(-33, c.Yaw);
-        for (int i = 0; i < 60; i++) c.Operate(TacticalCamera.RotateLeft);
+        for (int i = 0; i < 60; i++) c.Operate(TacticalCameraOperation.RotateLeft);
         Assert.Equal(-33 - 180 + 360, c.Yaw);
-        c.Operate(TacticalCamera.Remember);
-        c.Operate(TacticalCamera.TiltUp);
-        c.Operate(TacticalCamera.ResetView);
+        c.Operate(TacticalCameraOperation.Remember);
+        c.Operate(TacticalCameraOperation.TiltUp);
+        c.Operate(TacticalCameraOperation.ResetView);
         Assert.Equal((147, 30), (c.Yaw, c.Pitch));
         Left(ui, a[0]);
-        c.Operate(TacticalCamera.ResetSubject, ui.Current.Subject);
+        c.Operate(TacticalCameraOperation.ResetSubject, ui.Current.Subject);
         Assert.Same(a[0], c.Subject);
         Assert.Equal(a[0].Position, c.Pose().At);
-        Do(ui, 2); // TF 1 of a[0]
+        Do(ui, TacticalCommand.TaskForce1); // TF 1 of a[0]
         Right(ui, e[0]);
         b.RunQueued();
         c.FollowGroup(0, ui);
         Assert.Equal((a[0], e[0], 0.1), (c.Follow!.Subject, c.Follow.LookAt, c.Follow.Field));
         Assert.Equal(TacticalBox.Hidden, ui.Box(a[0]));
-        for (int i = 0; i < 8; i++) c.Operate(TacticalCamera.ZoomOut);
+        for (int i = 0; i < 8; i++) c.Operate(TacticalCameraOperation.ZoomOut);
         Assert.Equal(0.2, c.Follow.Field);
-        c.Operate(TacticalCamera.RotateLeft); // ignored
+        c.Operate(TacticalCameraOperation.RotateLeft); // ignored
         Assert.Equal(147, c.Yaw);
-        a[0].U.State = 11;
+        a[0].U.State = TacticalUnitState.Destroyed;
         ui.Frame();
         Assert.Null(c.Follow);
     }
 
     /// <summary>
-    /// System icons: v = trunc(100 * rate / base), levels by v &gt; 74 / 49 / 24 / != 0: ShieldCH 1 -> 75 (4), 2 -> 50 (3), 3 -> 
-    /// 25 (2), 4 -> 0 (0); engines above 100 with the bonus still 4; one of two hyperdrives out -> 50 (3).
+    /// System icons: v = trunc(100 * rate / base), levels by v &gt; 74 / 49 / 24 / != 0: ShieldCH 1 gives 75 (4), 2 gives 50 (3), 3 gives
+    /// 25 (2), 4 gives 0 (0); engines above 100 with the bonus still 4; one of two hyperdrives out gives 50 (3).
     /// </summary>
     [GameFact]
     public void SystemIconLevels()
@@ -436,7 +444,7 @@ public class TacticalUiTests
         var g = b.CreateTaskForce(a[0]);
         b.RunQueued();
         var p = ShownNav(b, ui);
-        b.OrderNav(g, TacticalBattle.AddNavPoint, p);
+        b.OrderNav(g, TacticalMessage.AddNavPoint, p);
         b.RunQueued();
         Assert.Equal([p], g.UiNav);
         g.Nav!.Point = p.Position;
@@ -447,18 +455,21 @@ public class TacticalUiTests
 
     /// <summary>
     /// Officer strip: the ship's records in setup order (characters, then troop regiments, then special forces aboard),
-    /// each taking a unit key (the ship's next fighter keys follow them); icons by the SD string number, unknown -> 0.
+    /// each taking a unit key (the ship's next fighter keys follow them); icons by the SD string number, unknown gives 0.
     /// </summary>
     [GameFact]
     public void OfficerStripListsTheRecordsAboard()
     {
-        Assert.Equal((2201, 2310, 2308, 0), (TacticalUi.OfficerIcon(0xA40), TacticalUi.OfficerIcon(0x440), TacticalUi.OfficerIcon(0x540), TacticalUi.OfficerIcon(0x123)));
-        var (game, b0, _, _) = Scene(new Script([], []), [0x14000042], [0x14000085]);
+        const int notAnOfficer = 291;
+        Assert.Equal((OfficerIconBitmap.Ackbar, OfficerIconBitmap.AllianceFleetRegiment, OfficerIconBitmap.Guerrillas, 0),
+            (TacticalUi.OfficerIcon(OfficerPicture.Ackbar), TacticalUi.OfficerIcon(OfficerPicture.AllianceFleetRegiment),
+             TacticalUi.OfficerIcon(OfficerPicture.Guerrillas), TacticalUi.OfficerIcon(notAnOfficer)));
+        var (game, b0, _, _) = Scene(new Script([], []), [SdRef.Make(Families.CapitalShip, 66)], [SdRef.Make(Families.CapitalShip, 133)]);
         var ship = b0.System.Contents.OfType<Fleet>().Single(f => f.Owner == Owner.Alliance).Contents.Single();
         var sf = ship.Add(new GameObject(Definitions.SpecialForces.First(r => r.Alliance != 0).Common.Ref, Owner.Alliance, game.NextId()));
         var troop = ship.Add(new GameObject(Definitions.Troops.First(r => r.Alliance != 0).Common.Ref, Owner.Alliance, game.NextId()));
-        var wing = ship.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId()));
-        var free = b0.System.Add(new GameObject(0x1C000003, Owner.Alliance, game.NextId()));
+        var wing = ship.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId()));
+        var free = b0.System.Add(new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId()));
         var b = new TacticalBattle(game, b0.System, Owner.Alliance, new Script([], []).Draw);
         var unit = b.Units.Single(u => u.Object == ship);
         Assert.Equal([troop, sf], b.Ui.Officers(unit));

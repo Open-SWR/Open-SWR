@@ -108,7 +108,7 @@ public sealed class AdvisorSprites(SpriteDll dll)
             var indexed = dll.ClipFrames(clip);
             _clips[rcId] = frames = [.. System.Linq.Enumerable.Select(indexed.Frames, f => Texture(indexed.Width, indexed.Height, f, indexed.Palette))];
             if (DrawLog.On) for (int i = 0; i < frames.Length; i++) // frame 0 = the base RT_BITMAP, frame i = 302 delta BaseBitmap + i over it
-                DrawLog.Register(frames[i], Module, (ushort)(clip.BaseBitmap + i), new Vector2I(indexed.Width, indexed.Height), SpriteDll.TransparentIndex, i == 0 ? 2 : 302);
+                DrawLog.Register(frames[i], Module, (ushort)(clip.BaseBitmap + i), new Vector2I(indexed.Width, indexed.Height), SpriteDll.TransparentIndex, i == 0 ? ResourceTypes.Bitmap : ResourceTypes.SpriteDelta);
         }
         return new ClipCommand(frames, voices?.Wave(clip.VoiceWave), clip.Sound2 != 0 ? Wave(clip.Sound2) : null);
     }

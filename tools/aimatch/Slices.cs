@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 using System.Globalization;
 using System.Text;
 using OpenSWR.Sim;
@@ -22,7 +23,7 @@ public sealed class SliceFigures
         "characters_on_mission", "characters_idle", "characters_captured_or_dead",
         "enemy_in_reach", "fresh_view_pct",
         "fighters_in_systems", "fighters_in_hangars", "wing_battles_won", "wing_battles_lost",
-        // step 33 (weakness audit), see SliceRecorder.Audit
+        // weakness audit, see SliceRecorder.Audit
         "flipped_by_support", "flipped_after_sabotage", "garrison_sabotaged", "bombard_troops_lost", "bombard_undefended",
         "rim_owned", "rim_unpopulated_owned", "hq_found_day", "leaders_taken_moving", "ships_lost_maintenance", "rebuilt_100d",
         "retreats_vs_fighters", "chase_days",
@@ -48,16 +49,16 @@ public sealed class SliceRecorder(int length = 100)
     public List<Slice> Slices { get; } = [];
 
     static readonly Owner[] Sides = [Owner.Alliance, Owner.Empire];
-    static readonly uint[] Kinds = [0x28, 0x29, 0x2A];
+    static readonly uint[] Kinds = [40, 41, 42];
     readonly Dictionary<(Owner, uint), (int Days, int Building, int IdleFree)> _use = [];
     readonly Dictionary<Owner, int> _lost = [];
-    // step 28: per system, its owner and whether it held own fighters directly, at the end of the previous day (the state the
+    // per system, its owner and whether it held own fighters directly, at the end of the previous day (the state the
     // day's battles started from; shortcut: fighters arriving on the battle day before the battle are missed)
     Dictionary<StarSystem, (Owner Owner, bool Fighters)> _wings = [];
     readonly Dictionary<(Owner, bool Won), int> _wingBattles = [];
 
     /// <summary>
-    /// Per facility kind (0x28 / 0x29 / 0x2A), the openswr side's facility-days idle with free maintenance, by
+    /// Per facility kind (shipyard, training facility, construction yard), the openswr side's facility-days idle with free maintenance, by
     /// the controller's reason at that day's decision (busy at the decision: the order finished later that day).
     /// </summary>
     public Dictionary<(uint Kind, string Reason), int> IdleReasons { get; } = [];
@@ -80,7 +81,7 @@ public sealed class SliceRecorder(int length = 100)
     /// <summary>The openswr side's losses to troop assault with their warning.</summary>
     public List<OpenSWRController.AssaultSeen> AssaultLossesSeen { get; } = [];
 
-    /// <summary>The step 12 measurement: the assault losses and their warning; owner changes by cause on days 401-1000.</summary>
+    /// <summary>The assault-loss measurement: the assault losses and their warning; owner changes by cause on days 401-1000.</summary>
     public static string RespondTable(IReadOnlyList<(GameResult Result, SliceRecorder Recorder)> runs)
     {
         var text = new StringBuilder();
@@ -102,7 +103,7 @@ public sealed class SliceRecorder(int length = 100)
         return text.ToString();
     }
 
-    /// <summary>The step 7 controller table: pivots started / ended by reason, retries with and without decoys by outcome.</summary>
+    /// <summary>The controller table: pivots started / ended by reason, retries with and without decoys by outcome.</summary>
     public static string AgentsTable(IReadOnlyList<(GameResult Result, SliceRecorder Recorder)> runs)
     {
         var text = new StringBuilder();
@@ -139,7 +140,7 @@ public sealed class SliceRecorder(int length = 100)
     public List<OpenSWRController.NoLaunch> NoLaunch { get; } = [];
     public int AttackLaunches { get; set; }
 
-    /// <summary>The step 16 table: per day slice the shares of the first no-launch reason (groups and idle fleets), assaults launched and won.</summary>
+    /// <summary>The no-launch reason table: per day slice the shares of the first no-launch reason (groups and idle fleets), assaults launched and won.</summary>
     public static string NoLaunchTable(IReadOnlyList<(GameResult Result, SliceRecorder Recorder)> runs)
     {
         var text = new StringBuilder();
@@ -250,7 +251,7 @@ public sealed class SliceRecorder(int length = 100)
                 _use[key] = (d + 1, b + (building ? 1 : 0), i + (!building && free > 0 ? 1 : 0));
                 if (!building && free > 0 && game.Controllers.GetValueOrDefault(side) is OpenSWRController { IdleReasons: { } reasons } && f.Container is StarSystem at)
                 {
-                    var kind = Family.Of(f.Type) switch { 0x28 => ManufacturingKind.Ship, 0x29 => ManufacturingKind.Training, _ => ManufacturingKind.Construction };
+                    var kind = Family.Of(f.Type) switch { 40 => ManufacturingKind.Ship, 41 => ManufacturingKind.Training, _ => ManufacturingKind.Construction };
                     var m = ScreenViews.Managers(at, side).FirstOrDefault(x => x.Kind == kind);
                     string reason = m is null ? "no manager" : reasons.TryGetValue(m, out var r) ? (r == "busy" ? "busy at decision" : r) : "no decision";
                     if (reason == "refused: estimate" && game.Controllers[side] is OpenSWRController { RefusedEstimates: { } refused }
@@ -261,7 +262,7 @@ public sealed class SliceRecorder(int length = 100)
                 }
             }
         }
-        foreach (var o in game.Created.Where(o => o.Destroyed && o.DestroyedReason == 0xC && Family.IsCapitalShip(o.Type) && !_seenLost.Contains(o)))
+        foreach (var o in game.Created.Where(o => o.Destroyed && o.DestroyedReason == DestroyedReason.Battle && Family.IsCapitalShip(o.Type) && !_seenLost.Contains(o)))
         {
             _seenLost.Add(o);
             if (o.Owner is Owner.Alliance or Owner.Empire) _lost[o.Owner] = _lost.GetValueOrDefault(o.Owner) + game.MaintenanceCost(o.Type);
@@ -269,11 +270,11 @@ public sealed class SliceRecorder(int length = 100)
         foreach (var b in (game.BattleTrace ?? []).Where(b => b.Day == game.Day))
             if (_wings.TryGetValue(b.System, out var w) && w.Fighters && b.Sides.Contains(w.Owner) && b.Won is Owner.Alliance or Owner.Empire)
                 _wingBattles[(w.Owner, b.Won == w.Owner)] = _wingBattles.GetValueOrDefault((w.Owner, b.Won == w.Owner)) + 1;
-        _wings = game.Systems.ToDictionary(s => s, s => (s.Owner, s.Contents.Any(x => x.Owner == s.Owner && x.Usable && Family.Of(x.Type) is >= 0x1C and < 0x20)));
+        _wings = game.Systems.ToDictionary(s => s, s => (s.Owner, s.Contents.Any(x => x.Owner == s.Owner && x.Usable && Family.Of(x.Type) is >= Families.Fighter and < Families.Headquarters)));
         if (game.Day % Length == 0 && game.Day > 0) Close(game, changes);
     }
 
-    // step 33 (weakness audit): per-slice event counts by (side, column), and the game-long state they need
+    // weakness audit: per-slice event counts by (side, column), and the game-long state they need
     readonly Dictionary<(Owner, string), int> _audit = [];
     readonly Dictionary<GameObject, StarSystem?> _garrison = []; // Existing troops: the system they sat in directly at the last day end
     readonly List<(int Day, Owner Victim, uint System)> _sabotaged = [];
@@ -287,7 +288,7 @@ public sealed class SliceRecorder(int length = 100)
         s.Contents.OfType<Fleet>().Any(f => f.Owner == side && f.Existing && f.Contents.Any(x => Family.IsCapitalShip(x.Type) && x.Existing));
 
     /// <summary>
-    /// Weakness audit (step 33): the day's audit events. An observer like the rest (reads, draws nothing).
+    /// Weakness audit: the day's audit events. An observer like the rest (reads, draws nothing).
     /// Inferred classifications: sabotage = DestroyedReason 6, maintenance scrap = the autoscrap flag, a battle withdrawal = a lost battle that own
     /// capital ships survived; units counted at the battle start (BattleReport.Units).
     /// </summary>
@@ -297,7 +298,7 @@ public sealed class SliceRecorder(int length = 100)
         foreach (var o in game.Created.Where(o => o.Destroyed && !_auditSeen.Contains(o)).ToList())
         {
             _auditSeen.Add(o);
-            if (o.DestroyedReason == 6 && Family.IsTroop(o.Type) && _garrison.GetValueOrDefault(o) is { } at)
+            if (o.DestroyedReason == DestroyedReason.Sabotage && Family.IsTroop(o.Type) && _garrison.GetValueOrDefault(o) is { } at)
             {
                 Add(o.Owner, "garrison_sabotaged");
                 _sabotaged.Add((game.Day, o.Owner, at.Ref));
@@ -305,7 +306,7 @@ public sealed class SliceRecorder(int length = 100)
         }
         // maintenance shortfall: the sim only flags the autoscrap pick (Economy.Autoscrap; the destruction is not modelled), so the
         // column counts capital ships and fighters newly flagged
-        foreach (var o in game.Created.Where(o => o.AutoscrapRequested && Family.Of(o.Type) is >= 0x14 and < 0x20 && _autoscrap.Add(o)))
+        foreach (var o in game.Created.Where(o => o.AutoscrapRequested && Family.Of(o.Type) is >= Families.CapitalShip and < Families.Headquarters && _autoscrap.Add(o)))
             Add(o.Owner, "ships_lost_maintenance");
         _garrison.Clear();
         foreach (var o in game.Created.Where(o => Family.IsTroop(o.Type) && o.Existing)) _garrison[o] = o.Container as StarSystem;
@@ -335,7 +336,7 @@ public sealed class SliceRecorder(int length = 100)
                 _lostBattle[side] = b.Day;
                 var units = b.Units ?? [];
                 if (units.Any(u => u.Owner == side && Family.IsCapitalShip(u.Type) && !u.Destroyed)
-                    && units.Count(u => u.Owner == b.Won && Family.Of(u.Type) is >= 0x1C and < 0x20) > units.Count(u => u.Owner == b.Won && Family.IsCapitalShip(u.Type)))
+                    && units.Count(u => u.Owner == b.Won && Family.Of(u.Type) is >= Families.Fighter and < Families.Headquarters) > units.Count(u => u.Owner == b.Won && Family.IsCapitalShip(u.Type)))
                     Add(side, "retreats_vs_fighters");
             }
         }
@@ -347,13 +348,13 @@ public sealed class SliceRecorder(int length = 100)
                 Add(o.Owner, "rebuilt_100d", game.MaintenanceCost(o.Type));
         }
         // major characters captured or killed while exposed at the last day end
-        foreach (var c in game.Characters.Where(c => Family.Of(c.Type) is >= 0x30 and < 0x38))
+        foreach (var c in game.Characters.Where(c => Family.Of(c.Type) is >= Families.MajorCharacter and < Families.MinorCharacter))
         {
             if (_exposed.GetValueOrDefault(c) && (c.Captured || !c.Existing)) Add(c.Owner, "leaders_taken_moving");
             bool exposed = false;
             if (c.Existing && !c.Captured)
             {
-                var m = game.Missions.FirstOrDefault(m => !m.Deleted && m.CompletionStatus == 0 && (m.Team.Contains(c) || m.Decoys.Contains(c)));
+                var m = game.Missions.FirstOrDefault(m => !m.Deleted && m.CompletionStatus == MissionCompletion.None && (m.Team.Contains(c) || m.Decoys.Contains(c)));
                 if (m is not null || c.Enroute)
                 {
                     var target = m?.TargetLocation?.System ?? c.Destination?.System;
@@ -371,7 +372,7 @@ public sealed class SliceRecorder(int length = 100)
             // the enemy HQ in the side's views: the Alliance HQ object for the Empire; Coruscant (always on the map) for the Alliance
             if (_hqFound.ContainsKey(side)) continue;
             if (side == Owner.Alliance) _hqFound[side] = game.Day;
-            else if (game.Created.Where(o => Family.Of(o.Type) is >= 0x20 and < 0x22 && !o.Destroyed).MinBy(o => o.Key) is { System: { } hqAt } hq
+            else if (game.Created.Where(o => Family.Of(o.Type) is >= Families.Headquarters and < Families.IonCannon && !o.Destroyed).MinBy(o => o.Key) is { System: { } hqAt } hq
                      && Knowledge.Location(game, hq, Owner.Empire) == hqAt)
                 _hqFound[side] = game.Day;
         }
@@ -394,27 +395,27 @@ public sealed class SliceRecorder(int length = 100)
             x["raw_stock"] = state.RawStock;
             x["refined_stock"] = state.RefinedStock;
             int Facilities(uint family) => game.Facilities.Count(f => f.Owner == side && f.Usable && Family.Of(f.Type) == family);
-            x["mines"] = Facilities(0x2C);
-            x["refineries"] = Facilities(0x2D);
-            x["construction_yards"] = Facilities(0x2A);
-            x["shipyards"] = Facilities(0x28);
-            x["training_facilities"] = Facilities(0x29);
+            x["mines"] = Facilities(44);
+            x["refineries"] = Facilities(45);
+            x["construction_yards"] = Facilities(42);
+            x["shipyards"] = Facilities(40);
+            x["training_facilities"] = Facilities(41);
             var ships = game.Systems.SelectMany(s => s.Contents.OfType<Fleet>()).Where(f => f.Owner == side && f.Existing)
                 .SelectMany(f => f.Contents).Where(o => Family.IsCapitalShip(o.Type) && o.Existing).ToList();
             x["capital_maint"] = ships.Sum(o => game.MaintenanceCost(o.Type));
             // the version 8 weighted gun mix: anti-ship + anti-fighter rate of each ship
             x["capital_attack"] = ships.Sum(o => Roles.RawScores(game, o.Type) is { } r ? r[UnitRole.Line] + r[UnitRole.Screen] : 0);
             var units = game.Created.Where(o => o.Owner == side && o.Existing).ToList();
-            x["fighters"] = units.Count(o => Family.Of(o.Type) is >= 0x1C and < 0x20);
-            x["fighters_in_systems"] = units.Count(o => Family.Of(o.Type) is >= 0x1C and < 0x20 && o.Container is StarSystem);
-            x["fighters_in_hangars"] = units.Count(o => Family.Of(o.Type) is >= 0x1C and < 0x20 && o.Container is { } c && Family.IsCapitalShip(c.Type));
+            x["fighters"] = units.Count(o => Family.Of(o.Type) is >= Families.Fighter and < Families.Headquarters);
+            x["fighters_in_systems"] = units.Count(o => Family.Of(o.Type) is >= Families.Fighter and < Families.Headquarters && o.Container is StarSystem);
+            x["fighters_in_hangars"] = units.Count(o => Family.Of(o.Type) is >= Families.Fighter and < Families.Headquarters && o.Container is { } c && Family.IsCapitalShip(c.Type));
             x["wing_battles_won"] = _wingBattles.GetValueOrDefault((side, true));
             x["wing_battles_lost"] = _wingBattles.GetValueOrDefault((side, false));
             x["troops"] = units.Count(o => Family.IsTroop(o.Type));
             var defences = game.Systems.SelectMany(s => s.Contents).Where(o => o.Owner == side && o.Usable && Roles.KindOf(o.Type) == UnitKind.Defence).ToList();
             x["guns"] = defences.Count(o => Roles.RawScores(game, o.Type)![UnitRole.Gun] > 0);
             x["shields"] = defences.Count(o => Roles.RawScores(game, o.Type)![UnitRole.Shield] > 0);
-            foreach (var (kind, name) in new[] { (0x28u, "shipyard"), (0x29u, "training"), (0x2Au, "construction") })
+            foreach (var (kind, name) in new[] { (40u, "shipyard"), (41u, "training"), (42u, "construction") })
             {
                 var (d, b, i) = _use.GetValueOrDefault((side, kind));
                 x[$"{name}_building_pct"] = d == 0 ? 0 : 100.0 * b / d;
@@ -455,12 +456,12 @@ public sealed class SliceRecorder(int length = 100)
         _audit.Clear();
     }
 
-    /// <summary>The step 1a table: per facility kind, the share of each idle reason over the games, and the yards per owned system.</summary>
+    /// <summary>The facility-kind table: per facility kind, the share of each idle reason over the games, and the yards per owned system.</summary>
     public static string ReasonTable(IReadOnlyList<(GameResult Result, SliceRecorder Recorder)> runs)
     {
         var text = new StringBuilder();
         text.AppendLine("openswr idle facility-days with free maintenance, by the reason at that day's decision (all games)");
-        foreach (var (kind, name) in new[] { (0x2Au, "construction yards"), (0x28u, "shipyards"), (0x29u, "training facilities") })
+        foreach (var (kind, name) in new[] { (42u, "construction yards"), (40u, "shipyards"), (41u, "training facilities") })
         {
             var counts = runs.SelectMany(x => x.Recorder.IdleReasons).Where(e => e.Key.Kind == kind)
                 .GroupBy(e => e.Key.Reason).Select(g => (Reason: g.Key, Days: g.Sum(e => e.Value))).OrderByDescending(x => x.Days).ToList();
@@ -486,7 +487,7 @@ public sealed class SliceRecorder(int length = 100)
         var days = runs.SelectMany(x => x.Recorder.RefusedDays).ToList();
         static string Code(OpenSWRController.RefusedEstimate x) =>
             x.Validation.Success ? (x.EstimateNull ? "valid, estimate days null" : x.MaintenanceOver ? "valid, maintenance > AI free" : "valid, other")
-            : $"({x.Validation.Category:X}, {x.Validation.Code:X}){(x.MaintenanceOver ? " + maintenance > AI free" : "")}";
+            : $"({(int)x.Validation.Category}, {(int)x.Validation.Code}){(x.MaintenanceOver ? " + maintenance > AI free" : "")}";
         text.AppendLine($"refused estimates of the openswr side: {attempts.Count} order attempts, {days.Count} idle facility-days");
         text.AppendLine($"  {"code",-44} {"attempts",9} {"%",6} {"fac-days",9} {"%",6}");
         foreach (var g in attempts.GroupBy(Code).OrderByDescending(g => g.Count()))
@@ -502,7 +503,7 @@ public sealed class SliceRecorder(int length = 100)
         text.AppendLine("  top 10 (product, code) by attempts:");
         foreach (var g in attempts.GroupBy(x => (x.Product, Code: Code(x))).OrderByDescending(g => g.Count()).Take(10))
             text.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                $"    {g.Key.Product:X8} {g.Key.Code,-44} {g.Count(),8}  count n {g.Min(x => x.Count)}–{g.Max(x => x.Count)}, AI free {g.Min(x => x.AiFree)}–{g.Max(x => x.AiFree)}"));
+                $"    {Family.Of(g.Key.Product)}:{SdRef.IndexOf(g.Key.Product)} {g.Key.Code,-44} {g.Count(),8}  count n {g.Min(x => x.Count)}–{g.Max(x => x.Count)}, AI free {g.Min(x => x.AiFree)}–{g.Max(x => x.AiFree)}"));
         return text.ToString();
     }
 

@@ -58,7 +58,7 @@ public class DoctrineTests(ITestOutputHelper output)
     [GameFact]
     public void InventedShipGetsItsRoleAndIsBuiltWhenShort()
     {
-        uint from = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) == 0x14).Common.Ref;
+        uint from = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) == Families.CapitalShip).Common.Ref;
         var d = Modded(Picket(from));
         uint picket = d.CapitalShips.Single(r => r.Common.Ref != 0 && !Definitions.CapitalShips.Any(b => b.Common.Ref == r.Common.Ref)).Common.Ref;
         var (game, ai) = Game(d, Owner.Alliance);
@@ -95,7 +95,7 @@ public class DoctrineTests(ITestOutputHelper output)
     [GameFact]
     public void BombardmentIsACapability()
     {
-        uint from = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) == 0x14).Common.Ref;
+        uint from = Definitions.CapitalShips.First(r => r.Alliance != 0 && Family.Of(r.Common.Ref) == Families.CapitalShip).Common.Ref;
         string Ship(string id, int bombardment, int hull) => $$"""
             {"op": "add", "type": "capitalShip", "id": "{{id}}", "from": "base:{{from:X8}}", "name": "Test {{id}}", "alliance": 1, "empire": 0,
              "maintenanceCost": 40, "researchOrder": 0, "refinedMaterialCost": 10, "weaponRechargeRate": 60, "hull": {{hull}}, "bombardment": {{bombardment}},
@@ -122,7 +122,7 @@ public class DoctrineTests(ITestOutputHelper output)
     public void FighterYardTakesOnlyFighters()
     {
         var (game, ai) = Game(Definitions, Owner.Empire);
-        ai.Features = OpenSWRController.DefaultFeatures.Remove(OpenSWRController.V7.DoctrineProduction).Add(OpenSWRController.V7.DoctrineFighterYard); // the default before step 23a, which this test was written for
+        ai.Features = OpenSWRController.DefaultFeatures.Remove(OpenSWRController.V7.DoctrineProduction).Add(OpenSWRController.V7.DoctrineFighterYard); // the default before DoctrineProduction, which this test was written for
         game.Controllers[Owner.Alliance] = new ComputerController(Owner.Alliance) { Rand = _ => 0 };
         int yardDecisions = 0, fighterOrders = 0;
         while (game.Day < 300 && !game.GameOver)
@@ -133,9 +133,9 @@ public class DoctrineTests(ITestOutputHelper output)
             game.Clock.Step(game);
             if (ai.Decided == decided) continue;
             yardDecisions += yards.Count;
-            foreach (var t in ai.IssueTrace.Skip(from).Where(t => t.Result.Success && t.Command.Type == 0x211 && yards.ContainsKey((ManufacturingManager)t.Command.Targets[0].Target)))
+            foreach (var t in ai.IssueTrace.Skip(from).Where(t => t.Result.Success && t.Command.Type == CommandType.ProduceShip && yards.ContainsKey((ManufacturingManager)t.Command.Targets[0].Target)))
             {
-                Assert.True(Family.Of(t.Command.Fields[0]) is >= 0x1C and < 0x20, $"day {game.Day}: a capital ship at a fighter yard");
+                Assert.True(Family.Of(t.Command.Fields[0]) is >= Families.Fighter and < Families.Headquarters, $"day {game.Day}: a capital ship at a fighter yard");
                 fighterOrders++;
             }
         }
@@ -162,7 +162,7 @@ public class DoctrineTests(ITestOutputHelper output)
         Assert.NotEqual(dud, ai.BestFor(game, UnitKind.Defence, UnitRole.Gun, 1000)!.Common.Ref);
         game.Controllers[Owner.Empire] = new ComputerController(Owner.Empire) { Rand = _ => 0 };
         while (game.Day < 150 && !game.GameOver) game.Clock.Step(game);
-        Assert.DoesNotContain(ai.IssueTrace!, t => t.Result.Success && t.Command.Type == 0x210 && t.Command.Fields[0] == dud);
+        Assert.DoesNotContain(ai.IssueTrace!, t => t.Result.Success && t.Command.Type == CommandType.ProduceFacility && t.Command.Fields[0] == dud);
         Assert.DoesNotContain(game.Created, o => o.Type == dud && o.Owner == Owner.Alliance);
     }
 
@@ -196,7 +196,7 @@ public class DoctrineTests(ITestOutputHelper output)
             .SelectMany(f => f.Contents).Count(x => roles.TryGetValue(x.Type, out var r) && r.Main == UnitRole.Screen);
         double many = ai.RoleShortfall(game, k).GetValueOrDefault(UnitRole.Screen);
         output.WriteLine($"screen shortfall without fighters {none:F2}, with 12 squadrons {many:F2} (screens there {screensThere})");
-        int squadrons = k.Contents(target).Count(v => v.Owner == Owner.Alliance && v.In(0x1C, 0x20)); // the 12 and any already there
+        int squadrons = k.Contents(target).Count(v => v.Owner == Owner.Alliance && v.In(Families.Fighter, Families.Headquarters)); // the 12 and any already there
         Assert.True(squadrons >= 12);
         int wanted = (int)Math.Ceiling(1.2 * squadrons / OpenSWRController.SquadronsPerScreen);
         Assert.True(screensThere >= 2);

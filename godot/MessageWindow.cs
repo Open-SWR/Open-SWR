@@ -21,23 +21,23 @@ public static class MessageFormat
 }
 
 /// <summary>
-/// Message window (window id 0xD, 470 x 331 centred over the map rect: A (62, 49), E (125, 52)): list mode (tabs
-/// 0x79-0x82, list of the stored messages of the tab's category newest first, title only (observed in the original), bold (font 13) until
+/// Message window (470 x 331 centred over the map rect: A (62, 49), E (125, 52)): list mode (per-tab lists:
+/// list of the stored messages of the tab's category newest first, title only (observed in the original), bold (font 13) until
 /// read, category icons, Select All / Delete, Display, alert toggle, go-to / encyclopedia) and display mode (picture 1000-1075
 /// or an object picture, body in a text box with skin 10653, Previous / Next, Yes / No for kind 5, go-to). Tab exit clears the
 /// tab category's new bits; the Advice tab runs the game at speed 1 while shown. Compose / chat (multiplayer) is left
-/// out: 0x68 always disabled.
+/// out: the compose button always disabled.
 /// </summary>
 public partial class MessageWindow : GameWindow
 {
     static readonly int[] TabX = [0, 38, 76, 114, 151, 189, 227, 263, 301, 338];
-    static readonly int[] TabTips = [32784, 32785, 32791, 32788, 32786, 32787, 32790, 32792, 32789, 32818];
-    // (up, down) per tab 0x79-0x82, A then E
+    static readonly int[] TabTips = [StrategyTexts.AllMessages, StrategyTexts.SupportMessages, StrategyTexts.FleetMessages, StrategyTexts.MissionMessages, StrategyTexts.ResourceMessages, StrategyTexts.ManufacturingMessages, StrategyTexts.DefenseMessages, StrategyTexts.ConflictMessages, StrategyTexts.ChatMessages, StrategyTexts.AdviceMessages];
+    // (up, down) per tab, A then E
     static readonly (int, int, int, int)[] TabImages =
     [
-        (10830, 10831, 10830, 10831), (10832, 10833, 10834, 10835), (10840, 10841, 10838, 10839), (10842, 10843, 10844, 10845),
-        (10836, 10837, 10836, 10837), (10852, 10853, 10852, 10853), (10856, 10857, 10856, 10857), (10854, 10855, 10854, 10855),
-        (10850, 10851, 10850, 10851), (10846, 10847, 10848, 10849),
+        (StrategyBitmaps.AllMessagesTabUp, StrategyBitmaps.AllMessagesTabDown, StrategyBitmaps.AllMessagesTabUp, StrategyBitmaps.AllMessagesTabDown), (StrategyBitmaps.SupportMessagesTabAllianceUp, StrategyBitmaps.SupportMessagesTabAllianceDown, StrategyBitmaps.SupportMessagesTabEmpireUp, StrategyBitmaps.SupportMessagesTabEmpireDown), (StrategyBitmaps.FleetMessagesTabAllianceUp, StrategyBitmaps.FleetMessagesTabAllianceDown, StrategyBitmaps.FleetMessagesTabEmpireUp, StrategyBitmaps.FleetMessagesTabEmpireDown), (StrategyBitmaps.MissionMessagesTabAllianceUp, StrategyBitmaps.MissionMessagesTabAllianceDown, StrategyBitmaps.MissionMessagesTabEmpireUp, StrategyBitmaps.MissionMessagesTabEmpireDown),
+        (StrategyBitmaps.ResourceMessagesTabUp, StrategyBitmaps.ResourceMessagesTabDown, StrategyBitmaps.ResourceMessagesTabUp, StrategyBitmaps.ResourceMessagesTabDown), (StrategyBitmaps.ManufacturingMessagesTabUp, StrategyBitmaps.ManufacturingMessagesTabDown, StrategyBitmaps.ManufacturingMessagesTabUp, StrategyBitmaps.ManufacturingMessagesTabDown), (StrategyBitmaps.DefenseMessagesTabUp, StrategyBitmaps.DefenseMessagesTabDown, StrategyBitmaps.DefenseMessagesTabUp, StrategyBitmaps.DefenseMessagesTabDown), (StrategyBitmaps.ConflictMessagesTabUp, StrategyBitmaps.ConflictMessagesTabDown, StrategyBitmaps.ConflictMessagesTabUp, StrategyBitmaps.ConflictMessagesTabDown),
+        (StrategyBitmaps.ChatMessagesTabUp, StrategyBitmaps.ChatMessagesTabDown, StrategyBitmaps.ChatMessagesTabUp, StrategyBitmaps.ChatMessagesTabDown), (StrategyBitmaps.AdviceMessagesTabAllianceUp, StrategyBitmaps.AdviceMessagesTabAllianceDown, StrategyBitmaps.AdviceMessagesTabEmpireUp, StrategyBitmaps.AdviceMessagesTabEmpireDown),
     ];
 
     int _tab, _mode = 1; // 1 list, 2 display
@@ -48,15 +48,15 @@ public partial class MessageWindow : GameWindow
     CellList _rows = null!;
     TextBox _body = null!;
 
-    public MessageWindow(MainScreen screen, int tab) : base(screen, 0xD, new Vector2(470, 331))
+    public MessageWindow(MainScreen screen, int tab) : base(screen, WindowKind.Messages, new Vector2(470, 331))
     {
-        _tab = tab is >= 0x79 and <= 0x82 ? tab : 0x79;
+        _tab = tab is >= MessageTab.All and <= MessageTab.Advice ? tab : MessageTab.All;
         Position = screen.Side == SimOwner.Alliance ? new Vector2(62, 49) : new Vector2(125, 52);
     }
 
     protected override bool Framed => false;
     protected override string Title => "";
-    int Mask => MessageCategory.OfTab(_tab);
+    MessageCategory TabCategory => MessageTab.CategoryOf(_tab);
 
     static Texture2D? Bmp(int id, string module = "STRATEGY.DLL")
     {
@@ -78,26 +78,26 @@ public partial class MessageWindow : GameWindow
     {
         for (int i = 0; i < 10; i++)
         {
-            int tab = 0x79 + i;
+            int tab = MessageTab.All + i;
             var (au, ad, eu, ed) = TabImages[i];
             var b = Btn(new Rect2(22 + TabX[i], 46, i == 9 ? 37 : 36, 41), A ? au : eu, A ? ad : ed, 0, TabTips[i], () => SelectTab(tab));
             b.CheckedImage = b.Down;
             _tabs.Add(b);
         }
-        var close = Btn(Strip(423, 25, 426, 21), A ? 10370 : 10376, A ? 10371 : 10377, 0, 6484, () => Screen.Windows.Close(this));      // 0x28
-        _display = Btn(Strip(423, 93, 426, 89), 0, 0, 0, 0, DisplayOrIndex);                                                             // 0x65
-        _alert = Btn(Strip(423, 147, 426, 148), 0, 0, 0, 0, ToggleAlert);                                                                // 0x66
-        _goTo = Btn(Strip(423, 201, 426, 207), 0, 0, A ? 10959 : 10960, 0, GoTo);                                                         // 0x67
-        _compose = Btn(Strip(423, 255, 426, 266), A ? 10876 : 10879, A ? 10877 : 10880, A ? 10878 : 10881, 32802, () => { });            // 0x68
+        var close = Btn(Strip(423, 25, 426, 21), A ? StrategyBitmaps.PanelCloseAllianceUp : StrategyBitmaps.PanelCloseEmpireUp, A ? StrategyBitmaps.PanelCloseAllianceDown : StrategyBitmaps.PanelCloseEmpireDown, 0, StrategyTexts.Close, () => Screen.Windows.Close(this));
+        _display = Btn(Strip(423, 93, 426, 89), 0, 0, 0, 0, DisplayOrIndex);
+        _alert = Btn(Strip(423, 147, 426, 148), 0, 0, 0, 0, ToggleAlert);
+        _goTo = Btn(Strip(423, 201, 426, 207), 0, 0, A ? StrategyBitmaps.GoToDisabledAlliance : StrategyBitmaps.GoToDisabledEmpire, 0, GoTo);
+        _compose = Btn(Strip(423, 255, 426, 266), A ? StrategyBitmaps.ComposeAllianceUp : StrategyBitmaps.ComposeEmpireUp, A ? StrategyBitmaps.ComposeAllianceDown : StrategyBitmaps.ComposeEmpireDown, A ? StrategyBitmaps.ComposeAllianceDisabled : StrategyBitmaps.ComposeEmpireDisabled, StrategyTexts.ComposeChat, () => { });
         _compose.Disabled = true; // single player
-        foreach (var b in new[] { close, _display, _alert, _goTo, _compose }) b.Sound = Assets.Click; // 0x28, 0x65-0x68 click; tabs silent
-        _all = Btn(new Rect2(282, 87, 56, 20), 10900, 10901, 0, 32776, () => { for (int i = 0; i < _list.Count; i++) _rows.Selected.Add(i); _rows.QueueRedraw(); Update(); });
-        _delete = Btn(new Rect2(340, 87, 56, 20), 10902, 10903, 0, 32777, Delete);
-        _prev = Btn(new Rect2(367, 15, 19, 15), 10948, 10949, 10950, 0, () => Step(-1));                                                // 0x9A
-        _next = Btn(new Rect2(390, 15, 19, 15), 10919, 10920, 10921, 0, () => Step(1));                                                 // 0x96
-        _yes = Btn(new Rect2(355, 244, 51, 35), 10926, 10927, 0, 0, () => Answer(true));
-        _no = Btn(new Rect2(355, 281, 51, 35), 10929, 10930, 0, 0, () => Answer(false));
-        _rows = new CellList(10653) { Cell = new Vector2(346, 21), Position = new Vector2(25, 108), Size = new Vector2(368, 194), DrawCell = DrawRow };
+        foreach (var b in new[] { close, _display, _alert, _goTo, _compose }) b.Sound = Assets.Click; // buttons click; tabs silent
+        _all = Btn(new Rect2(282, 87, 56, 20), StrategyBitmaps.SelectAllUp, StrategyBitmaps.SelectAllDown, 0, StrategyTexts.SelectAll, () => { for (int i = 0; i < _list.Count; i++) _rows.Selected.Add(i); _rows.QueueRedraw(); Update(); });
+        _delete = Btn(new Rect2(340, 87, 56, 20), StrategyBitmaps.DeleteUp, StrategyBitmaps.DeleteDown, 0, StrategyTexts.DeleteSelected, Delete);
+        _prev = Btn(new Rect2(367, 15, 19, 15), StrategyBitmaps.PreviousMessageUp, StrategyBitmaps.PreviousMessageDown, StrategyBitmaps.PreviousMessageDisabled, 0, () => Step(-1));
+        _next = Btn(new Rect2(390, 15, 19, 15), StrategyBitmaps.NextMessageUp, StrategyBitmaps.NextMessageDown, StrategyBitmaps.NextMessageDisabled, 0, () => Step(1));
+        _yes = Btn(new Rect2(355, 244, 51, 35), StrategyBitmaps.YesUp, StrategyBitmaps.YesDown, 0, 0, () => Answer(true));
+        _no = Btn(new Rect2(355, 281, 51, 35), StrategyBitmaps.NoUp, StrategyBitmaps.NoDown, 0, 0, () => Answer(false));
+        _rows = new CellList(StrategyRcData.PanelScrollSkin) { Cell = new Vector2(346, 21), Position = new Vector2(25, 108), Size = new Vector2(368, 194), DrawCell = DrawRow };
         _rows.Pressed = () => Screen.Windows.Focus(this);
         _rows.SelectionChanged = Update;
         _rows.Activated = _ => DisplayOrIndex();
@@ -112,8 +112,8 @@ public partial class MessageWindow : GameWindow
     {
         if (exit && tab == _tab) return;
         if (exit) Screen.MessageTabExit(_tab);
-        if (_tab == 0x82 && tab != 0x82) Screen.RestoreAdviceSpeed();
-        if (tab == 0x82 && (!exit || _tab != 0x82)) Screen.AdviceSpeed();
+        if (_tab == MessageTab.Advice && tab != MessageTab.Advice) Screen.RestoreAdviceSpeed();
+        if (tab == MessageTab.Advice && (!exit || _tab != MessageTab.Advice)) Screen.AdviceSpeed();
         _tab = tab;
         ShowList();
     }
@@ -122,7 +122,7 @@ public partial class MessageWindow : GameWindow
     {
         _mode = 1;
         _shown = null;
-        _list = Messages.List(Game, Mask);
+        _list = Messages.List(Game, TabCategory);
         _rows.Count = _list.Count;
         _rows.Selected.Clear();
         _rows.First = 0;
@@ -135,34 +135,34 @@ public partial class MessageWindow : GameWindow
     {
         bool list = _mode == 1;
         foreach (var t in _tabs) t.Visible = list;
-        for (int i = 0; i < _tabs.Count; i++) _tabs[i].Checked = 0x79 + i == _tab;
+        for (int i = 0; i < _tabs.Count; i++) _tabs[i].Checked = MessageTab.All + i == _tab;
         (_rows.Visible, _all.Visible, _delete.Visible, _alert.Visible) = (list, list, list, list);
         (_body.Visible, _prev.Visible, _next.Visible) = (!list, !list, !list);
         if (list)
         {
-            (_display.Up, _display.Down, _display.DisabledImage) = (Bmp(A ? 10870 : 10738), Bmp(A ? 10871 : 10739), Bmp(A ? 10961 : 10962));
-            _display.TooltipText = UiFrame.Label(32800);
+            (_display.Up, _display.Down, _display.DisabledImage) = (Bmp(A ? StrategyBitmaps.DisplayMessageAllianceUp : StrategyBitmaps.SummaryTabEmpireUp), Bmp(A ? StrategyBitmaps.DisplayMessageAllianceDown : StrategyBitmaps.SummaryTabEmpireDown), Bmp(A ? StrategyBitmaps.DisplayMessageAllianceDisabled : StrategyBitmaps.DisplayMessageEmpireDisabled));
+            _display.TooltipText = UiFrame.Label(StrategyTexts.DisplayMessage);
             _display.Disabled = _list.Count == 0;
         }
         else
         {
-            (_display.Up, _display.Down) = (Bmp(A ? 10372 : 10378), Bmp(A ? 10373 : 10379));
-            _display.TooltipText = UiFrame.Label(32793);
+            (_display.Up, _display.Down) = (Bmp(A ? StrategyBitmaps.IndexAllianceUp : StrategyBitmaps.IndexEmpireUp), Bmp(A ? StrategyBitmaps.IndexAllianceDown : StrategyBitmaps.IndexEmpireDown));
+            _display.TooltipText = UiFrame.Label(StrategyTexts.MessageIndex);
             _display.Disabled = false;
         }
-        bool silent = Screen.AlertSilent(Mask);
-        (_alert.Up, _alert.Down) = silent ? (Bmp(A ? 10951 : 10953), Bmp(A ? 10873 : 10875)) : (Bmp(A ? 10872 : 10874), Bmp(A ? 10873 : 10875));
-        _alert.TooltipText = UiFrame.Label(silent ? 32774 : 32773);
-        // 0x67: one selected (or shown) message: kind 3, or 5 with a game running: go-to; kind 4: encyclopedia; else disabled
+        bool silent = Screen.AlertSilent(TabCategory);
+        (_alert.Up, _alert.Down) = silent ? (Bmp(A ? StrategyBitmaps.SilentAllianceUp : StrategyBitmaps.SilentEmpireUp), Bmp(A ? StrategyBitmaps.AlertAllianceDown : StrategyBitmaps.AlertEmpireDown)) : (Bmp(A ? StrategyBitmaps.AlertAllianceUp : StrategyBitmaps.AlertEmpireUp), Bmp(A ? StrategyBitmaps.AlertAllianceDown : StrategyBitmaps.AlertEmpireDown));
+        _alert.TooltipText = UiFrame.Label(silent ? StrategyTexts.PostWithAlert : StrategyTexts.PostSilently);
+        // go-to button: one selected (or shown) message: kind 3, or 5 with a game running: go-to; kind 4: encyclopedia; else disabled
         var m = Current;
-        bool ency = m?.Kind == 4;
-        (_goTo.Up, _goTo.Down) = ency ? (Bmp(A ? 11552 : 11591), Bmp(A ? 11553 : 11592)) : (Bmp(A ? 10518 : 10520), Bmp(A ? 10519 : 10521));
-        _goTo.TooltipText = UiFrame.Label(ency ? 32817 : 32816);
-        _goTo.Disabled = m is null || m.Kind is not (3 or 4 or 5) || m.Kind != 4 && m.Subject == 0;
+        bool ency = m?.Kind == MessageKinds.Encyclopedia;
+        (_goTo.Up, _goTo.Down) = ency ? (Bmp(A ? StrategyBitmaps.EncyclopediaAllianceUp : StrategyBitmaps.EncyclopediaEmpireUp), Bmp(A ? StrategyBitmaps.EncyclopediaAllianceDown : StrategyBitmaps.EncyclopediaEmpireDown)) : (Bmp(A ? StrategyBitmaps.DisplayAllianceUp : StrategyBitmaps.DisplayEmpireUp), Bmp(A ? StrategyBitmaps.DisplayAllianceDown : StrategyBitmaps.DisplayEmpireDown));
+        _goTo.TooltipText = UiFrame.Label(ency ? StrategyTexts.MessageEncyclopedia : StrategyTexts.MessageDisplay);
+        _goTo.Disabled = m is null || m.Kind is not (MessageKinds.Normal or MessageKinds.Encyclopedia or MessageKinds.ContinueQuestion) || m.Kind != MessageKinds.Encyclopedia && m.Subject == 0;
         int index = m is null ? -1 : _list.IndexOf(m);
         _prev.Disabled = index <= 0;
         _next.Disabled = index < 0 || index >= _list.Count - 1;
-        bool question = !list && m?.Kind == 5;
+        bool question = !list && m?.Kind == MessageKinds.ContinueQuestion;
         (_yes.Visible, _no.Visible) = (question, question);
         _body.Size = new Vector2(question ? 320 : 395, 80);
         _rows.QueueRedraw();
@@ -171,7 +171,7 @@ public partial class MessageWindow : GameWindow
 
     GameMessage? Current => _mode == 2 ? _shown : _rows.Selected.Count == 1 ? _list.ElementAtOrDefault(_rows.Selected.Min) : null;
 
-    /// <summary>0x65: list to display (the first selected row); display to list (rebuilt, tab kept). Leaving a displayed message marks it read.</summary>
+    /// <summary>Display button: list to display (the first selected row); display to list (rebuilt, tab kept). Leaving a displayed message marks it read.</summary>
     void DisplayOrIndex()
     {
         if (_mode == 2)
@@ -185,11 +185,11 @@ public partial class MessageWindow : GameWindow
     }
 
     /// <summary>
-    /// Display: a type-0xF message (kind 3 as well as 7, the test is on the type; observed in the original: the defender's too)
+    /// Display: a strike message (kind 3 as well as 7, the test is on the type; observed in the original: the defender's too)
     /// skips display mode: the window remembers the message and its tab, closes, and the strike window opens; its OK / Esc reopen
     /// the list on that tab.
     /// </summary>
-    static bool OpensStrike(GameMessage m) => m.Type == 0xF;
+    static bool OpensStrike(GameMessage m) => m.Type == MessageType.Strike;
 
     void Show(GameMessage m)
     {
@@ -215,7 +215,7 @@ public partial class MessageWindow : GameWindow
         _shown.Read = true; // only the tab exit clears new
     }
 
-    /// <summary>0x96 / 0x9A: the next (older, down the list) / previous (newer) row (direction Inferred).</summary>
+    /// <summary>Next / previous buttons: the next (older, down the list) / previous (newer) row (direction Inferred).</summary>
     void Step(int dir)
     {
         if (_shown is null) return;
@@ -225,7 +225,7 @@ public partial class MessageWindow : GameWindow
         Show(_list[i]);
     }
 
-    /// <summary>0x91: list mode deletes every selected message and selects the row after the last deleted; display mode the shown one, then the next (else previous; none, then list).</summary>
+    /// <summary>Delete command: list mode deletes every selected message and selects the row after the last deleted; display mode the shown one, then the next (else previous; none, then list).</summary>
     void Delete()
     {
         if (_mode == 2 && _shown is { } m)
@@ -240,7 +240,7 @@ public partial class MessageWindow : GameWindow
         if (_rows.Selected.Count == 0) return;
         int last = _rows.Selected.Max - _rows.Selected.Count + 1;
         foreach (var i in _rows.Selected.Reverse()) Game.Log.Remove(_list[i]);
-        _list = Messages.List(Game, Mask);
+        _list = Messages.List(Game, TabCategory);
         _rows.Count = _list.Count;
         _rows.Selected.Clear();
         if (_list.Count > 0) _rows.Selected.Add(Math.Clamp(last, 0, _list.Count - 1));
@@ -249,34 +249,34 @@ public partial class MessageWindow : GameWindow
 
     void ToggleAlert()
     {
-        Screen.ToggleAlert(Mask);
+        Screen.ToggleAlert(TabCategory);
         Update();
     }
 
-    /// <summary>0x67: kind 3 / 5 goes to the subject, kind 4 opens the encyclopedia; then the window closes.</summary>
+    /// <summary>Go-to button: kind 3 / 5 goes to the subject, kind 4 opens the encyclopedia; then the window closes.</summary>
     void GoTo()
     {
         if (Current is not { } m) return;
         Leave();
-        if (m.Kind == 4) Screen.OpenEncyclopedia(Messages.Find(Game, m.Encyclopedia), m.Encyclopedia);
+        if (m.Kind == MessageKinds.Encyclopedia) Screen.OpenEncyclopedia(Messages.Find(Game, m.Encyclopedia), m.Encyclopedia);
         else if (Messages.Find(Game, m.Subject) is { } o) Screen.GoTo(o);
         Screen.Windows.Close(this);
     }
 
-    /// <summary>0x98 Yes: the mission continues; 0x99 No: the 0x250 abort for the mission while it is in the player's view; both back to the list.</summary>
+    /// <summary>Yes: the mission continues; No: the abort command for the mission while it is in the player's view; both back to the list.</summary>
     void Answer(bool yes)
     {
         if (!yes && _shown is { } m && Messages.Find(Game, m.Mission) is Mission mission && !mission.Destroyed)
-            Screen.Dispatch(0x250, [(mission, 0)], confirm: false);
+            Screen.Dispatch((int)CommandType.MissionOrder, [(mission, GroupMode.Object)], confirm: false);
         Leave();
         ShowList();
     }
 
-    /// <summary>Close (0x28, Esc): the displayed message read, speed restored, tab exit; the manager then destroys the window and recomputes.</summary>
+    /// <summary>Close (close button, Esc): the displayed message read, speed restored, tab exit; the manager then destroys the window and recomputes.</summary>
     public void Closing()
     {
         Leave();
-        if (_tab == 0x82) Screen.RestoreAdviceSpeed();
+        if (_tab == MessageTab.Advice) Screen.RestoreAdviceSpeed();
         Screen.MessageTabExit(_tab);
     }
 
@@ -284,7 +284,7 @@ public partial class MessageWindow : GameWindow
     {
         switch (key.Keycode)
         {
-            case Key.I when key.AltPressed: // 0xBBE: display to list
+            case Key.I when key.AltPressed: // display to list
                 if (_mode == 2) DisplayOrIndex();
                 return true;
             case Key.Enter or Key.KpEnter when _mode == 1:
@@ -301,17 +301,17 @@ public partial class MessageWindow : GameWindow
     }
 
     /// <summary>Row icon of a message category (none for an event or no category); A / E variants.</summary>
-    int RowIcon(int category) => category switch
+    int RowIcon(MessageCategory category) => category switch
     {
-        MessageCategory.Support => A ? 10906 : 10907,
-        MessageCategory.Defense => 10963,
-        MessageCategory.Manufacturing => A ? 10908 : 10909,
-        MessageCategory.Mission => A ? 10910 : 10911,
-        MessageCategory.Chat => 10916,
-        MessageCategory.Fleet => A ? 10964 : 10965,
-        MessageCategory.Resource => 10966,
-        MessageCategory.Conflict => 10967,
-        MessageCategory.Advice => A ? 10968 : 10969,
+        MessageCategory.Support => A ? StrategyBitmaps.SupportRowIconAlliance : StrategyBitmaps.SupportRowIconEmpire,
+        MessageCategory.Defense => StrategyBitmaps.DefenseRowIcon,
+        MessageCategory.Manufacturing => A ? StrategyBitmaps.ManufacturingRowIconAlliance : StrategyBitmaps.ManufacturingRowIconEmpire,
+        MessageCategory.Mission => A ? StrategyBitmaps.MissionRowIconAlliance : StrategyBitmaps.MissionRowIconEmpire,
+        MessageCategory.Chat => StrategyBitmaps.ChatRowIcon,
+        MessageCategory.Fleet => A ? StrategyBitmaps.FleetRowIconAlliance : StrategyBitmaps.FleetRowIconEmpire,
+        MessageCategory.Resource => StrategyBitmaps.ResourceRowIcon,
+        MessageCategory.Conflict => StrategyBitmaps.ConflictRowIcon,
+        MessageCategory.Advice => A ? StrategyBitmaps.AdviceRowIconAlliance : StrategyBitmaps.AdviceRowIconEmpire,
         _ => 0,
     };
 
@@ -344,7 +344,7 @@ public partial class MessageWindow : GameWindow
     {
         var m = _list[i];
         bool selected = list.Selected.Contains(i);
-        if (RowPicture(RowIcon(m.Category), selected ? (A ? 10914 : 10915) : 0) is var (t, size)) { list.DrawTextureRect(t, new Rect2(r.Position, size), false); DrawLog.Bitmap(list, t, new Rect2(r.Position, size)); }
+        if (RowPicture(RowIcon(m.Category), selected ? (A ? StrategyBitmaps.SelectedRowAlliance : StrategyBitmaps.SelectedRowEmpire) : 0) is var (t, size)) { list.DrawTextureRect(t, new Rect2(r.Position, size), false); DrawLog.Bitmap(list, t, new Rect2(r.Position, size)); }
         Assets.DrawCellText(list, new Rect2(r.Position.X + 32, r.Position.Y + 1, r.Size.X, r.Size.Y), MessageFormat.Title(m), m.Read ? 10 : 13,
             selected ? Colors.White : Color.Color8(120, 120, 120), TextFormat.TopLeft);
     }
@@ -353,7 +353,7 @@ public partial class MessageWindow : GameWindow
     {
         if (_mode == 1)
         {
-            var page = Bmp(10823)!;
+            var page = Bmp(StrategyBitmaps.MessageListPage)!;
             DrawTextureRect(page, new Rect2(12, 13, 400, 306), false);
             DrawLog.Bitmap(this, page, new Rect2(12, 13, 400, 306));
         }
@@ -361,7 +361,7 @@ public partial class MessageWindow : GameWindow
         {
             DrawRect(new Rect2(12, 13, 400, 306), Colors.Black);
             DrawLog.Fill(this, new Rect2(12, 13, 400, 306), Colors.Black);
-            var (top, bottom) = (Bmp(10933)!, Bmp(10932)!);
+            var (top, bottom) = (Bmp(StrategyBitmaps.MessageDisplayTop)!, Bmp(StrategyBitmaps.MessageDisplayBottom)!);
             DrawTextureRect(top, new Rect2(12, 14, 400, 18), false);
             DrawLog.Bitmap(this, top, new Rect2(12, 14, 400, 18));
             DrawTextureRect(bottom, new Rect2(12, 232, 400, 87), false);
@@ -379,7 +379,7 @@ public partial class MessageWindow : GameWindow
                 Assets.DrawText(this, new Rect2(16, 14, 345, 18), MessageFormat.Title(m), 10, Colors.White, TextFormat.Row);
             }
         }
-        var (frame, strip) = (Bmp(A ? 10335 : 10336)!, Bmp(A ? 10820 : 10821)!);
+        var (frame, strip) = (Bmp(A ? StrategyBitmaps.PanelFrameAlliance : StrategyBitmaps.PanelFrameEmpire)!, Bmp(A ? StrategyBitmaps.PanelStripAlliance : StrategyBitmaps.PanelStripEmpire)!);
         DrawTextureRect(frame, new Rect2(0, 0, 470, 331), false);
         DrawLog.Bitmap(this, frame, new Rect2(0, 0, 470, 331));
         DrawTextureRect(strip, new Rect2(412, 0, 58, 330), false);
@@ -394,14 +394,14 @@ public partial class MessageWindow : GameWindow
 }
 
 /// <summary>
-/// Read-only text box = the original's text scroll field (message body 0xA0,
+/// Read-only text box = the original's text scroll field (message body,
 /// confirmation body): white text laid out by <see cref="OpenSWR.Data.TextLayout.ScrollField"/> (own word wrap from the left
 /// edge, only whole lines). The scroll bar (skin 10653) is hidden while the text fits the full width; the scroll position is the
 /// character index of the top line: a step down moves it to the next laid-out line and pushes the old one, a step up pops it.
 /// </summary>
 public partial class TextBox : Control
 {
-    readonly OpenSWR.Data.ScrollSkin? _skin = Assets.Skin(10653);
+    readonly OpenSWR.Data.ScrollSkin? _skin = Assets.Skin(StrategyRcData.PanelScrollSkin);
     string _text = "";
     int _top;
     readonly Stack<int> _tops = [];

@@ -31,12 +31,12 @@ public class ScreenViewTests
         Assert.Equal((int)((home.Definition.Y - home.Sector.Definition.Y) * 10 * 360 / 1024.0), e.Y);
         Assert.Equal(Owner.Alliance, e.Owner);
         Assert.Equal(home.Support, e.Support);
-        var fleets = e.Icons.Single(i => i.Mode == 0x10);
+        var fleets = e.Icons.Single(i => i.Mode == GroupMode.Fleets);
         Assert.Equal(home.Contents.OfType<Fleet>().Count(f => f.Owner == Owner.Alliance && f.Existing), fleets.Count);
         Assert.Equal(Owner.Alliance, fleets.Colour);
-        Assert.True(e.Icons.Single(i => i.Mode == 4).Shown == home.Contents.Any(o => Family.Of(o.Type) is >= 0x28 and < 0x30 && o.Existing));
-        // the HQ marker: the Alliance HQ system (family 0x20 facility) as the Alliance sees it
-        var hq = game.Systems.First(s => s.Contents.Any(o => Family.Of(o.Type) == 0x20 && o.Owner == Owner.Alliance));
+        Assert.True(e.Icons.Single(i => i.Mode == GroupMode.Facilities).Shown == home.Contents.Any(o => Family.Of(o.Type) is >= Families.Shipyard and < Families.MajorCharacter && o.Existing));
+        // the HQ marker: the Alliance HQ system (headquarters facility family) as the Alliance sees it
+        var hq = game.Systems.First(s => s.Contents.Any(o => Family.Of(o.Type) == Families.Headquarters && o.Owner == Owner.Alliance));
         Assert.True(ScreenViews.SectorEntry(game, hq, Owner.Alliance).Headquarters);
         // an enemy fleet the Alliance does not see is not counted
         var empire = OwnFleet(game, Owner.Empire);
@@ -45,7 +45,7 @@ public class ScreenViewTests
             Assert.DoesNotContain(ScreenViews.Fleets(game, at, Owner.Alliance), v => v.Object == empire);
     }
 
-    // Slot rule: none open -> right when SD X >= 511. One open -> the other slot. Both -> the sector's half.
+    // Slot rule: none open gives right when SD X >= 511. One open gives the other slot. Both gives the sector's half.
     [GameFact]
     public void SectorSlots()
     {
@@ -69,16 +69,16 @@ public class ScreenViewTests
         Assert.Contains(ScreenViews.Fleets(game, s, Owner.Alliance), v => v.Object == fleet);
         var ships = ScreenViews.Ships(game, fleet, Owner.Alliance);
         Assert.Equal(fleet.Contents.Where(x => Family.IsCapitalShip(x.Type) && x.Existing), ships.Select(v => v.Object));
-        Assert.Equal(ships, ScreenViews.FleetContents(game, [fleet], 0x66, Owner.Alliance));
+        Assert.Equal(ships, ScreenViews.FleetContents(game, [fleet], 102, Owner.Alliance));
         var troops = fleet.Contents.Where(x => Family.IsCapitalShip(x.Type)).SelectMany(x => x.Contents).Where(x => Family.IsTroop(x.Type)).ToList();
-        Assert.Equal(troops, ScreenViews.FleetContents(game, [fleet], 0x68, Owner.Alliance).Select(v => v.Object));
+        Assert.Equal(troops, ScreenViews.FleetContents(game, [fleet], 104, Owner.Alliance).Select(v => v.Object));
 
         var own = game.Systems.First(x => x.Owner == Owner.Alliance && x.Contents.Any(o => Family.IsTroop(o.Type)));
         Assert.Equal(own.Contents.Where(o => Family.IsTroop(o.Type) && o.Existing), ScreenViews.Planet(game, own, 2, Owner.Alliance).Select(v => v.Object));
         var agents = ScreenViews.Planet(game, own, 1, Owner.Alliance);
         Assert.All(agents, v => Assert.Null(v.Mission));
 
-        var yard = game.Systems.SelectMany(x => x.Contents).First(o => Family.Of(o.Type) is >= 0x28 and < 0x2B && o.Existing && o.Owner is Owner.Alliance or Owner.Empire);
+        var yard = game.Systems.SelectMany(x => x.Contents).First(o => Family.Of(o.Type) is >= Families.Shipyard and < Families.ManufacturingEnd && o.Existing && o.Owner is Owner.Alliance or Owner.Empire);
         var view = ScreenViews.View(game, yard, yard.Owner) with { Owner = Owner.Alliance };
         int b = SdRef.IndexOf(yard.Type) switch { 1 => 9006, 2 => 9014, 3 => 9022, 4 => 9010, 5 => 9018, _ => 9026 };
         Assert.Equal(b, ScreenViews.FacilityPicture(view));
@@ -103,23 +103,23 @@ public class ScreenViewTests
         var F = ScreenViews.PictureRole.Frame;
         Assert.Equal([new(false, 10425, B)], ScreenViews.Picture(game, v, Owner.Alliance, small: true, overlays: true));
         Assert.Equal([new(false, 10400, B)], ScreenViews.Picture(game, v, Owner.Alliance, small: false, overlays: false));
-        var troop = game.Created.First(o => Family.IsTroop(o.Type) && o.Existing && o.Type is not (0x10000002 or 0x10000008));
+        var troop = game.Created.First(o => Family.IsTroop(o.Type) && o.Existing && o.Type is not (Refs.AllianceArmy or Refs.EmpireArmy));
         int p = Definitions.Resolve(troop.Type)!.Common.StringNumber;
         var tv = ScreenViews.View(game, troop, troop.Owner);
         Assert.Equal([new(false, 11514, F), new(true, p, B)], ScreenViews.Picture(game, tv, troop.Owner, small: true, overlays: true));
         int c = tv.Owner == Owner.Alliance ? 11570 : 11572;
-        Assert.Equal([new(false, 11513, F), new(false, 11515), new(false, c), new(true, p + 0x4000, B)],
+        Assert.Equal([new(false, 11513, F), new(false, 11515), new(false, c), new(true, p + 16384, B)],
             ScreenViews.Picture(game, tv with { Enroute = true, Completed = false }, troop.Owner, small: false, overlays: true));
-        foreach (var x in game.Created.Where(o => o.Type is 0x10000002 or 0x10000008 or 0x3C000003 or 0x3C000005).Take(4)) // generic GOKRES Enroute overlay
+        foreach (var x in game.Created.Where(o => o.Type is Refs.AllianceArmy or Refs.EmpireArmy or Refs.LongprobeRecon or Refs.ProbeDroids).Take(4)) // generic GOKRES Enroute overlay
         {
             int px = ScreenViews.PictureId(game, x);
             var xv = ScreenViews.View(game, x, x.Owner) with { Enroute = true, Destroyed = false, Damaged = false, Completed = true };
-            Assert.Contains(new ScreenViews.PictureLayer(true, px + 0x1000), ScreenViews.Picture(game, xv, x.Owner, small: true, overlays: true));
+            Assert.Contains(new ScreenViews.PictureLayer(true, px + 4096), ScreenViews.Picture(game, xv, x.Owner, small: true, overlays: true));
         }
         var ship = fleet.Contents.First(x => Family.IsCapitalShip(x.Type));
         var damaged = ScreenViews.View(game, ship, Owner.Alliance) with { Damaged = true, Completed = false };
         int q = ScreenViews.PictureId(game, ship);
-        Assert.Equal([new(true, q + 0x6000), new(false, 11570), new(true, q + 0x4000, B)], ScreenViews.Picture(game, damaged, Owner.Alliance, small: false, overlays: true));
+        Assert.Equal([new(true, q + 24576), new(false, 11570), new(true, q + 16384, B)], ScreenViews.Picture(game, damaged, Owner.Alliance, small: false, overlays: true));
     }
 
     // issue #17: the generic GOKRES Enroute / Damaged overlays have their base's size in both forms (capital ships; fighters'
@@ -165,7 +165,7 @@ public class ScreenViewTests
         Assert.Equal(new byte[] { 1, 5, 5, 1, 7, 6, 6, 1 }, e.Pixels); // the troop over the frame; only the frame's key marker is transparent
     }
 
-    // Drop commands by source kind. An own fleet dropped on another system gives 0x201 there.
+    // Drop commands by source kind. An own fleet dropped on another system gives the move command there.
     [GameFact]
     public void DropCommands()
     {
@@ -174,15 +174,15 @@ public class ScreenViewTests
         var from = (StarSystem)fleet.Container!;
         var to = game.Systems.Where(s => s.Owner == Owner.Alliance && s != from).MinBy(s => Orders.Distance(from, s))!;
         // One transit line per moved object, with its travel days.
-        var transit = ScreenViews.Transit(game, new Command(0x201, Owner.Alliance) { Targets = [(fleet, 0)], ArgRef = to });
+        var transit = ScreenViews.Transit(game, new Command(CommandType.Move, Owner.Alliance) { Targets = [(fleet, GroupMode.Object)], ArgRef = to });
         var line = Assert.Single(transit);
         Assert.Same(fleet, line.Object);
         Assert.Equal(Orders.TravelDays(game, from, to, Orders.Speed(game, fleet)), line.Days);
-        var drop = ScreenViews.Drop(4, [(fleet, 0)], to, to, ctrl: false);
+        var drop = ScreenViews.Drop(WindowKind.SystemFleet, [(fleet, GroupMode.Object)], to, to, ctrl: false);
         var (id, selection, target) = Assert.Single(drop);
-        Assert.Equal((0x201, to), (id, target));
+        Assert.Equal((CommandType.Move, to), (id, target));
         var command = ObjectCommands.Build(id, Owner.Alliance, selection, target);
-        Assert.Equal(0x201, command.Type);
+        Assert.Equal(CommandType.Move, command.Type);
         Assert.True(Orders.Validate(game, command).Success);
         OrderResult? result = null;
         Orders.Submit(game, command, r => result = r);
@@ -190,14 +190,14 @@ public class ScreenViewTests
         Assert.True(result!.Value.Success);
         Assert.True(fleet.Enroute || fleet.Container == to || fleet.Destination == to);
 
-        Assert.Equal(0x202, ScreenViews.Drop(10, [(fleet, 0)], from, to, ctrl: true)[0].Id);
-        Assert.Empty(ScreenViews.Drop(4, [(fleet, 0)], to, null, ctrl: false));
-        Assert.Empty(ScreenViews.Drop(0xB, [(fleet, 0)], to, to, ctrl: false));
-        // sector window: a fleets and a facilities entry give the move (fleets) first, then 0x214 with (system, facilities) to T_dest
-        var split = ScreenViews.Drop(1, [(from, GroupMode.Fleets), (from, GroupMode.Facilities)], to, game.Systems[0], ctrl: false);
-        Assert.Equal([(0x201, 0x10, game.Systems[0]), (0x214, 4, (GameObject)to)], split.Select(c => (c.Id, c.Selection[0].Mode, c.Target)));
+        Assert.Equal(CommandType.MoveVariant, ScreenViews.Drop(WindowKind.SystemPlanet, [(fleet, GroupMode.Object)], from, to, ctrl: true)[0].Id);
+        Assert.Empty(ScreenViews.Drop(WindowKind.SystemFleet, [(fleet, GroupMode.Object)], to, null, ctrl: false));
+        Assert.Empty(ScreenViews.Drop(WindowKind.SystemMissions, [(fleet, GroupMode.Object)], to, to, ctrl: false));
+        // sector window: a fleets and a facilities entry give the move (fleets) first, then the target command with (system, facilities) to T_dest
+        var split = ScreenViews.Drop(WindowKind.Sector, [(from, GroupMode.Fleets), (from, GroupMode.Facilities)], to, game.Systems[0], ctrl: false);
+        Assert.Equal([(CommandType.Move, GroupMode.Fleets, game.Systems[0]), (CommandType.SetProductionTarget, GroupMode.Facilities, (GameObject)to)], split.Select(c => (c.Id, c.Selection[0].Mode, c.Target)));
         var manager = from.Managers.First(m => m is not null);
-        Assert.Equal((0x214, (GameObject)to), ScreenViews.Drop(9, [(manager, 0)], from, to, false).Select(c => (c.Id, c.Target)).Single());
+        Assert.Equal((CommandType.SetProductionTarget, (GameObject)to), ScreenViews.Drop(WindowKind.SystemManufacturing, [(manager, 0)], from, to, false).Select(c => (c.Id, c.Target)).Single());
     }
 
     // openswr deviation (product owner): units dropped on an own fleet go where they fit - capital ships into the fleet, troops and
@@ -217,12 +217,12 @@ public class ScreenViewTests
         var other = (StarSystem)farCharacter.Container!;
         var ship = fleet.Contents.First(x => Family.IsCapitalShip(x.Type));
         uint Of(uint lo, uint hi) => game.Created.First(o => Family.Of(o.Type) >= lo && Family.Of(o.Type) < hi && o.Owner == Owner.Alliance).Type;
-        uint troopType = Of(0x10, 0x14), fighterType = Of(0x1C, 0x20), agentType = Of(0x3C, 0x40);
+        uint troopType = Of(Families.Troop, Families.CapitalShip), fighterType = Of(Families.Fighter, Families.Headquarters), agentType = Of(Families.SpecialForce, Families.Mission);
 
         List<OrderResult> Drop(StarSystem from, params GameObject[] units)
         {
             var results = new List<OrderResult>();
-            foreach (var (id, selection, target) in ScreenViews.Drop(game, Owner.Alliance, 10, [.. units.Select(u => (u, 0))], from, fleet, ctrl: false))
+            foreach (var (id, selection, target) in ScreenViews.Drop(game, Owner.Alliance, WindowKind.SystemPlanet, [.. units.Select(u => (u, GroupMode.Object))], from, fleet, ctrl: false))
             {
                 OrderResult? r = Orders.Validate(game, ObjectCommands.Build(id, Owner.Alliance, selection, target));
                 if (r.Value.Success) Orders.Submit(game, ObjectCommands.Build(id, Owner.Alliance, selection, target), x => r = x);
@@ -244,20 +244,20 @@ public class ScreenViewTests
         Assert.All(Drop(home, capital, troop, fighter, character, force), r => Assert.True(r.Success));
         game.Clock.RunUntilDay(game, game.Clock.Day + 3);
         Assert.Same(fleet, capital.Container);
-        Assert.All(new[] { troop, fighter, character, force }, u => Assert.True(Aboard(u), $"{u.Type:X8} in {u.Container?.Type:X8}"));
-        Assert.Contains(ScreenViews.FleetContents(game, [fleet], 0x69, Owner.Alliance), v => v.Object == character);
-        Assert.Contains(ScreenViews.FleetContents(game, [fleet], 0x69, Owner.Alliance), v => v.Object == force);
-        Assert.Contains(ScreenViews.FleetContents(game, [fleet], 0x68, Owner.Alliance), v => v.Object == troop);
-        Assert.Contains(ScreenViews.FleetContents(game, [fleet], 0x67, Owner.Alliance), v => v.Object == fighter);
+        Assert.All(new[] { troop, fighter, character, force }, u => Assert.True(Aboard(u), $"{Family.Of(u.Type)}:{SdRef.IndexOf(u.Type)} in {u.Container?.Type}"));
+        Assert.Contains(ScreenViews.FleetContents(game, [fleet], 105, Owner.Alliance), v => v.Object == character);
+        Assert.Contains(ScreenViews.FleetContents(game, [fleet], 105, Owner.Alliance), v => v.Object == force);
+        Assert.Contains(ScreenViews.FleetContents(game, [fleet], 104, Owner.Alliance), v => v.Object == troop);
+        Assert.Contains(ScreenViews.FleetContents(game, [fleet], 103, Owner.Alliance), v => v.Object == fighter);
 
         // the sector window's fleet icon: the side's first Usable fleet there
         Assert.Same(home.Contents.OfType<Fleet>().Where(f => f.Owner == Owner.Alliance && f.Existing && f.Usable).MinBy(f => f.Ref), ScreenViews.IconFleet(home, Owner.Alliance));
 
-        // no room: troops beyond the fleet's troop capacity are refused (0x14, 2), the others board
+        // no room: troops beyond the fleet's troop capacity are refused (capital ship family, 2), the others board
         int left = fleet.Contents.Sum(x => Definitions.Resolve(x.Type)!.Get(SdField.TroopCapacity)) - fleet.Contents.SelectMany(s => s.Contents).Count(o => Family.IsTroop(o.Type));
         var troops = Enumerable.Range(0, left + 1).Select(_ => Objects.Create(game, troopType, Owner.Alliance, home, completed: true)).ToArray();
         var results = Drop(home, troops);
-        Assert.Equal(new OrderResult(0x14, 2), results[0]);
+        Assert.Equal(Refusal.NoTroopRoom, results[0]);
         Assert.True(results[^1].Success);
         Assert.Equal(left, troops.Count(Aboard));
 
@@ -270,14 +270,14 @@ public class ScreenViewTests
         var farFighter = Objects.Create(game, fighterType, Owner.Alliance, other, completed: true);
         var far = Drop(other, farAgent, farShip, farTroop, farFighter, farCharacter);
         game.Clock.RunUntilDay(game, game.Clock.Day + 40);
-        Assert.True(Aboard(farAgent), $"agent in {farAgent.Container?.Type:X8}");
+        Assert.True(Aboard(farAgent), $"agent in {farAgent.Container?.Type}");
         Assert.Same(fleet, farShip.Container);
         Assert.True(Assert.Single(far).Success);
-        Assert.True(Aboard(farTroop), $"troop in {farTroop.Container?.Type:X8}");
+        Assert.True(Aboard(farTroop), $"troop in {farTroop.Container?.Type}");
         Assert.True(Aboard(farFighter) && Aboard(farCharacter));
     }
 
-    // Go to: system -> sector window only. Fleet / ship -> fleet window of its system. Manager -> manufacturing.
+    // Go to: system gives sector window only. Fleet / ship gives fleet window of its system. Manager gives manufacturing.
     [GameFact]
     public void GoTo()
     {
@@ -285,21 +285,21 @@ public class ScreenViewTests
         var fleet = OwnFleet(game, Owner.Alliance);
         var s = (StarSystem)fleet.Container!;
         var ship = fleet.Contents.First(x => Family.IsCapitalShip(x.Type));
-        Assert.Equal((s, 0, (GameObject)s), ScreenViews.GoTo(game, s, Owner.Alliance));
-        Assert.Equal((s, 4, (GameObject)s), ScreenViews.GoTo(game, fleet, Owner.Alliance));
-        Assert.Equal((s, 4, (GameObject)fleet), ScreenViews.GoTo(game, ship, Owner.Alliance));
+        Assert.Equal((s, WindowKind.None, (GameObject)s), ScreenViews.GoTo(game, s, Owner.Alliance));
+        Assert.Equal((s, WindowKind.SystemFleet, (GameObject)s), ScreenViews.GoTo(game, fleet, Owner.Alliance));
+        Assert.Equal((s, WindowKind.SystemFleet, (GameObject)fleet), ScreenViews.GoTo(game, ship, Owner.Alliance));
         var m = game.Systems.First(x => x.Owner == Owner.Alliance && x.Managers[0] is not null).Managers[0];
-        Assert.Equal(9, ScreenViews.GoTo(game, m, Owner.Alliance)!.Value.Kind);
+        Assert.Equal(WindowKind.SystemManufacturing, ScreenViews.GoTo(game, m, Owner.Alliance)!.Value.Kind);
         Assert.Null(ScreenViews.GoTo(game, game.Staging, Owner.Alliance));
     }
 
-    // Missions whose type is hidden (MISSNSD file 52, e.g. Move 0x41000001) are not listed. Player missions are.
+    // Missions whose type is hidden (MISSNSD file 52, e.g. the Move mission type) are not listed. Player missions are.
     [GameFact]
     public void HiddenMissionsNotListed()
     {
         var types = Definitions.Missions.ToDictionary(r => r.Common.Ref);
-        Assert.False(ScreenViews.Listed(new Mission(types[0x41000001], 0x41000900)));
-        Assert.True(ScreenViews.Listed(new Mission(types[0x51000010], 0x51000900)));
+        Assert.False(ScreenViews.Listed(new Mission(types[Refs.MoveMission], SdRef.Make(65, 2304))));
+        Assert.True(ScreenViews.Listed(new Mission(types[Refs.DiplomacyMission], SdRef.Make(81, 2304))));
         Assert.False(ScreenViews.Listed(null));
     }
 
@@ -315,8 +315,8 @@ public class ScreenViewTests
             foreach (var ship in fleet.Contents.Where(x => Family.IsCapitalShip(x.Type) && x.Existing))
             {
                 var aboard = ship.Contents.Where(x => x.Existing).Select(x => Family.Of(x.Type)).ToList();
-                var expected = new Presence(aboard.Any(f => f is >= 0x1C and < 0x20), aboard.Any(f => f is >= 0x10 and < 0x14),
-                    aboard.Any(f => f is >= 0x30 and < 0x40), Orders.Speed(game, ship) == 0);
+                var expected = new Presence(aboard.Any(f => f is >= Families.Fighter and < Families.Headquarters), aboard.Any(f => f is >= Families.Troop and < Families.CapitalShip),
+                    aboard.Any(f => f is >= Families.MajorCharacter and < Families.Mission), Orders.Speed(game, ship) == 0);
                 Assert.Equal(expected, ScreenViews.PresenceMask(game, ship, Owner.Alliance));
                 any = any.Or(expected);
             }

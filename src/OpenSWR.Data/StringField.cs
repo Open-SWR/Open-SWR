@@ -72,7 +72,7 @@ public sealed class StringField(int font, int width, int limit = 0)
         Rescroll();
     }
 
-    /// <summary>Entry fix-up of WM_KEYDOWN / WM_CHAR: begin >= 0 and end -1 -> end := length.</summary>
+    /// <summary>Entry fix-up of WM_KEYDOWN / WM_CHAR: begin >= 0 and end -1 gives end := length.</summary>
     void FixUp()
     {
         if (SelectionBegin >= 0 && SelectionEnd == -1) SelectionEnd = Text.Length;
@@ -104,7 +104,7 @@ public sealed class StringField(int font, int width, int limit = 0)
 
     /// <summary>
     /// A key's character is typed into the field: printable, and Ctrl and Alt both up or both held (AltGr,
-    /// Inferred); exactly one of them held -> not typed. Accelerator keys never get here (the screen takes them first).
+    /// Inferred); exactly one of them held gives not typed. Accelerator keys never get here (the screen takes them first).
     /// </summary>
     public static bool Typed(char c, bool ctrl, bool alt) => ctrl == alt && Printable(c);
 
@@ -112,8 +112,8 @@ public sealed class StringField(int font, int width, int limit = 0)
     static bool Separator(char c) => char.IsWhiteSpace(c) || char.IsPunctuation(c) || char.IsSymbol(c);
 
     /// <summary>
-    /// WM_CHAR (focused): non-printable -> ignored; a selection is deleted, else in overwrite mode with 0 &lt; caret &lt; length the
-    /// character at the caret; caret -1 -> length; the character is inserted (caret + 1) only when L = 0 or caret &lt; L. True = change notification
+    /// WM_CHAR (focused): non-printable gives ignored; a selection is deleted, else in overwrite mode with 0 &lt; caret &lt; length the
+    /// character at the caret; caret -1 gives length; the character is inserted (caret + 1) only when L = 0 or caret &lt; L. True = change notification
     /// posted (every printable character, also one the limit refused). Selecting ends only on a printable character (a
     /// non-printable one returns before, so a drag goes on).
     /// </summary>
@@ -178,7 +178,7 @@ public sealed class StringField(int font, int width, int limit = 0)
         return post;
     }
 
-    /// <summary>Shift+Left with the new caret c: c = b - 1 -> b := c; else c = e - 1 -> e := c (none when e = b); else no selection -> (c, c + 1).</summary>
+    /// <summary>Shift+Left with the new caret c: c = b - 1 gives b := c; else c = e - 1 gives e := c (none when e = b); else no selection gives (c, c + 1).</summary>
     void ShiftLeft(int c)
     {
         int b = SelectionBegin, e = SelectionEnd;
@@ -187,7 +187,7 @@ public sealed class StringField(int font, int width, int limit = 0)
         else if (b == e) (SelectionBegin, SelectionEnd) = (c, c + 1);
     }
 
-    /// <summary>Shift+Right with the new caret c: c = e + 1 -> e := c; else c = b + 1 -> b := c (none when b = e); else no selection -> (c - 1, c).</summary>
+    /// <summary>Shift+Right with the new caret c: c = e + 1 gives e := c; else c = b + 1 gives b := c (none when b = e); else no selection gives (c - 1, c).</summary>
     void ShiftRight(int c)
     {
         int b = SelectionBegin, e = SelectionEnd;

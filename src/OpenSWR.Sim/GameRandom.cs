@@ -5,7 +5,7 @@ namespace OpenSWR.Sim;
 /// </summary>
 public sealed class GameRandom
 {
-    const long Modulus = 0x7FFFFFFF, Multiplier = 41358;
+    const long Modulus = 2147483647, Multiplier = 41358;
 
     /// <summary>Current generator state; a new generator starts with state = seed (no warm-up).</summary>
     public int State { get; private set; }
@@ -18,7 +18,7 @@ public sealed class GameRandom
 
     public GameRandom(int seed)
     {
-        if (seed < 1 || seed > 0x7FFFFFFE) throw new ArgumentOutOfRangeException(nameof(seed), "Seed must be in [1, 0x7FFFFFFE].");
+        if (seed < 1 || seed > 2147483646) throw new ArgumentOutOfRangeException(nameof(seed), "Seed must be in [1, 2147483646].");
         State = seed;
     }
 
@@ -31,10 +31,10 @@ public sealed class GameRandom
         return State;
     }
 
-    /// <summary>n <= 1 gives 0 without stepping; else floor(x / floor(0x7FFFFFFE / n)), which can rarely return n itself.</summary>
+    /// <summary>n <= 1 gives 0 without stepping; else floor(x / floor(2147483646 / n)), which can rarely return n itself.</summary>
     public int Rand(int n, string site = "")
     {
-        int result = n <= 1 ? 0 : Step() / (0x7FFFFFFE / n);
+        int result = n <= 1 ? 0 : Step() / (2147483646 / n);
         Trace?.Add((site, n, result));
         return result;
     }

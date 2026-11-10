@@ -7,7 +7,7 @@ using OpenSWR.Sim;
 
 /// <summary>
 /// Research panel (read-only): the side's three research lines (ship / troop / facility, by mission kind k) with
-/// points, current ResearchOrder, the points one 0x381 accrual adds (non-suspended member facilities), the next item and its cost
+/// points, current ResearchOrder, the points one accrual adds (non-suspended member facilities), the next item and its cost
 /// (difficulty * CostScale div 100), what the next level unlocks, the exhausted flag and what is buildable now
 /// (Research.Buildable); below, the side's running research missions. Research is driven by the sim (accrual timer, missions);
 /// no order here. Keys: Esc close. Own presentation (no original assets).
@@ -69,10 +69,10 @@ public partial class ResearchPanel : Control
             lines.Add("");
         }
         lines.Add("RESEARCH MISSIONS");
-        var missions = game.Missions.Where(m => m.Owner == _side && m.Kind == 0x53 && !m.Destroyed).ToList();
+        var missions = game.Missions.Where(m => m.Owner == _side && m.Kind == MissionKind.Research && !m.Destroyed).ToList();
         if (missions.Count == 0) lines.Add("  none");
         foreach (var m in missions)
-            lines.Add($"  {_name(m.Record.Common)}: {string.Join(", ", m.Members.Select(a => a is Character c ? _name(c.Definition.Common) : game.Definitions.Resolve(a.Type) is { } r ? _name(r.Common) : $"{a.Type:X8}"))}   phase {m.Phase}");
+            lines.Add($"  {_name(m.Record.Common)}: {string.Join(", ", m.Members.Select(a => a is Character c ? _name(c.Definition.Common) : game.Definitions.Resolve(a.Type) is { } r ? _name(r.Common) : $"{Family.Of(a.Type)}:{SdRef.IndexOf(a.Type)}"))}   phase {m.Phase}");
         lines.Add("");
         lines.Add("read-only: points come from the accrual timer and research missions   Esc close");
         _text.Text = string.Join("\n", lines);

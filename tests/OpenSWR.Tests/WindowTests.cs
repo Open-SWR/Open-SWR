@@ -18,7 +18,7 @@ public class WindowTests
     }
 
     // Totals = cost * count. Build days = E(m, product, count, 0). Delivery days = travel to the TargetKey's system with
-    // the product's Hyperdrive. Invalid (n/a, Done greyed) exactly when the validation refuses: (0xF3, 1).
+    // the product's Hyperdrive. Invalid (n/a, Done greyed) exactly when the validation refuses: (243, 1).
     [GameFact]
     public void ProductionEstimate()
     {
@@ -27,9 +27,9 @@ public class WindowTests
         var home = game.SystemsOf(Owner.Empire).First(s => Plain(s) && Economy.Members(s.Managers[(int)ManufacturingKind.Ship]).Count > 0);
         var other = game.SystemsOf(Owner.Empire).Where(s => s != home && Plain(s)).MaxBy(s => Orders.Distance(home, s))!;
         var m = home.Managers[(int)ManufacturingKind.Ship];
-        var product = Research.Buildable(game, Owner.Empire, 0x28).First(r => Family.IsCapitalShip(r.Common.Ref));
+        var product = Research.Buildable(game, Owner.Empire, Families.Shipyard).First(r => Family.IsCapitalShip(r.Common.Ref));
         uint type = product.Common.Ref;
-        Command Order(int count) => new(0x211, Owner.Empire) { Targets = [(m, 0)], Fields = [type, (uint)count] };
+        Command Order(int count) => new(CommandType.ProduceShip, Owner.Empire) { Targets = [(m, GroupMode.Object)], Fields = [type, (uint)count] };
 
         var e = Economy.ProductionEstimate(game, Order(2));
         Assert.True(e.Valid);
@@ -37,31 +37,31 @@ public class WindowTests
         Assert.Equal(Economy.EstimateDays(game, m, type, 2, false), e.BuildDays);
         Assert.Equal(0, e.DeliveryDays); // TargetKey = the own system
 
-        Run(game, new Command(0x214, Owner.Empire) { Targets = [(m, 0)], ArgRef = other });
+        Run(game, new Command(CommandType.SetProductionTarget, Owner.Empire) { Targets = [(m, GroupMode.Object)], ArgRef = other });
         int speed = product.Get(SdField.Hyperdrive) is var h and not 0 ? h : 100;
         Assert.Equal(Orders.TravelDays(game, home, other, speed), Economy.ProductionEstimate(game, Order(2)).DeliveryDays);
         Assert.True(Economy.ProductionEstimate(game, Order(2)).DeliveryDays > 0);
 
-        // a count the side cannot maintain: (0xF3, 1) -> invalid, the numbers still computed
+        // a count the side cannot maintain: (243, 1) gives invalid, the numbers still computed
         var side = game.Sides[Owner.Empire];
         int over = (side.MaintenanceCapacity - side.MaintenanceAllocated) / Math.Max(1, game.MaintenanceCost(type)) + 1;
-        Assert.Equal(new OrderResult(0xF3, 1), Orders.Validate(game, Order(over)));
+        Assert.Equal(Refusal.NoMaintenance, Orders.Validate(game, Order(over)));
         var bad = Economy.ProductionEstimate(game, Order(over));
         Assert.False(bad.Valid);
         Assert.Equal(game.MaintenanceCost(type) * over, bad.Maintenance);
     }
 
-    // Rank order of the listed types (research by line 0x20 / 0x21 / 0x22). The window lists only passing types
+    // Rank order of the listed types (research by line 32 / 33 / 34). The window lists only passing types
     // (filtered, not greyed), in that order.
     [GameFact]
     public void MissionRankOrder()
     {
-        uint[] order = [0x55, 0x58, 0x57, 0x53000020, 0x53000021, 0x53000022, 0x51, 0x56, 0x52, 0x54, 0x63, 0x62, 0x61, 0x6A, 0x69];
-        var listed = Definitions.Missions.Where(r => r.Unk34 == 0).OrderBy(MissionEligibility.MissionRank).ToList();
-        uint Key(MissionRecord r) => Family.Of(r.Common.Ref) == 0x53 ? r.Common.Ref : Family.Of(r.Common.Ref);
+        uint[] order = [85, 88, 87, Refs.ShipResearchMission, Refs.FacilityResearchMission, Refs.TroopResearchMission, 81, 86, 82, 84, 99, 98, 97, 106, 105];
+        var listed = Definitions.Missions.Where(r => !r.Unlisted).OrderBy(MissionEligibility.MissionRank).ToList();
+        uint Key(MissionRecord r) => Family.Of(r.Common.Ref) == (uint)MissionKind.Research ? r.Common.Ref : Family.Of(r.Common.Ref);
         Assert.Equal(order.Where(k => listed.Any(r => Key(r) == k)), listed.Where(r => MissionEligibility.MissionRank(r) < 65).Select(Key));
-        Assert.Equal(3, Definitions.Missions.Count(r => Family.Of(r.Common.Ref) == 0x53 && MissionEligibility.MissionRank(r) is >= 4 and <= 6));
-        Assert.All(Definitions.Missions.Where(r => Family.Of(r.Common.Ref) is >= 0x40 and < 0x50), r => Assert.Equal(65, MissionEligibility.MissionRank(r)));
+        Assert.Equal(3, Definitions.Missions.Count(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Research && MissionEligibility.MissionRank(r) is >= 4 and <= 6));
+        Assert.All(Definitions.Missions.Where(r => Family.Of(r.Common.Ref) is >= Families.Mission and < Families.AgentMission), r => Assert.Equal(65, MissionEligibility.MissionRank(r)));
 
         var game = Game(Owner.Alliance, 532947196);
         var a = game.Characters.First(c => c.Owner == Owner.Alliance && c.Placed && c.Usable && !c.OnMission && c.Container is StarSystem);
@@ -70,11 +70,11 @@ public class WindowTests
         var types = MissionEligibility.WindowTypes(game, Owner.Alliance, [a], [], target);
         Assert.NotEmpty(types);
         Assert.Equal(types.Select(MissionEligibility.MissionRank).Order(), types.Select(MissionEligibility.MissionRank));
-        Assert.All(types, t => Assert.Null(MissionEligibility.Validate(game, 0x240, Owner.Alliance, t.Common.Ref, [a], [], target)));
-        Assert.Contains(types, t => Family.Of(t.Common.Ref) == 0x51);
+        Assert.All(types, t => Assert.Null(MissionEligibility.Validate(game, CommandType.CreateMission, Owner.Alliance, t.Common.Ref, [a], [], target)));
+        Assert.Contains(types, t => Family.Of(t.Common.Ref) == (uint)MissionKind.Diplomacy);
     }
 
-    static string Name(GameObject o) => $"{o.Type:X8}#{o.Id:X}";
+    static string Name(GameObject o) => $"{Family.Of(o.Type)}:{SdRef.IndexOf(o.Type)}#{o.Id}";
     static string Def(SdCommon c) => $"#{c.StringId}";
     static string Value(StatusRow r) => (r.Text != 0 ? $"[{r.Text}]" : "") + r.Value;
     static List<(int, string)> Rows(StatusPage p) => [.. p.Rows.Select(r => (r.Label, Value(r)))];
@@ -84,7 +84,7 @@ public class WindowTests
     public void StatusSystem()
     {
         var game = Game(Owner.Alliance, 532947196);
-        var s = game.SystemsOf(Owner.Alliance).First(x => x.Contents.Any(o => Family.Of(o.Type) == 0x2C));
+        var s = game.SystemsOf(Owner.Alliance).First(x => x.Contents.Any(o => Family.Of(o.Type) == Families.Mine));
         var page = StatusPage.Build(game, Owner.Alliance, s, Name, Def);
         Assert.Equal(34432, page.Title);
         var rows = Rows(page);
@@ -92,7 +92,7 @@ public class WindowTests
         Assert.Equal("[34648]", rows[0].Item2);
         Assert.Equal((s.Support.ToString(), (100 - s.Support).ToString()), (rows[3].Item2, rows[4].Item2));
         Assert.Equal($"{s.UsedEnergy}:{s.Energy}", rows[5].Item2);
-        Assert.Equal(s.Contents.Count(o => Family.Of(o.Type) == 0x2C && o.Existing).ToString(), rows[8].Item2);
+        Assert.Equal(s.Contents.Count(o => Family.Of(o.Type) == Families.Mine && o.Existing).ToString(), rows[8].Item2);
         Assert.Equal(s.Contents.Count(o => Family.IsTroop(o.Type) && o.Existing).ToString(), rows[17].Item2);
     }
 
@@ -165,8 +165,8 @@ public class WindowTests
         var home = game.SystemsOf(Owner.Alliance).MaxBy(s => s.Contents.OfType<Character>().Count(c => c.Owner == Owner.Alliance && c.Usable))!;
         var agents = home.Contents.OfType<Character>().Where(c => c.Owner == Owner.Alliance && c.Usable && !c.OnMission).Take(2).ToList();
         var target = game.Systems.Where(s => s != home && Knowledge.See(game, s, Owner.Alliance) is { Populated: true, Owner: Owner.Neutral }).MinBy(s => Orders.Distance(home, s))!;
-        uint diplomacy = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == 0x51).Common.Ref;
-        Run(game, new Command(0x240, Owner.Alliance) { Targets = [(agents[0], 0)], Decoys = [.. agents.Skip(1)], ArgRef = target, Fields = [0, 0, diplomacy] });
+        uint diplomacy = Definitions.Missions.First(r => Family.Of(r.Common.Ref) == (uint)MissionKind.Diplomacy).Common.Ref;
+        Run(game, new Command(CommandType.CreateMission, Owner.Alliance) { Targets = [(agents[0], 0)], Decoys = [.. agents.Skip(1)], ArgRef = target, Fields = [0, 0, diplomacy] });
         var m = game.Missions.Last();
         var page = StatusPage.Build(game, Owner.Alliance, m, Name, Def);
         Assert.Equal(34422, page.Title);
@@ -198,12 +198,12 @@ public class WindowTests
     public void BattleStartRows()
     {
         var game = Game(Owner.Alliance);
-        static bool Fighter(GameObject x) => Family.Of(x.Type) is >= 0x1C and < 0x20;
+        static bool Fighter(GameObject x) => Family.Of(x.Type) is >= Families.Fighter and < Families.Headquarters;
         // the system's first Usable Alliance fleet whose first capital ship carries no fighter (fighters come first: the new one is row 3)
         var (s, fleet, ship) = game.Systems.Select(x => (x, f: x.Contents.OfType<Fleet>().FirstOrDefault(f => f.Owner == Owner.Alliance && f.Usable)))
             .Where(p => p.f is not null).Select(p => (p.x, p.f!, ship: p.f!.Contents.FirstOrDefault(y => Family.IsCapitalShip(y.Type) && y.Usable)))
             .First(p => p.ship is not null && !p.ship.Contents.Any(Fighter));
-        var fighter = new GameObject(0x1C000003, Owner.Alliance, game.NextId());
+        var fighter = new GameObject(Refs.XWingSquadron, Owner.Alliance, game.NextId());
         ship!.Add(fighter);
         var rows = ScreenViews.BattleStartRows(s, 1);
         Assert.Equal(new ScreenViews.BattleStartRow(null, 6435, 11, true, -1, 0), rows[0]);
@@ -227,12 +227,12 @@ public class WindowTests
     [Fact]
     public void ReportEmptyTexts()
     {
-        GameObject[] none = [], captured = [new(0x30000001, Owner.Alliance, 1), new(0x30000002, Owner.Alliance, 2)];
+        GameObject[] none = [], captured = [new(SdRef.Make(Families.MajorCharacter, 1), Owner.Alliance, 1), new(SdRef.Make(Families.MajorCharacter, 2), Owner.Alliance, 2)];
         var cells = ScreenViews.ReportCells(none, captured, none);
         Assert.Equal([(null, 6464), (captured[0], 0), (null, 6465)], cells);
         Assert.Equal([(null, 34086), (null, 34086), (null, 6465)], ScreenViews.ReportCells(none, none, none));
         Assert.Equal([(null, 34086), (null, 6465)], ScreenViews.ReportCells(none, null, none));
-        var lost = new GameObject(0x14000001, Owner.Alliance, 3);
+        var lost = new GameObject(SdRef.Make(Families.CapitalShip, 1), Owner.Alliance, 3);
         Assert.Equal([(null, 6464), (lost, 0)], ScreenViews.ReportCells(none, null, [lost]));
     }
 }

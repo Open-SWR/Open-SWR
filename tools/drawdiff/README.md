@@ -17,7 +17,7 @@ dotnet run --project tools/drawdiff -- --make-vector <in.jsonl> <out.jsonl> [--w
 ## Model
 
 Both logs become items: kind (bitmap / text / fill / line), res id, source rect, drawn size, key, screen position where known,
-text hash, DrawText flags, font (`height/weight/face`), colour as RGB (`iN` = palette index, `none` = null brush / pen).
+text hash, DrawText flags, font (`height/weight/face`), colour as decimal `red,green,blue` (`iN` = palette index, `none` = null brush / pen).
 Open-SWR font indices map through `TextLayout` (font table) to LOGFONT height / weight; font −1 (Godot's own font) is
 `?/?/godot`. Open-SWR art not from the install matches by its `src` tag (`src:…`), never present in the original; `ellipse`
 (galaxy map circles) is an openswr-only kind.
@@ -50,7 +50,7 @@ Also: `bm_kdraw` is skipped (it runs `bm_kblit`, which is traced); DrawText with
 ## Vectors
 
 `tests/OpenSWR.Tests/Vectors/draw/` holds numbers only: `--make-vector` keeps the records the diff reads, replaces every string
-`s` by `sh` = length + first 8 hex of SHA-256 (UTF-8), and drops return addresses, `seq`, palettes. Both sides hash the same way.
+`s` by `sh` = length + first 4 bytes of SHA-256 (UTF-8) as a decimal number, and drops return addresses, `seq`, palettes. Both sides hash the same way.
 With `--window`, the state alive at the window start comes first: live bitmap objects the window uses, their DCs with the last
 selections and text colour, and the placement draws (composite blits, `bm_draw`, `bitblt` of a section's DC) those objects
 depend on, each distinct one once; draws before the window that show something are dropped. Placement draws after the window

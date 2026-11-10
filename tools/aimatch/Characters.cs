@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 using System.Globalization;
 using System.Text;
 using OpenSWR.Sim;
@@ -13,7 +14,7 @@ public sealed record CharacterLoss(int Day, Owner Side, uint Character, bool Dea
 public sealed class MissionRecord(Mission m, int day)
 {
     public Mission Mission { get; } = m;
-    public uint Kind { get; } = m.Kind;
+    public uint Kind { get; } = (uint)m.Kind;
     public Owner Side { get; } = m.Owner;
     public int Created { get; } = day;
     public bool Succeeded { get; set; }
@@ -25,7 +26,7 @@ public sealed class MissionRecord(Mission m, int day)
     public int Decoys { get; } = m.Decoys.Count;
     public int ForceAgents { get; } = m.Team.Count(a => Family.IsSpecialForce(a.Type));
     public int ForceDecoys { get; } = m.Decoys.Count(a => Family.IsSpecialForce(a.Type));
-    public bool Major { get; } = m.Objective is Character c && Family.Of(c.Type) is >= 0x30 and < 0x38;
+    public bool Major { get; } = m.Objective is Character c && Family.Of(c.Type) is >= Families.MajorCharacter and < Families.MinorCharacter;
     /// <summary>The objective system's owner at the first sight (none for other objectives).</summary>
     public Owner? ObjectiveOwner { get; } = (m.Objective as StarSystem)?.Owner;
 }
@@ -44,7 +45,7 @@ public sealed class CharacterRecorder
     readonly HashSet<Character> _inPlay = [];
     public Dictionary<Owner, int> Freed { get; } = [];
     public Dictionary<Owner, int> Recruited { get; } = [];
-    /// <summary>Special forces lost (Existing -> not) per side.</summary>
+    /// <summary>Special forces lost (Existing gives not) per side.</summary>
     public Dictionary<Owner, int> ForcesLost { get; } = [];
     readonly HashSet<GameObject> _forces = [];
 
@@ -64,7 +65,7 @@ public sealed class CharacterRecorder
     }
 
     static Mission? MissionOf(GameState game, Character c) =>
-        game.Missions.FirstOrDefault(m => !m.Deleted && m.CompletionStatus == 0 && m.Team.Contains(c));
+        game.Missions.FirstOrDefault(m => !m.Deleted && m.CompletionStatus == MissionCompletion.None && m.Team.Contains(c));
 
     void Count(GameState game, int day)
     {
@@ -85,7 +86,7 @@ public sealed class CharacterRecorder
             Count(game, 0); // the state after the first day stands for day 0
         }
         // missions: new ones (with the openswr estimate they were ordered with), outcomes
-        foreach (var m in game.Missions.Where(m => !_missions.ContainsKey(m) && m.Owner is Owner.Alliance or Owner.Empire && m.Kind >= 0x51))
+        foreach (var m in game.Missions.Where(m => !_missions.ContainsKey(m) && m.Owner is Owner.Alliance or Owner.Empire && m.Kind >= MissionKind.Diplomacy))
         {
             var r = _missions[m] = new MissionRecord(m, game.Day);
             Missions.Add(r);
@@ -95,8 +96,8 @@ public sealed class CharacterRecorder
         }
         foreach (var (m, r) in _missions)
         {
-            if (m.TaskStatus == 3) r.Succeeded = true;
-            if (m.CompletionStatus != 0 || m.Deleted) r.Ended = true;
+            if (m.TaskStatus == MissionTaskStatus.Succeeded) r.Succeeded = true;
+            if (m.CompletionStatus != MissionCompletion.None || m.Deleted) r.Ended = true;
         }
         // special forces lost
         foreach (var f in game.Created.Where(o => Family.IsSpecialForce(o.Type) && o.Owner is Owner.Alliance or Owner.Empire))
@@ -129,16 +130,16 @@ public sealed class CharacterRecorder
                     else activity = "other";
                     var enemy = p.Owner == Owner.Alliance ? Owner.Empire : Owner.Alliance;
                     string cause;
-                    if (p.Mission is { CompletionStatus: 3 or 4 }) cause = "foiled mission";
-                    else if (game.Missions.Any(m => m.Owner == enemy && m.Kind is 0x62 or 0x63 && m.Objective == c)) cause = "enemy abduction / assassination";
-                    else if (c.DestroyedReason is 0xC or 0xE || at is not null && (battles.Any(b => b.System == at) || changedToday.Any(x => x.System == at.Ref && x.Cause == ChangeCause.Troops)))
+                    if (p.Mission is { CompletionStatus: MissionCompletion.FoiledEnRoute or MissionCompletion.Foiled }) cause = "foiled mission";
+                    else if (game.Missions.Any(m => m.Owner == enemy && m.Kind is MissionKind.Abduction or MissionKind.Assassination && m.Objective == c)) cause = "enemy abduction / assassination";
+                    else if (c.DestroyedReason is DestroyedReason.Battle or DestroyedReason.Assault || at is not null && (battles.Any(b => b.System == at) || changedToday.Any(x => x.System == at.Ref && x.Cause == ChangeCause.Troops)))
                         cause = "battle or assault";
-                    else if (game.Missions.Any(m => m.Kind is 0x64 or 0x65 or 0x71 or 0x72 or 0x73 && (m.Objective == c || m.Team.Contains(c)))) cause = "bounty hunter or story";
+                    else if (game.Missions.Any(m => m.Kind is MissionKind.Palace or MissionKind.Bounty or MissionKind.Dagobah or MissionKind.Vacation or MissionKind.Pickup && (m.Objective == c || m.Team.Contains(c)))) cause = "bounty hunter or story";
                     else if (p.Mission is not null) cause = "mission (other end)";
                     else cause = "other";
                     var rec = p.Mission is { } mm && _missions.TryGetValue(mm, out var mr) ? mr : null;
                     if (rec is not null) rec.Lost = true;
-                    Losses.Add(new(game.Day, p.Owner, c.Ref, death, at?.Ref, at?.Owner ?? Owner.Neutral, p.Mission?.Kind, activity, cause, rec?.Estimate));
+                    Losses.Add(new(game.Day, p.Owner, c.Ref, death, at?.Ref, at?.Owner ?? Owner.Neutral, (uint?)p.Mission?.Kind, activity, cause, rec?.Estimate));
                 }
             }
             if (c.Existing) _inPlay.Add(c);
@@ -149,7 +150,7 @@ public sealed class CharacterRecorder
 
     static string Name(uint kind) => Match.MissionName(kind);
 
-    /// <summary>The step 4 tables over the games of a run.</summary>
+    /// <summary>The character tables over the games of a run.</summary>
     public static string Tables(IReadOnlyList<(GameResult Result, CharacterRecorder Recorder)> runs)
     {
         var text = new StringBuilder();
@@ -199,7 +200,7 @@ public sealed class CharacterRecorder
             ("own systems", (r, m) => m.ObjectiveOwner == r.OpenSWR), ("neutral systems", (r, m) => m.ObjectiveOwner == Owner.Neutral),
             ("other", (r, m) => m.ObjectiveOwner != r.OpenSWR && m.ObjectiveOwner != Owner.Neutral) })
         {
-            var d = runs.SelectMany(x => x.Recorder.Missions.Where(m => m.Side == x.Result.OpenSWR && m.Kind == 0x51 && pick(x.Result, m))).ToList();
+            var d = runs.SelectMany(x => x.Recorder.Missions.Where(m => m.Side == x.Result.OpenSWR && m.Kind == 81 && pick(x.Result, m))).ToList();
             var ended = d.Where(m => m.Ended).ToList();
             text.AppendLine(string.Create(CultureInfo.InvariantCulture,
                 $"  {name,-16} {(double)d.Count / games,7:F2}  ended {(double)ended.Count / games,7:F2}: succeeded {(ended.Count == 0 ? 0 : 100.0 * ended.Count(m => m.Succeeded) / ended.Count),5:F1} %"));
@@ -223,7 +224,7 @@ public sealed class CharacterRecorder
             text.AppendLine($"  {who}: special forces lost {(double)runs.Sum(x => x.Recorder.ForcesLost.GetValueOrDefault(who == "openswr" ? x.Result.OpenSWR : Other(x.Result.OpenSWR))) / games:F1} per game");
             foreach (var g in missions.Where(x => x.Who == who).Select(x => x.m).GroupBy(m => (m.Kind, m.Major)).OrderBy(g => g.Key.Kind).ThenBy(g => g.Key.Major))
                 text.AppendLine(string.Create(CultureInfo.InvariantCulture,
-                    $"    {Name(g.Key.Kind) + (g.Key.Kind is 0x61 or 0x62 or 0x63 ? g.Key.Major ? " (major)" : " (minor)" : ""),-26} {g.Count(),7}  agents {g.Average(m => m.Agents),4:F2} decoys {g.Average(m => m.Decoys),4:F2}  special-force agents {100.0 * g.Count(m => m.ForceAgents > 0) / g.Count(),5:F1} %, decoys {100.0 * g.Count(m => m.ForceDecoys > 0) / g.Count(),5:F1} %"));
+                    $"    {Name(g.Key.Kind) + (g.Key.Kind is 97 or 98 or 99 ? g.Key.Major ? " (major)" : " (minor)" : ""),-26} {g.Count(),7}  agents {g.Average(m => m.Agents),4:F2} decoys {g.Average(m => m.Decoys),4:F2}  special-force agents {100.0 * g.Count(m => m.ForceAgents > 0) / g.Count(),5:F1} %, decoys {100.0 * g.Count(m => m.ForceDecoys > 0) / g.Count(),5:F1} %"));
         }
         text.AppendLine("characters per side (alive / captured / dead / not yet in play, average per game), freed later, recruited");
         foreach (var who in new[] { "openswr", "original" })
@@ -236,7 +237,7 @@ public sealed class CharacterRecorder
             }
             int freed = runs.Sum(x => x.Recorder.Freed.GetValueOrDefault(who == "openswr" ? x.Result.OpenSWR : Other(x.Result.OpenSWR)));
             int recruited = runs.Sum(x => x.Recorder.Recruited.GetValueOrDefault(who == "openswr" ? x.Result.OpenSWR : Other(x.Result.OpenSWR)));
-            var rec = missions.Where(x => x.Who == who && x.m.Kind == 0x55).Select(x => x.m).ToList();
+            var rec = missions.Where(x => x.Who == who && x.m.Kind == 85).Select(x => x.m).ToList();
             line.Append(string.Create(CultureInfo.InvariantCulture, $"; freed {(double)freed / games:F1}; recruitment missions {(double)rec.Count / games:F1} (succeeded {(double)rec.Count(m => m.Succeeded) / games:F1}), characters recruited {(double)recruited / games:F1} per game"));
             text.AppendLine(line.ToString());
         }

@@ -3,14 +3,14 @@ using OpenSWR.Data.Dat;
 namespace OpenSWR.Sim;
 
 /// <summary>
-/// Side research lines: accrual (timer 0x381), level advance, buildable list. Lines are indexed by the mission kind k
-/// (0 ship / shipyard 0x28, 1 facility / construction yard 0x2A, 2 troop / training facility 0x29). Research posts no
+/// Side research lines: accrual (research timer), level advance, buildable list. Lines are indexed by the mission kind k
+/// (0 ship / shipyard, 1 facility / construction yard, 2 troop / training facility). Research posts no
 /// notification, no event and draws nothing.
 /// </summary>
 public static class Research
 {
     /// <summary>Facility family of line k.</summary>
-    public static uint FacilityFamily(int k) => k switch { 0 => 0x28u, 1 => 0x2Au, _ => 0x29u };
+    public static uint FacilityFamily(int k) => k switch { 0 => Families.Shipyard, 1 => Families.ConstructionYard, _ => Families.TrainingFacility };
 
     /// <summary>Line k of a manufacturing kind (0 ship, 1 construction, 2 training; the same numbering as the kind).</summary>
     public static int Line(ManufacturingKind kind) => (int)kind;
@@ -34,10 +34,10 @@ public static class Research
         return Candidates(game, side, f).Where(r => r.Get(SdField.ResearchOrder) <= order).ToList();
     }
 
-    static int LineOf(uint f) => f switch { 0x28 => 0, 0x2A => 1, 0x29 => 2, _ => throw new ArgumentOutOfRangeException(nameof(f)) };
+    static int LineOf(uint f) => f switch { Families.Shipyard => 0, Families.ConstructionYard => 1, Families.TrainingFacility => 2, _ => throw new ArgumentOutOfRangeException(nameof(f)) };
 
     /// <summary>
-    /// Timer 0x381 action: over the systems owned by the side in registry order, sum the non-suspended member
+    /// Research timer action: over the systems owned by the side in registry order, sum the non-suspended member
     /// facilities of each manager; a system missing one of its three managers aborts with no update. Then
     /// ship, troop, facility points += their sums, each setter running its hook.
     /// </summary>
@@ -90,14 +90,14 @@ public static class Research
 
     /// <summary>
     /// Level-advance hook: next item = the first entry of the first order above the current one (up to maxOrder) with any
-    /// candidate; cost = difficulty * CostScale div 100. If that entry lies outside families [0x10, 0x40) or does not resolve,
+    /// candidate; cost = difficulty * CostScale div 100. If that entry lies outside families [16, 64) or does not resolve,
     /// the search stops and the hook does nothing (line stuck). No next item sets exhausted (points kept). Points >= cost
     /// set the order to the next item, then points -= cost (the setter re-runs this hook).
     /// </summary>
     static void Advance(GameState game, SideState side, int k)
     {
         var next = Next(game, side, k);
-        if (next is not null && (Family.Of(next.Common.Ref) is not (>= 0x10 and < 0x40) || game.Definitions.Resolve(next.Common.Ref) is null)) return;
+        if (next is not null && (Family.Of(next.Common.Ref) is not (>= Families.Troop and < Families.Mission) || game.Definitions.Resolve(next.Common.Ref) is null)) return;
         if (next is null) { side.ResearchExhausted[k] = true; return; }
         int cost = Cost(side, next);
         if (side.ResearchPoints[k] < cost) return;

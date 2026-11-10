@@ -49,9 +49,9 @@ public class TbFileTests
         Assert.NotEmpty(refs);
         Assert.All(refs.Where(r => r.Value != 0), r => Assert.Contains((r.Family, r.Index), entities));
 
-        // CMUNAFTB first entry: one Corellian Corvette (capital ship family 0x14, Index 0x45)
+        // CMUNAFTB first entry: one Corellian Corvette (capital ship family 20, Index 69)
         var corvette = TbFile.ReadSeedFamilies(Dat("CMUNAFTB.DAT"))[0].Items.Single().Ref;
-        Assert.Equal((0x14u, 0x45u), (corvette.Family, corvette.Index));
+        Assert.Equal((Families.CapitalShip, 69u), (corvette.Family, corvette.Index));
     }
 
     [GameFact]

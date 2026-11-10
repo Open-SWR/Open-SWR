@@ -36,24 +36,24 @@ public class MessageTextTests
     {
         var table = Accelerator.Decode(PeResources.Load(GameDir.File("TEXTCOMM.DLL")).OfType(new ResId(9)).Single().Data.Span);
         Assert.NotEmpty(table);
-        Assert.Equal(new Accelerator(0x13, 'W', 3001), table[0]); // FVIRTKEY, FNOINVERT and FALT: Alt+W
+        Assert.Equal(new Accelerator(19, 'W', 3001), table[0]); // FVIRTKEY, FNOINVERT and FALT: Alt+W
     }
 
     // TEXTCOMM accelerator table 11 is matched before the focused name box, with exact Shift / Ctrl / Alt.
-    // Ctrl+X (0xBD5) goes to the screen and leaves the field's text and selection alone. AltGr (Ctrl+Alt) matches no Alt entry,
+    // Ctrl+X (the cut command) goes to the screen and leaves the field's text and selection alone. AltGr (Ctrl+Alt) matches no Alt entry,
     // so AltGr+P and AltGr+E are typed. A character with exactly one of Ctrl / Alt is not typed.
     [GameFact]
     public void AcceleratorsBeforeTheField()
     {
         var table = Accelerator.Decode(PeResources.Load(GameDir.File("TEXTCOMM.DLL")).Find(new ResId(9), 11)!.Data.Span);
         ushort? Cmd(ushort vk, char c, bool shift, bool ctrl, bool alt) => Accelerator.Find(table, vk, c, shift, ctrl, alt)?.Command;
-        Assert.Equal((ushort)0xBD5, Cmd('X', '\x18', false, true, false));
-        Assert.Equal((ushort)0xBD6, Cmd('S', '\x13', false, true, false));
-        Assert.Equal((ushort)0xBD3, Cmd(9, '\t', false, true, false));
-        Assert.Equal((ushort)0xBD4, Cmd(9, '\t', true, true, false));
-        Assert.Equal((ushort)0xBBC, Cmd('P', 'p', false, false, true));
-        Assert.Equal((ushort)0xBBA, Cmd(0xBB, '=', false, false, true)); // character entry Alt+"="
-        Assert.Equal((ushort)0xBBA, Cmd(0x6B, '+', false, false, true)); // Alt+Numpad+
+        Assert.Equal((ushort)3029, Cmd('X', '\x18', false, true, false));
+        Assert.Equal((ushort)3030, Cmd('S', '\x13', false, true, false));
+        Assert.Equal((ushort)3027, Cmd(9, '\t', false, true, false));
+        Assert.Equal((ushort)3028, Cmd(9, '\t', true, true, false));
+        Assert.Equal((ushort)3004, Cmd('P', 'p', false, false, true));
+        Assert.Equal((ushort)3002, Cmd(187, '=', false, false, true)); // character entry Alt+"="
+        Assert.Equal((ushort)3002, Cmd(107, '+', false, false, true)); // Alt+Numpad+
         Assert.Null(Cmd('X', 'X', true, true, false)); // Ctrl+Shift+X
         Assert.Null(Cmd('X', '\0', false, true, true)); // Ctrl+Alt+X
         Assert.Null(Cmd('P', 'p', false, true, true)); // AltGr+P

@@ -89,7 +89,7 @@ public static class ModLoader
         byte[] head = new byte[24];
         using (var f = File.OpenRead(path))
             if (f.Read(head, 0, 24) < 24) return null;
-        ReadOnlySpan<byte> signature = [0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        ReadOnlySpan<byte> signature = [137, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10];
         if (!head.AsSpan(0, 8).SequenceEqual(signature) || head[12] != 'I' || head[13] != 'H' || head[14] != 'D' || head[15] != 'R') return null;
         int w = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(head.AsSpan(16)), h = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(head.AsSpan(20));
         return w > 0 && h > 0 ? (w, h) : null;
@@ -151,18 +151,18 @@ sealed record RecordType(string Name, string[] Files, uint[] AddFamilies, uint D
 sealed class ModSet
 {
     const uint ModModule = GameDefinitions.ModStringModule;
-    static readonly (uint, uint) None = (0, 0), Shipyard = (0x28, 0x29), Training = (0x29, 0x2A), Construction = (0x2A, 0x2B);
+    static readonly (uint, uint) None = (0, 0), Shipyard = (Families.Shipyard, Families.TrainingFacility), Training = (Families.TrainingFacility, Families.ConstructionYard), Construction = (Families.ConstructionYard, Families.ManufacturingEnd);
 
     static readonly RecordType[] Types =
     [
-        new("sector", ["SECTORSD"], [0x80], 0x80, None, true, true),
-        new("system", ["SYSTEMSD"], [], 0, None, true, true), // family 0x90 / 0x92 follows its sector's Group
-        new("capitalShip", ["CAPSHPSD"], [0x14, 0x18], 0x14, Shipyard, true, true),
-        new("fighter", ["FIGHTSD"], [0x1C], 0x1C, Shipyard, true, true),
-        new("troop", ["TROOPSD"], [0x10], 0x10, Training, true, true),
-        new("facility", ["DEFFACSD", "MANFACSD", "PROFACSD", "ALLFACSD"], [0x22, 0x23, 0x24, 0x25, 0x28, 0x29, 0x2A, 0x2C, 0x2D], 0, Construction, true, true),
-        new("specialForce", ["SPECFCSD"], [0x3C], 0x3C, Training, true, true),
-        new("minorCharacter", ["MNCHARSD"], [0x38], 0x38, None, true, true),
+        new("sector", ["SECTORSD"], [Families.Sector], Families.Sector, None, true, true),
+        new("system", ["SYSTEMSD"], [], 0, None, true, true), // family 144 / 146 follows its sector's Group
+        new("capitalShip", ["CAPSHPSD"], [Families.CapitalShip, Families.DeathStar], Families.CapitalShip, Shipyard, true, true),
+        new("fighter", ["FIGHTSD"], [Families.Fighter], Families.Fighter, Shipyard, true, true),
+        new("troop", ["TROOPSD"], [Families.Troop], Families.Troop, Training, true, true),
+        new("facility", ["DEFFACSD", "MANFACSD", "PROFACSD", "ALLFACSD"], [Families.IonCannon, Families.Gun, Families.PlanetaryShield, Families.DeathStarShield, Families.Shipyard, Families.TrainingFacility, Families.ConstructionYard, Families.Mine, Families.Refinery], 0, Construction, true, true),
+        new("specialForce", ["SPECFCSD"], [Families.SpecialForce], Families.SpecialForce, Training, true, true),
+        new("minorCharacter", ["MNCHARSD"], [Families.MinorCharacter], Families.MinorCharacter, None, true, true),
         new("majorCharacter", ["MJCHARSD"], [], 0, None, false, false),
         new("mission", ["MISSNSD"], [], 0, None, false, false),
     ];
@@ -398,7 +398,7 @@ sealed class ModSet
         if (e.TryGetProperty("family", out var fam))
         {
             if (type.Name == "system") { _errors.Add($"{where}: family: a system's family follows its sector's group (1 → core 0x90, 2 / 3 → rim 0x92)."); return; }
-            if (!TryNumber(fam, 0xFF, out family) || !type.AddFamilies.Contains(family))
+            if (!TryNumber(fam, 255, out family) || !type.AddFamilies.Contains(family))
             {
                 _errors.Add($"{where}: family: {type.Name} family must be one of {string.Join(", ", type.AddFamilies.Select(f => $"0x{f:X2}"))}.");
                 return;
@@ -494,7 +494,7 @@ sealed class ModSet
                     _refs.Add((key.File, key.Index, f.Name, FullId(mod, value.GetString()!), $"{where}: {name}"));
                     continue;
                 }
-                if (!TryNumber(value, f.U16 ? 0xFFFF : int.MaxValue, out uint n)) { _errors.Add($"{where}: {name}: an integer 0–{(f.U16 ? 0xFFFF : int.MaxValue)} (or \"0x…\")."); continue; }
+                if (!TryNumber(value, f.U16 ? 65535 : int.MaxValue, out uint n)) { _errors.Add($"{where}: {name}: an integer 0–{(f.U16 ? 65535 : int.MaxValue)} (or \"0x…\")."); continue; }
                 if (f.U16) words.SetU16(f.Name, (ushort)n);
                 else words.Set(f.Name, n);
             }
@@ -602,7 +602,7 @@ sealed class ModSet
         _tableOrigin[name] = $"{mod.Id} {file}";
     }
 
-    /// <summary>Resolves references, sets added systems' families, builds the definitions. Origins: record SdRef (X8) or table name -> where it was last changed.</summary>
+    /// <summary>Resolves references, sets added systems' families, builds the definitions. Origins: record SdRef (X8) or table name gives where it was last changed.</summary>
     public (GameDefinitions, Dictionary<string, string>) Finish(IReadOnlyList<ModManifest> mods)
     {
         foreach (var (file, index, field, id, where) in _refs)
@@ -616,7 +616,7 @@ sealed class ModSet
         var sectors = _sd["SECTORSD"].Records.ToDictionary(r => r.Index, r => r.Get(SdField.SectorGroup));
         foreach (var key in _addedSystems)
             if (_sd["SYSTEMSD"].Find(key.Index) is { } words)
-                words.Family = sectors.TryGetValue(words.Get(SdField.SystemSector), out uint group) && group == 1 ? 0x90u : 0x92u;
+                words.Family = sectors.TryGetValue(words.Get(SdField.SystemSector), out uint group) && group == 1 ? Families.CoreSystem : Families.RimSystem;
 
         uint Resolve(object? v, string where)
         {

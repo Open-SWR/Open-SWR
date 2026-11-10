@@ -14,10 +14,10 @@ using Godot;
 ///   dw, dh (dst rect), sx, sy, w, h (src rect in original pixels), key (palette index, keyed only); with res null, src names
 ///   the art's origin (composed:..., mod:..., edata:..., rowpic:..., movie:..., or the drawing node's parent class for node textures);
 ///   no src only for a texture nobody tagged;
-/// - drawtext: s, r [left, top, right, bottom], fmt (DrawText flags, hex), font (openswr font index; -1 = Godot's own font: map
-///   names and counts, Label / Button / LineEdit / RichTextLabel text), c (RGB hex);
-/// - rectangle: a solid fill as GDI Rectangle with NULL_PEN: r [left, top, right + 1, bottom + 1], brush (RGB hex), pen null;
-/// - moveto / lineto: a 1-px line, lineto with pen (RGB hex); end point exclusive as in GDI; outlines and polylines as one
+/// - drawtext: s, r [left, top, right, bottom], fmt (DrawText flags, decimal), font (openswr font index; -1 = Godot's own font: map
+///   names and counts, Label / Button / LineEdit / RichTextLabel text), c (RGB as "red,green,blue", decimal);
+/// - rectangle: a solid fill as GDI Rectangle with NULL_PEN: r [left, top, right + 1, bottom + 1], brush (RGB), pen null;
+/// - moveto / lineto: a 1-px line, lineto with pen (RGB); end point exclusive as in GDI; outlines and polylines as one
 ///   moveto + lineto per segment;
 /// - ellipse (openswr, no trace event): a circle / arc of the galaxy map, r = bounding box, brush (filled) or pen (outline).
 /// Every record also carries seq, ev, t (ms) and node (the drawing node's class). Godot nodes that draw themselves (Label, Button,
@@ -25,7 +25,7 @@ using Godot;
 /// while the log is on.
 /// Known differences from the Frida trace (a diff tool maps these):
 /// - colours sit inline as RRGGBB (rectangle: a = alpha when below 1); the trace has separate brush / pen / textcolor events
-///   with COLORREF 0x02BBGGRR;
+///   with COLORREF layout (flag byte 2, then blue, green, red);
 /// - dx / dy are screen coordinates; the trace's are relative to the destination bitmap;
 /// - res sits inline; the trace has it on bm_new;
 /// - w / h are always real sizes; in the trace 0 means the full bitmap;
@@ -87,7 +87,7 @@ public static class DrawLog
         if (!On) return;
         var f = Begin("drawtext", c);
         f.Append(",\"s\":").Append(Json(text)).Append(",\"r\":").Append(Ltrb(Screen(c, rect, xf), 0));
-        f.Append(",\"fmt\":\"0x").Append(format.Win32.ToString("x")).Append("\",\"font\":").Append(font).Append(",\"c\":\"").Append(Rgb(colour)).Append('"');
+        f.Append(",\"fmt\":").Append(format.Win32).Append(",\"font\":").Append(font).Append(",\"c\":\"").Append(Rgb(colour)).Append('"');
         End(f);
     }
 
@@ -216,7 +216,7 @@ public static class DrawLog
     static string Ltrb(Rect2 r, int extra) => string.Create(CultureInfo.InvariantCulture,
         $"[{r.Position.X},{r.Position.Y},{r.End.X + extra},{r.End.Y + extra}]");
 
-    static string Rgb(Color c) => $"{c.R8:x2}{c.G8:x2}{c.B8:x2}";
+    static string Rgb(Color c) => $"{c.R8},{c.G8},{c.B8}";
 
     static string Json(string s) => System.Text.Json.JsonSerializer.Serialize(s);
 }

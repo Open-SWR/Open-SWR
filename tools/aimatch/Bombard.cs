@@ -1,3 +1,4 @@
+using OpenSWR.Data.Dat;
 using System.Globalization;
 using System.Text;
 using OpenSWR.Sim;
@@ -8,7 +9,7 @@ namespace OpenSWR.AiMatch;
 /// <summary>
 /// Measurement only: bombardments of both sides from the sim's strike records
 /// (<see cref="GameState.StrikeTrace"/>, set by aimatch when slices are on; UI only, no draw) and the accepted bombard orders
-/// (0x220-0x223) from the clock's executed-command hook. Per bombardment: attacker, target owner, order type, units destroyed by
+/// (the four bombardment orders) from the clock's executed-command hook. Per bombardment: attacker, target owner, order type, units destroyed by
 /// kind, the target owner's troops before and after, and the attacker's next troop landing there within 30 days with its result.
 /// Also troops lost in assault strikes, for the bombardment against assault comparison. An observer: draws nothing, writes nothing.
 /// </summary>
@@ -27,7 +28,7 @@ public sealed class BombardRecorder
         public Dictionary<uint, int> Facilities { get; } = [];
         public int? LandingDays; // days to the attacker's next troop landing there (null = none within the window)
         public bool LandingWon;
-        /// <summary>Step 33: no defender defence facility (families [0x22, 0x28)) or fighter directly in the system before the strike.</summary>
+        /// <summary>No defender defence facility (families from IonCannon up to, not including, Shipyard) or fighter directly in the system before the strike.</summary>
         public bool Undefended;
     }
 
@@ -73,13 +74,13 @@ public sealed class BombardRecorder
             {
                 Day = r.Day, System = r.System.Ref, Attacker = r.Attacker, Defender = r.Defender,
                 Type = _lastOrder.GetValueOrDefault((r.Attacker, r.System.Ref)), Troops = troops, TroopsAfter = troopsAfter, TroopsBefore = troopsAfter + troops,
-                Undefended = !r.Contents.Concat(lost).Any(x => x.Owner == r.Defender && Family.Of(x.Type) is (>= 0x22 and < 0x28) or (>= 0x1C and < 0x20)),
+                Undefended = !r.Contents.Concat(lost).Any(x => x.Owner == r.Defender && Family.Of(x.Type) is (>= Families.IonCannon and < Families.Shipyard) or (>= Families.Fighter and < Families.Headquarters)),
             };
             foreach (var x in lost.Where(x => x.Owner == r.Defender && !Family.IsTroop(x.Type)))
             {
                 uint f = Family.Of(x.Type);
-                if (f is >= 0x22 and < 0x28) st.Defence++;
-                else if (f is >= 0x28 and < 0x30) st.Facilities[f] = st.Facilities.GetValueOrDefault(f) + 1;
+                if (f is >= Families.IonCannon and < Families.Shipyard) st.Defence++;
+                else if (f is >= Families.Shipyard and < Families.MajorCharacter) st.Facilities[f] = st.Facilities.GetValueOrDefault(f) + 1;
                 else st.Other++;
             }
             st.AttackerLost = lost.Count(x => x.Owner == r.Attacker);
@@ -92,12 +93,12 @@ public sealed class BombardRecorder
 
     static string Family2(uint f) => f switch
     {
-        0x28 => "shipyard", 0x29 => "training", 0x2A => "construction yard", 0x2C => "mine", 0x2D => "refinery", _ => $"family 0x{f:X2}",
+        40 => "shipyard", 41 => "training", 42 => "construction yard", 44 => "mine", 45 => "refinery", _ => $"family {f}",
     };
 
     static string Kind(int type) => type switch
     {
-        0x220 => "0x220 military", 0x221 => "0x221 production", 0x222 => "0x222 all + resources", 0x223 => "0x223 all + Death Star", _ => "no order seen",
+        544 => "544 military", 545 => "545 production", 546 => "546 all + resources", 547 => "547 all + Death Star", _ => "no order seen",
     };
 
     public static string Table(IReadOnlyList<(GameResult Result, BombardRecorder Recorder)> runs)
@@ -107,7 +108,7 @@ public sealed class BombardRecorder
         string F(double v) => v.ToString("F2", CultureInfo.InvariantCulture);
         string P(int n, int of) => of == 0 ? "-" : (100.0 * n / of).ToString("F0", CultureInfo.InvariantCulture) + "%";
         var all = runs.SelectMany(x => x.Recorder.Strikes.Select(s => (x.Result, s))).ToList();
-        text.AppendLine($"bombardments (measurement; per game over {runs.Count} games; strikes from the sim's strike records, orders = accepted 0x220–0x223)");
+        text.AppendLine($"bombardments (measurement; per game over {runs.Count} games; strikes from the sim's strike records, orders = accepted 544–547)");
         foreach (var who in new[] { "openswr", "original" })
         {
             bool Mine(GameResult r, Owner o) => who == "openswr" ? o == r.OpenSWR : o != r.OpenSWR;
@@ -128,7 +129,7 @@ public sealed class BombardRecorder
                 parts.Add($"{label} days {P(w.Count, l.Count)} (won {w.Count(x => x.s.LandingWon)} / {w.Count})");
             }
             text.AppendLine($"    own landing there after it: {string.Join(", ", parts)}, none {P(l.Count(x => x.s.LandingDays is null), l.Count)}");
-            // step 25 (Bombard): per game, troops / facilities killed, assaults within 10 days after a bombardment and their outcome
+            // Bombard, per game, troops / facilities killed, assaults within 10 days after a bombardment and their outcome
             var soon = l.Where(x => x.s.LandingDays is <= 10).ToList();
             text.AppendLine($"    per game: troops killed {F((double)l.Sum(x => x.s.Troops) / games)}, facilities killed {F((double)l.Sum(x => x.s.Facilities.Values.Sum()) / games)}, defence killed {F((double)l.Sum(x => x.s.Defence) / games)}; "
                 + $"bombardments with an own assault within 10 days {F((double)soon.Count / games)} (won {F((double)soon.Count(x => x.s.LandingWon) / games)})");
