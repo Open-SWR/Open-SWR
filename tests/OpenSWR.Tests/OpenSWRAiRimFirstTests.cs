@@ -69,11 +69,11 @@ public class OpenSWRAiRimFirstTests(ITestOutputHelper output)
         Assert.DoesNotContain(ai.RimDefenceSites(game), x => x.Site == s);
     }
 
-    /// <summary>RimFirst is off in the default.</summary>
+    /// <summary>RimFirst is on in the default.</summary>
     [Fact]
-    public void FlagOffInTheDefault()
+    public void FlagOnInTheDefault()
     {
         Assert.True(OpenSWRController.ParseFeatures("RimFirst") is { } parsed && parsed.SetEquals([RimFirst])); // aimatch --features
-        Assert.DoesNotContain(RimFirst, OpenSWRController.DefaultFeatures);
+        Assert.Contains(RimFirst, OpenSWRController.DefaultFeatures);
     }
 }
