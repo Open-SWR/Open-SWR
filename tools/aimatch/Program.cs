@@ -127,6 +127,7 @@ Console.Write(Match.Summary(results));
 Console.Write(Match.TickTable(results));
 Console.Write(MaintenanceProbe.Table(results));
 Console.Write(ShipTypes.Table(results));
+Console.Write(Retakes.Table(results));
 if (slicesCsv is not null)
 {
     Console.WriteLine();
