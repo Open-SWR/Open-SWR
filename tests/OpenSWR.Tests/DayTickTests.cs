@@ -77,6 +77,7 @@ public class DayTickTests
     public void TimerFiresWhileSerialMatchesAndStaleEventsDrop()
     {
         var game = Bare();
+        var units = game.Systems.SelectMany(Descendants).ToList();
         var timers = game.Clock.TimerTrace = [];
         var slot = TimerCatalogue.Slot(game, TimerType.Research, Refs.AllianceSide, game.Sides[Owner.Alliance]);
         slot.Start(game, 3, 0);           // fires day 4, 7, ...
@@ -155,6 +156,7 @@ public class DayTickTests
     public void OneShotTimerDrawsItsRescheduleThenDiesStale()
     {
         var game = Bare();
+        var units = game.Systems.SelectMany(Descendants).ToList();
         var timers = game.Clock.TimerTrace = [];
         var trace = game.Random.Trace = [];
         TimerCatalogue.Start(game, TimerType.Dagobah, Refs.MissionManager, null, 1, 100);
@@ -172,6 +174,7 @@ public class DayTickTests
     public void TimerOutsideItsFamilyRangeIsDropped()
     {
         var game = Bare();
+        var units = game.Systems.SelectMany(Descendants).ToList();
         var timers = game.Clock.TimerTrace = [];
         TimerCatalogue.Start(game, TimerType.FacilityCycle, SdRef.Make(Families.CoreSystem, 1), null, 1, 0); // the FacilityCycle timer targets families 40-47
         game.Clock.RunUntilDay(game, 3);
@@ -238,18 +241,26 @@ public class DayTickTests
         Assert.Equal(50 * Math.Min(mines, refineries), side.MaintenanceCapacity);
         Assert.Equal(side.Demand > side.MaintenanceCapacity, side.Exceeded);
 
-        // Push demand over capacity: exceeded gives Maintenance timer every G MaintenanceEnforcementDays = 10 days, one autoscrap request per firing.
+        // Push demand over capacity: exceeded gives Maintenance timer every G MaintenanceEnforcementDays = 10 days, one autoscrap per
+        // firing (the unit destroyed as a maintenance scrap, demand recomputed; the timer stops once demand fits).
         var yavin = game.Known.Yavin!;
         int cost = game.MaintenanceCost(Refs.AllianceArmy);
         for (int i = (side.MaintenanceCapacity - side.Demand) / cost + 1; i > 0; i--) yavin.Add(new GameObject(Refs.AllianceArmy, Owner.Alliance, game.NextId()));
         Economy.RecomputeSideTotals(game);
         Assert.True(side.Exceeded);
         Assert.Equal(side.MaintenanceCapacity, side.MaintenanceAllocated);
+        var units = game.Systems.SelectMany(Descendants).ToList();
         var timers = game.Clock.TimerTrace = [];
         game.Sides[Owner.Alliance].Speed = 4;
-        game.Clock.RunUntilDay(game, 21);
-        Assert.Equal([11, 21], timers.Where(t => t.Fire && t.Type == TimerType.Maintenance).Select(t => t.Day));
-        Assert.InRange(game.Systems.SelectMany(Descendants).Count(o => o.AutoscrapRequested), 1, 2);
+        game.Clock.RunUntilDay(game, 22); // past the day-21 firing
+        var fires = timers.Where(t => t.Fire && t.Reinserted && t.Type == TimerType.Maintenance).Select(t => t.Day).ToList(); // a stale firing (timer stopped) acts on nothing
+        Assert.Equal(11, fires[0]);
+        Assert.True(fires.SequenceEqual([11]) || fires.SequenceEqual([11, 21]));
+        var scrapped = units.Concat(game.Created).Distinct().Where(o => o.AutoscrapRequested).ToList();
+        Assert.Equal(fires.Count, scrapped.Count);
+        Assert.All(scrapped, o => Assert.True(o.Destroyed && o.DestroyedReason == DestroyedReason.MaintenanceScrap && !o.Existing));
+        Assert.DoesNotContain(game.Systems.SelectMany(Descendants), o => o.AutoscrapRequested);
+        Assert.Equal(side.Demand > side.MaintenanceCapacity, side.Exceeded);
     }
 
     static IEnumerable<GameObject> Descendants(GameObject o) => o.Contents.SelectMany(c => Descendants(c).Prepend(c));

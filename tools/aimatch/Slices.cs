@@ -304,7 +304,7 @@ public sealed class SliceRecorder(int length = 100)
                 _sabotaged.Add((game.Day, o.Owner, at.Ref));
             }
         }
-        // maintenance shortfall: the sim only flags the autoscrap pick (Economy.Autoscrap; the destruction is not modelled), so the
+        // maintenance shortfall: the autoscrap pick (Economy.Autoscrap) is destroyed as a maintenance scrap; the
         // column counts capital ships and fighters newly flagged
         foreach (var o in game.Created.Where(o => o.AutoscrapRequested && Family.Of(o.Type) is >= Families.CapitalShip and < Families.Headquarters && _autoscrap.Add(o)))
             Add(o.Owner, "ships_lost_maintenance");

@@ -269,6 +269,17 @@ public class ScreenViewTests
         Objects.SetParent(game, troops.First(Aboard), home); // room for one troop
         var farFighter = Objects.Create(game, fighterType, Owner.Alliance, other, completed: true);
         var far = Drop(other, farAgent, farShip, farTroop, farFighter, farCharacter);
+        // the units created above push demand over capacity, and maintenance enforcement would scrap a random unit during the
+        // travel: units at third systems make room
+        var side = game.Sides[Owner.Alliance];
+        static IEnumerable<GameObject> Within(GameObject o) => o.Contents.SelectMany(c => Within(c).Prepend(c));
+        foreach (var t in game.Systems.Where(s => s != home && s != other).SelectMany(Within).Where(o => o.Owner == Owner.Alliance && o.Existing && game.MaintenanceCost(o.Type) > 0).ToList())
+            if (side.Demand > side.MaintenanceCapacity)
+            {
+                Objects.Destroy(game, t, DestroyedReason.Scrapped);
+                while (game.Clock.DispatchOne(game)) { }
+            }
+        Assert.True(side.Demand <= side.MaintenanceCapacity, $"demand {side.Demand} capacity {side.MaintenanceCapacity} exceeded {side.Exceeded}");
         game.Clock.RunUntilDay(game, game.Clock.Day + 40);
         Assert.True(Aboard(farAgent), $"agent in {farAgent.Container?.Type}");
         Assert.Same(fleet, farShip.Container);

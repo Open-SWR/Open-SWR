@@ -559,15 +559,20 @@ public static class Economy
 
     /// <summary>
     /// Maintenance timer (fires only while exceeded: clearing the flag stops the timer): candidates = the side's Existing, Completed
-    /// objects of families [16, 64) with MaintenanceCost != 0 in registry order; roll(n - 1) picks one for autoscrap.
-    /// Inferred, not modelled: the destruction that follows the request.
+    /// objects of families [16, 64) with MaintenanceCost != 0 in registry order; roll(n - 1) picks one for autoscrap, which is then
+    /// destroyed as a maintenance scrap. Inferred: the destruction right after the request (the original has the maintenance-scrap
+    /// destroyed reason, its view message and its "Maintenance Shortfall" game message; the step from request to destruction is not
+    /// verified).
     /// </summary>
     internal static void Autoscrap(GameState game, SideState side)
     {
         var owner = game.Sides.First(s => s.Value == side).Key;
         var candidates = Placed(game).Where(o => o.Existing && o.Completed && o.Owner == owner && Family.Of(o.Type) is >= Families.Troop and < Families.Mission
             && game.MaintenanceCost(o.Type) != 0).OrderBy(o => o.Key).ToList();
-        if (candidates.Count > 0) candidates[game.Random.Roll(candidates.Count - 1, DrawSite.Autoscrap)].AutoscrapRequested = true;
+        if (candidates.Count == 0) return;
+        var pick = candidates[game.Random.Roll(candidates.Count - 1, DrawSite.Autoscrap)];
+        pick.AutoscrapRequested = true;
+        Objects.Destroy(game, pick, DestroyedReason.MaintenanceScrap);
     }
 
     /// <summary>All objects inside systems (destroyed objects have left their container).</summary>
