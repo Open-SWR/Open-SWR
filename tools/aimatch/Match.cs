@@ -73,7 +73,7 @@ public enum ProductCategory { CapitalShips, Fighters, Troops, SpecialForces, Pro
 public sealed record GameResult(int Game, int Seed, Owner OpenSWR, int Day, string Result, int Score, double OpenSWRShare, TimeSpan Wall, List<Checkpoint> Checkpoints,
     Owner PlayerSide, SortedDictionary<uint, MissionCount> Missions, List<OwnerChange> Changes, List<AssaultLoss> AssaultLosses,
     Dictionary<(Owner Side, int Period, ProductCategory Category), (int Units, int Maintenance)> Production, List<Slice>? Slices = null,
-    List<(int Day, double Ms)>? Ticks = null, MaintenanceProbe? Maintenance = null)
+    List<(int Day, double Ms)>? Ticks = null, MaintenanceProbe? Maintenance = null, List<ShipTypeCount>? ShipTypes = null)
 {
     /// <summary>+1 openswr won (victory or ahead), -1 lost, 0 draw.</summary>
     public bool Won => Score > 0;
@@ -159,7 +159,7 @@ public static class Match
         var orbitSince = new Dictionary<StarSystem, int>(); // first day of a continuous foreign fleet presence
         int OwnTroops(StarSystem s, Owner o) => s.Contents.Count(x => Family.IsTroop(x.Type) && x.Usable && x.Owner == o);
         var production = new Dictionary<(Owner, int, ProductCategory), (int, int)>();
-        int created = state.Created.Count;
+        int created = state.Created.Count, startObjects = created;
         void Owners()
         {
             if (state.Day != troopDay)
@@ -269,7 +269,7 @@ public static class Match
             Console.WriteLine($"  game {game}: rim drops {rim.RimDropped.Count} at {dropped.Count} systems, held at end {dropped.Count(s => s.Owner == openswr)}, enemy-held at end {dropped.Count(s => s.Owner == (openswr == Owner.Alliance ? Owner.Empire : Owner.Alliance))}, rim systems owned {state.Systems.Count(s => s.Owner == openswr && !s.Sector.IsCore)}");
         }
         return new(game, seed, openswr, state.Day, result, score, mine + theirs == 0 ? 0 : (double)mine / (mine + theirs), watch.Elapsed, checkpoints,
-            state.Settings.PlayerSide, missions, changes, assaults, production, slices?.Slices, ticks, maintenance);
+            state.Settings.PlayerSide, missions, changes, assaults, production, slices?.Slices, ticks, maintenance, ShipTypes.Count(state, startObjects));
     }
 
     /// <summary>One game's clock step times: 99th percentile and slowest step with its day.</summary>
