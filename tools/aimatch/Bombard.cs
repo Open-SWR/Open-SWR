@@ -33,7 +33,7 @@ public sealed class BombardRecorder
     }
 
     /// <summary>Troops of the defender destroyed in one assault strike.</summary>
-    public sealed record AssaultStrike(int Day, uint System, Owner Attacker, Owner Defender, int Troops);
+    public sealed record AssaultStrike(int Day, uint System, Owner Attacker, Owner Defender, int Troops, int AttackerTroops = 0, int DefenderTroops = 0, bool Won = false);
 
     public List<Strike> Strikes { get; } = [];
     public List<AssaultStrike> Assaults { get; } = [];
@@ -62,10 +62,13 @@ public sealed class BombardRecorder
             int troops = lost.Count(x => Family.IsTroop(x.Type) && x.Owner == r.Defender);
             if (r.Assault)
             {
-                Assaults.Add(new(r.Day, r.System.Ref, r.Attacker, r.Defender, troops));
                 // a landing closes the open bombardments of its attacker there
                 bool won = changes.Any(c => c.Day == r.Day && c.System == r.System.Ref && c.To == r.Attacker && c.Cause == ChangeCause.Troops)
                     || r.System.Owner == r.Attacker;
+                // the attacker's troops at the start: still aboard at the end, destroyed in the run, or landed in the system
+                int attackers = r.Fleets.Sum(f => f.Aboard.Count(x => Family.IsTroop(x.Type) && x.Owner == r.Attacker))
+                    + lost.Count(x => Family.IsTroop(x.Type) && x.Owner == r.Attacker) + r.Contents.Count(x => Family.IsTroop(x.Type) && x.Owner == r.Attacker);
+                Assaults.Add(new(r.Day, r.System.Ref, r.Attacker, r.Defender, troops, attackers, troopsAfter + troops, won));
                 foreach (var b in Strikes.Where(b => b.System == r.System.Ref && b.Attacker == r.Attacker && b.LandingDays is null && r.Day - b.Day <= Window))
                     (b.LandingDays, b.LandingWon) = (r.Day - b.Day, won);
                 continue;
@@ -100,6 +103,25 @@ public sealed class BombardRecorder
     {
         544 => "544 military", 545 => "545 production", 546 => "546 all + resources", 547 => "547 all + Death Star", _ => "no order seen",
     };
+
+    /// <summary>Assaults on sided systems by attacker (openswr / original) and the defender's openswr side: attacker troops, defender troops before, captures, and captures by defender troops.</summary>
+    public static string AssaultTable(IReadOnlyList<(GameResult Result, BombardRecorder Recorder)> runs)
+    {
+        var text = new StringBuilder();
+        text.AppendLine("assaults (attacker troops aboard, defender troops before, captured), by attacker and the side the OpenSWR AI played");
+        var rows = runs.SelectMany(x => x.Recorder.Assaults.Where(a => a.Defender is Owner.Alliance or Owner.Empire)
+            .Select(a => (Who: a.Attacker == x.Result.OpenSWR ? "openswr" : "original", Played: x.Result.OpenSWR, a))).ToList();
+        static string Bin(int d) => d == 0 ? "0" : d <= 2 ? "1-2" : d <= 5 ? "3-5" : d <= 9 ? "6-9" : "10+";
+        foreach (var g in rows.GroupBy(x => (x.Who, x.Played)).OrderBy(g => g.Key.Who).ThenBy(g => g.Key.Played))
+        {
+            var l = g.ToList();
+            text.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                $"  {g.Key.Who,-8} attacks (openswr {g.Key.Played,-8}): {l.Count / (double)runs.Count(r => r.Result.OpenSWR == g.Key.Played),6:F1} per game, attacker troops {l.Average(x => x.a.AttackerTroops),5:F1}, defender troops {l.Average(x => x.a.DefenderTroops),5:F1}, captured {100.0 * l.Count(x => x.a.Won) / l.Count,5:F1} %"));
+            text.AppendLine("    by defender troops: " + string.Join("  ", l.GroupBy(x => Bin(x.a.DefenderTroops)).OrderBy(b => b.Min(x => x.a.DefenderTroops))
+                .Select(b => string.Create(CultureInfo.InvariantCulture, $"{b.Key}: {b.Count()} ({100.0 * b.Count(x => x.a.Won) / b.Count():F0} % captured, attacker {b.Average(x => x.a.AttackerTroops):F1})"))));
+        }
+        return text.ToString();
+    }
 
     public static string Table(IReadOnlyList<(GameResult Result, BombardRecorder Recorder)> runs)
     {

@@ -59,7 +59,8 @@ public sealed record OwnerChange(int Day, uint System, Owner From, Owner To, Cha
 /// before (real state), the loser's troops there then, the attacker's troops there after the change, an attacker fleet in orbit for 1 day or more before
 /// the loss, border (an attacker system within ReachDays at speed 100) or interior.
 /// </summary>
-public sealed record AssaultLoss(int Day, Owner Loser, int Value, int TroopsBefore, int Landed, bool Orbit, bool Border, bool Defended = false);
+public sealed record AssaultLoss(int Day, Owner Loser, int Value, int TroopsBefore, int Landed, bool Orbit, bool Border, bool Defended = false,
+    int FightersBefore = 0, int GunsBefore = 0, bool BattleBefore = false);
 
 /// <summary>Production categories of the mix table.</summary>
 public enum ProductCategory { CapitalShips, Fighters, Troops, SpecialForces, ProductionFacilities, Mines, Refineries, DefenceFacilities }
@@ -71,7 +72,8 @@ public enum ProductCategory { CapitalShips, Fighters, Troops, SpecialForces, Pro
 /// </summary>
 public sealed record GameResult(int Game, int Seed, Owner OpenSWR, int Day, string Result, int Score, double OpenSWRShare, TimeSpan Wall, List<Checkpoint> Checkpoints,
     Owner PlayerSide, SortedDictionary<uint, MissionCount> Missions, List<OwnerChange> Changes, List<AssaultLoss> AssaultLosses,
-    Dictionary<(Owner Side, int Period, ProductCategory Category), (int Units, int Maintenance)> Production, List<Slice>? Slices = null)
+    Dictionary<(Owner Side, int Period, ProductCategory Category), (int Units, int Maintenance)> Production, List<Slice>? Slices = null,
+    List<(int Day, double Ms)>? Ticks = null)
 {
     /// <summary>+1 openswr won (victory or ahead), -1 lost, 0 draw.</summary>
     public bool Won => Score > 0;
@@ -149,7 +151,7 @@ public static class Match
         var assaults = new List<AssaultLoss>();
         // the owner's troops and the system's value for its owner at the start of the previous day (facilities change owner with the
         // system, so the value is taken before the loss)
-        var yesterday = state.Systems.ToDictionary(s => s, s => (Troops: 0, Value: 0));
+        var yesterday = state.Systems.ToDictionary(s => s, s => (Troops: 0, Value: 0, Fighters: 0, Guns: 0));
         var today = yesterday;
         // version 7: the openswr side's covered defence targets at the start of the previous day
         HashSet<StarSystem> defendedYesterday = [], defendedToday = [];
@@ -166,7 +168,9 @@ public static class Match
                 (defendedYesterday, defendedToday) = (defendedToday, (state.Controllers[openswr] as OpenSWRController)?.DefendedSystems.ToHashSet() ?? []);
                 var homes = new[] { Owner.Alliance, Owner.Empire }.ToDictionary(o => o, o => OpenSWRController.HomeSector(state, o));
                 today = state.Systems.ToDictionary(s => s, s => (OwnTroops(s, s.Owner),
-                    s.Owner is Owner.Alliance or Owner.Empire ? OpenSWRController.SystemValue(state, s.Owner, s, homes[s.Owner], x => (x.Owner, x.Populated)) : 0));
+                    s.Owner is Owner.Alliance or Owner.Empire ? OpenSWRController.SystemValue(state, s.Owner, s, homes[s.Owner], x => (x.Owner, x.Populated)) : 0,
+                    s.Contents.Count(x => x.Owner == s.Owner && x.Usable && Family.Of(x.Type) is >= Families.Fighter and < Families.Headquarters),
+                    s.Contents.Count(x => x.Owner == s.Owner && x.Usable && Family.Of(x.Type) is >= Families.IonCannon and < Families.PlanetaryShield)));
             }
             foreach (var s in state.Systems)
             {
@@ -186,8 +190,10 @@ public static class Match
                         var loser = was.Owner;
                         bool border = state.Systems.Any(x => x.Owner == s.Owner && x != s && Orders.TravelDays(state, x, s, 100) <= OpenSWRController.ReachDays);
                         bool orbit = orbitSince.TryGetValue(s, out int since) && state.Day - since >= 1;
-                        var (troopsBefore, value) = yesterday.GetValueOrDefault(s);
-                        assaults.Add(new(state.Day, loser, value, troopsBefore, OwnTroops(s, s.Owner), orbit, border, loser == openswr && defendedYesterday.Contains(s)));
+                        var (troopsBefore, value, fighters, guns) = yesterday.GetValueOrDefault(s);
+                        bool battle = (state.BattleTrace ?? []).Any(b => b.System == s && state.Day - b.Day <= 3);
+                        assaults.Add(new(state.Day, loser, value, troopsBefore, OwnTroops(s, s.Owner), orbit, border, loser == openswr && defendedYesterday.Contains(s),
+                            fighters, guns, battle));
                     }
                 }
                 before[s] = Snapshot(s);
@@ -201,6 +207,8 @@ public static class Match
                 production[key] = (n + 1, m + state.MaintenanceCost(o.Type));
             }
         }
+        // wall time of each clock step (sim and both controllers; probes excluded): the Godot screen runs the step on its main thread
+        var ticks = new List<(int Day, double Ms)>();
         var checkpoints = new List<Checkpoint>();
         void Check()
         {
@@ -213,7 +221,9 @@ public static class Match
             int day = state.Day, start = state.Clock.Tick;
             while (state.Day == day && !state.GameOver)
             {
+                long stepStart = Stopwatch.GetTimestamp();
                 state.Clock.Step(state);
+                ticks.Add((day, Stopwatch.GetElapsedTime(stepStart).TotalMilliseconds));
                 Missions();
                 Owners();
                 slices?.Objectives.Tick(state); // an observer: no draw, no write
@@ -257,8 +267,29 @@ public static class Match
             Console.WriteLine($"  game {game}: rim drops {rim.RimDropped.Count} at {dropped.Count} systems, held at end {dropped.Count(s => s.Owner == openswr)}, enemy-held at end {dropped.Count(s => s.Owner == (openswr == Owner.Alliance ? Owner.Empire : Owner.Alliance))}, rim systems owned {state.Systems.Count(s => s.Owner == openswr && !s.Sector.IsCore)}");
         }
         return new(game, seed, openswr, state.Day, result, score, mine + theirs == 0 ? 0 : (double)mine / (mine + theirs), watch.Elapsed, checkpoints,
-            state.Settings.PlayerSide, missions, changes, assaults, production, slices?.Slices);
+            state.Settings.PlayerSide, missions, changes, assaults, production, slices?.Slices, ticks);
     }
+
+    /// <summary>One game's clock step times: 99th percentile and slowest step with its day.</summary>
+    public static string TickLine(GameResult r)
+    {
+        if (r.Ticks is not { Count: > 0 } ticks) return "  tick ms: none";
+        var sorted = ticks.Select(t => t.Ms).Order().ToList();
+        var worst = ticks.MaxBy(t => t.Ms);
+        return string.Create(CultureInfo.InvariantCulture, $"  tick ms: p99 {Percentile(sorted, 0.99):F1}, max {worst.Ms:F1} (day {worst.Day})");
+    }
+
+    /// <summary>Clock step times over all games: percentiles, slowest step, steps over 50 / 100 / 250 ms.</summary>
+    public static string TickTable(IReadOnlyList<GameResult> results)
+    {
+        var all = results.SelectMany(r => r.Ticks ?? []).Select(t => t.Ms).Order().ToList();
+        if (all.Count == 0) return "clock step ms: none\n";
+        int Over(double ms) => all.Count(x => x > ms);
+        return string.Create(CultureInfo.InvariantCulture,
+            $"clock step ms over {all.Count} steps: mean {all.Average():F2}, p50 {Percentile(all, 0.5):F2}, p99 {Percentile(all, 0.99):F1}, p99.9 {Percentile(all, 0.999):F1}, max {all[^1]:F1}; over 50 ms {Over(50)}, over 100 ms {Over(100)}, over 250 ms {Over(250)}\n");
+    }
+
+    static double Percentile(List<double> sorted, double p) => sorted[Math.Min(sorted.Count - 1, (int)(p * sorted.Count))];
 
     /// <summary>The production category of a unit or facility type, null for anything else.</summary>
     static ProductCategory? Category(uint type) => Family.Of(type) switch
@@ -294,6 +325,10 @@ public static class Match
             var mine = rows.Where(x => x.Who == who).ToList();
             text.AppendLine($"  {who} lost by value: <20 {mine.Count(x => x.a.Value < 20)}, 20-60 {mine.Count(x => x.a.Value is >= 20 and <= 60)}, >60 {mine.Count(x => x.a.Value > 60)}");
         }
+        foreach (var who in new[] { "openswr", "original" })
+            if (rows.Where(x => x.Who == who).ToList() is { Count: > 0 } lost)
+                text.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                    $"  {who} lost: owner fighters before {lost.Average(x => x.a.FightersBefore):F1} (none {100.0 * lost.Count(x => x.a.FightersBefore == 0) / lost.Count:F0} %), guns before {lost.Average(x => x.a.GunsBefore):F1} (none {100.0 * lost.Count(x => x.a.GunsBefore == 0) / lost.Count:F0} %), battle in the 3 days before {100.0 * lost.Count(x => x.a.BattleBefore) / lost.Count:F0} %"));
         // version 7: openswr losses by whether the system was a covered defence target the day before
         foreach (bool d in new[] { true, false })
         {

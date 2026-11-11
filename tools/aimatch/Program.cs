@@ -94,6 +94,7 @@ for (int g = 0; g < games; g++)
         if (output is not null) lines.AddRange(Match.Csv(c));
     });
     text.AppendLine($"  result: {r.Result} (day {r.Day}, openswr share {r.OpenSWRShare:P1}, {r.Wall.TotalSeconds:F1} s)");
+    text.AppendLine(Match.TickLine(r));
     text.AppendLine("  openswr missions: " + (r.Missions.Count == 0 ? "none"
         : string.Join(", ", r.Missions.Select(m => $"{Match.MissionName(m.Key)} {m.Value.Started} ({m.Value.Succeeded} ok / {m.Value.Failed} failed / {m.Value.Ended} foiled or ended early)"))));
     return (r, recorder, text.ToString(), lines);
@@ -123,6 +124,7 @@ else
 if (UiRandom.Shared.State != -1) Console.Error.WriteLine("warning: the process-wide UiRandom was drawn; parallel games may then differ from a serial run");
 Console.WriteLine();
 Console.Write(Match.Summary(results));
+Console.Write(Match.TickTable(results));
 if (slicesCsv is not null)
 {
     Console.WriteLine();
@@ -147,6 +149,7 @@ if (slicesCsv is not null)
     Console.Write(UprisingRecorder.Table([.. recorders.Select(x => (x.Item1, x.Item2.Uprisings))]));
     Console.WriteLine();
     Console.Write(BombardRecorder.Table([.. recorders.Select(x => (x.Item1, x.Item2.Bombard))]));
+    Console.Write(BombardRecorder.AssaultTable([.. recorders.Select(x => (x.Item1, x.Item2.Bombard))]));
     Console.WriteLine();
     Console.Write(ObjectivesRecorder.Table([.. recorders.Select(x => (x.Item1, x.Item2.Objectives))]));
     Console.WriteLine();
