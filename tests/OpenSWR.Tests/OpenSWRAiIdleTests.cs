@@ -38,6 +38,7 @@ public class OpenSWRAiIdleTests(ITestOutputHelper output)
     public void OneTrialPerKindWithASpecialForce()
     {
         var (game, ai) = Game(OpenSWRController.V7.ExploreTrial, control: true);
+        ai.Features = ai.Features.Remove(OpenSWRController.V7.LeanCost); // the threat garrisons this game was written for
         var trials = new List<(MissionKind Kind, int Day, Command Command)>();
         while (game.Day < 500 && !game.GameOver)
         {

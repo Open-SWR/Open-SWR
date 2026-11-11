@@ -109,7 +109,10 @@ public sealed partial class OpenSWRController
         // Watch: a held system first, with at least the incoming troop capacity + 1; an evacuated one gets no target
         foreach (var x in Incomings.Values.Where(x => x.Hold && x.System.Populated).OrderByDescending(x => _values.GetValueOrDefault(x.System.Ref)).ThenBy(x => x.System.Key))
             targets[x.System] = x.Troops + 1;
-        foreach (var (s, threat, border) in Own(game).Where(s => s.Populated && HighValue(s) && !Incomings.ContainsKey(s))
+        // LeanCost: threat garrisons only while the cheapest buildable troop costs at most LeanTroopMaintenance (dear troops do
+        // more as attack troops than as garrisons)
+        bool lean = On(V7.LeanCost) && CheapestTroopMaintenance(game) > LeanTroopMaintenance;
+        foreach (var (s, threat, border) in Own(game).Where(s => !lean && s.Populated && HighValue(s) && !Incomings.ContainsKey(s))
                      .Select(s => (s, threat: Threat(game, k, s, places), border: enemies.Any(e => Orders.TravelDays(game, s, e, 100) <= ReachDays)))
                      .Where(x => x.threat > 0 || x.border && On(V7.Experience))
                      .OrderByDescending(x => _values.GetValueOrDefault(x.s.Ref) * (1 + x.threat)).ThenBy(x => x.s.Key))
@@ -128,6 +131,13 @@ public sealed partial class OpenSWRController
             }
         return (targets, covered);
     }
+
+    /// <summary>LeanCost: threat garrisons are kept only with troops of at most this maintenance.</summary>
+    public const int LeanTroopMaintenance = 1;
+
+    /// <summary>The maintenance of the side's cheapest buildable troop (int.MaxValue when none is buildable).</summary>
+    internal int CheapestTroopMaintenance(GameState game) =>
+        Research.Buildable(game, Side, Families.TrainingFacility).Where(r => Family.IsTroop(r.Common.Ref)).Select(r => game.MaintenanceCost(r.Common.Ref)).DefaultIfEmpty(int.MaxValue).Min();
 
     // ---- garrisons from experience ----
 

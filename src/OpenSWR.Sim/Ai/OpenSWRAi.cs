@@ -61,7 +61,7 @@ public sealed partial class OpenSWRController(Owner side) : Controller(side)
     /// benchmarks before it was added.
     /// </summary>
     public static readonly ImmutableHashSet<V7> DefaultFeatures = [V7.Fighters, V7.Watch, V7.LateEconomy, V7.DoctrineDefence, V7.Recruit, V7.CovertExperience,
-        V7.Agents, V7.Decoys, V7.Swarm, V7.DoctrineProduction, V7.Wings, V7.RimFirst];
+        V7.Agents, V7.Decoys, V7.Swarm, V7.DoctrineProduction, V7.Wings, V7.RimFirst, V7.LeanCost];
 
     /// <summary>The optional steps in use (default <see cref="DefaultFeatures"/>); a step off takes the older path. Not saved (a run setting).</summary>
     public ImmutableHashSet<V7> Features { get; set; } = DefaultFeatures;

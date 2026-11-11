@@ -395,7 +395,7 @@ public class OpenSWRAiMissionTests(ITestOutputHelper output) : OpenSWRAiTests(ou
     public void CounterAttackAndParallelGroups()
     {
         var (game, ai) = AllianceGame(Owner.Empire);
-        ai.Features = ai.Features.Remove(OpenSWRController.V7.Swarm); // the version 5 groups (Swarm replaces them)
+        ai.Features = ai.Features.Remove(OpenSWRController.V7.Swarm).Remove(OpenSWRController.V7.LeanCost); // the version 5 groups (Swarm replaces them) and the threat garrisons this game was written for
         int most = 0;
         while (game.Day < 250 && !game.GameOver)
         {

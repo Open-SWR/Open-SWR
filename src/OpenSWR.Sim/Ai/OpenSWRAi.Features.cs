@@ -14,7 +14,7 @@ public sealed partial class OpenSWRController
     /// role), DoctrineDefence (planetary guns and shields), DoctrineFighterYard (one shipyard per carrier group takes only fighter
     /// orders while hangars have room). EconomyFirst, Recruit, CovertExperience, Teams, Intel, Agents, Decoys, ExploreTrial,
     /// ExplorePrior, PoolUseful, EspionageIdle, Swarm, TroopFit, LandGate, Hold, Holdable, Pacify, Guard, Hunt, Siege, HuntStill,
-    /// Bombard, Wings, Cascade and RimFirst are the newer parts; each is described where it is implemented.
+    /// Bombard, Wings, Cascade, RimFirst and LeanCost are the newer parts; each is described where it is implemented.
     /// </summary>
     public enum V7
     {
@@ -22,7 +22,7 @@ public sealed partial class OpenSWRController
         DoctrineProduction, DoctrineGather, DoctrineTroops, DoctrineDefence, DoctrineFighterYard, EconomyFirst,
         Recruit, CovertExperience, Teams, Intel, Agents, Decoys,
         ExploreTrial, ExplorePrior, PoolUseful, EspionageIdle, TroopFit, Swarm, LandGate, Hold, Holdable, Pacify,
-        Guard, Hunt, Siege, HuntStill, Bombard, Wings, Cascade, RimFirst,
+        Guard, Hunt, Siege, HuntStill, Bombard, Wings, Cascade, RimFirst, LeanCost,
     }
 
     /// <summary>

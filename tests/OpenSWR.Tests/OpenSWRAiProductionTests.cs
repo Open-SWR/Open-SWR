@@ -86,6 +86,7 @@ public class OpenSWRAiProductionTests(ITestOutputHelper output) : OpenSWRAiTests
     public void ProductionPlanAndFacilitiesFirst()
     {
         var (game, ai) = AllianceGame(Owner.Empire);
+        ai.Features = ai.Features.Remove(OpenSWRController.V7.LeanCost); // the threat garrisons this game was written for
         game.Clock.Step(game);
         var plan = ai.CurrentPlan;
         Assert.Equal("expansion", plan.Phase);
@@ -129,7 +130,7 @@ public class OpenSWRAiProductionTests(ITestOutputHelper output) : OpenSWRAiTests
     public void DefenceByValue()
     {
         var (game, ai) = AllianceGame(Owner.Empire);
-        ai.Features = ai.Features.Remove(OpenSWRController.V7.Swarm); // the version 5 attack groups this game was written for
+        ai.Features = ai.Features.Remove(OpenSWRController.V7.Swarm).Remove(OpenSWRController.V7.LeanCost); // the version 5 attack groups and the threat garrisons this game was written for
         int targets = 0, covered = 0, sites = 0;
         while (game.Day < 300 && !game.GameOver)
         {
@@ -199,7 +200,7 @@ public class OpenSWRAiProductionTests(ITestOutputHelper output) : OpenSWRAiTests
         Assert.Equal(OpenSWRController.LandingsKept, fresh.Landings.Count);
         var (game, ai) = AllianceGame(Owner.Empire);
         ai.Features = ai.Features.Add(OpenSWRController.V7.Experience);
-        ai.Features = ai.Features.Remove(OpenSWRController.V7.Swarm); // the version 5 attack groups this game was written for (lost assaults to learn from)
+        ai.Features = ai.Features.Remove(OpenSWRController.V7.Swarm).Remove(OpenSWRController.V7.LeanCost); // the version 5 attack groups and the threat garrisons this game was written for (lost assaults to learn from)
         int borderTargets = 0, lost = 0;
         var owned = new HashSet<StarSystem>();
         while (game.Day < 800 && !game.GameOver && (game.Day < 300 || ai.Landings.Count == 0))
@@ -225,6 +226,43 @@ public class OpenSWRAiProductionTests(ITestOutputHelper output) : OpenSWRAiTests
         var first = Save(game);
         Assert.Contains("\"landings\":", System.Text.Encoding.UTF8.GetString(first));
         Assert.Equal(Text(first), Text(Save(Load(first))));
+    }
+
+    /// <summary>
+    /// LeanCost: a side whose cheapest buildable troop costs more than LeanTroopMaintenance keeps no threat garrisons (only the
+    /// watched held systems stay targets); a side with a cheap troop keeps the same targets as without the step. In the install
+    /// both sides start with dear troops; by day 300 the Alliance has researched a cheap one and the Empire has not.
+    /// </summary>
+    [GameFact]
+    public void LeanCostThreatGarrisons()
+    {
+        var (game, ai) = AllianceGame(Owner.Empire);
+        ai.Features = ai.Features.Remove(OpenSWRController.V7.Swarm).Remove(OpenSWRController.V7.LeanCost); // the game DefenceByValue plays
+        var alliance = new OpenSWRController(Owner.Alliance);
+        Assert.True(ai.CheapestTroopMaintenance(game) > OpenSWRController.LeanTroopMaintenance);
+        Assert.True(alliance.CheapestTroopMaintenance(game) > OpenSWRController.LeanTroopMaintenance);
+        int threatTargets = 0;
+        while (game.Day < 300 && !game.GameOver)
+        {
+            int decided = ai.Decided;
+            game.Clock.Step(game);
+            if (ai.Decided == decided) continue;
+            var k = new OpenSWRController.Known(game, Owner.Empire);
+            var (without, _) = ai.Defence(game, k);
+            ai.Features = ai.Features.Add(OpenSWRController.V7.LeanCost);
+            var (with, _) = ai.Defence(game, k);
+            ai.Features = ai.Features.Remove(OpenSWRController.V7.LeanCost);
+            var held = ai.Incomings.Values.Where(x => x.Hold && x.System.Populated).Select(x => x.System).ToHashSet();
+            if (ai.CheapestTroopMaintenance(game) > OpenSWRController.LeanTroopMaintenance)
+                Assert.All(with.Keys, s => Assert.Contains(s, held));
+            else
+                Assert.Equal(without, with);
+            threatTargets += without.Keys.Count(s => !held.Contains(s));
+        }
+        output.WriteLine($"day {game.Day}: threat targets without LeanCost {threatTargets}; cheapest troop maintenance Empire {ai.CheapestTroopMaintenance(game)}, Alliance {alliance.CheapestTroopMaintenance(game)}");
+        Assert.True(threatTargets > 0);
+        Assert.True(ai.CheapestTroopMaintenance(game) > OpenSWRController.LeanTroopMaintenance);
+        Assert.True(alliance.CheapestTroopMaintenance(game) <= OpenSWRController.LeanTroopMaintenance);
     }
 
     /// <summary>
