@@ -125,6 +125,7 @@ if (UiRandom.Shared.State != -1) Console.Error.WriteLine("warning: the process-w
 Console.WriteLine();
 Console.Write(Match.Summary(results));
 Console.Write(Match.TickTable(results));
+Console.Write(MaintenanceProbe.Table(results));
 if (slicesCsv is not null)
 {
     Console.WriteLine();

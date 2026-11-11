@@ -73,7 +73,7 @@ public enum ProductCategory { CapitalShips, Fighters, Troops, SpecialForces, Pro
 public sealed record GameResult(int Game, int Seed, Owner OpenSWR, int Day, string Result, int Score, double OpenSWRShare, TimeSpan Wall, List<Checkpoint> Checkpoints,
     Owner PlayerSide, SortedDictionary<uint, MissionCount> Missions, List<OwnerChange> Changes, List<AssaultLoss> AssaultLosses,
     Dictionary<(Owner Side, int Period, ProductCategory Category), (int Units, int Maintenance)> Production, List<Slice>? Slices = null,
-    List<(int Day, double Ms)>? Ticks = null)
+    List<(int Day, double Ms)>? Ticks = null, MaintenanceProbe? Maintenance = null)
 {
     /// <summary>+1 openswr won (victory or ahead), -1 lost, 0 draw.</summary>
     public bool Won => Score > 0;
@@ -209,6 +209,7 @@ public static class Match
         }
         // wall time of each clock step (sim and both controllers; probes excluded): the Godot screen runs the step on its main thread
         var ticks = new List<(int Day, double Ms)>();
+        var maintenance = new MaintenanceProbe(state);
         var checkpoints = new List<Checkpoint>();
         void Check()
         {
@@ -230,6 +231,7 @@ public static class Match
                 if (state.Clock.Tick - start > 3 * TicksPerDay) throw new InvalidOperationException($"seed {seed}: day {day} did not finish in {3 * TicksPerDay} ticks");
             }
             if (state.Day != day) slices?.Day(state, changes); // version 9: time slices (an observer: no draw, no write)
+            if (state.Day != day) maintenance.Day(state, changes);
             if (state.Day % every == 0 && state.Day != day) Check();
         }
         if (checkpoints.Count == 0 || checkpoints[^1].Day != state.Day) Check();
@@ -267,7 +269,7 @@ public static class Match
             Console.WriteLine($"  game {game}: rim drops {rim.RimDropped.Count} at {dropped.Count} systems, held at end {dropped.Count(s => s.Owner == openswr)}, enemy-held at end {dropped.Count(s => s.Owner == (openswr == Owner.Alliance ? Owner.Empire : Owner.Alliance))}, rim systems owned {state.Systems.Count(s => s.Owner == openswr && !s.Sector.IsCore)}");
         }
         return new(game, seed, openswr, state.Day, result, score, mine + theirs == 0 ? 0 : (double)mine / (mine + theirs), watch.Elapsed, checkpoints,
-            state.Settings.PlayerSide, missions, changes, assaults, production, slices?.Slices, ticks);
+            state.Settings.PlayerSide, missions, changes, assaults, production, slices?.Slices, ticks, maintenance);
     }
 
     /// <summary>One game's clock step times: 99th percentile and slowest step with its day.</summary>
@@ -292,7 +294,7 @@ public static class Match
     static double Percentile(List<double> sorted, double p) => sorted[Math.Min(sorted.Count - 1, (int)(p * sorted.Count))];
 
     /// <summary>The production category of a unit or facility type, null for anything else.</summary>
-    static ProductCategory? Category(uint type) => Family.Of(type) switch
+    internal static ProductCategory? Category(uint type) => Family.Of(type) switch
     {
         >= 20 and < 28 => ProductCategory.CapitalShips,
         >= 28 and < 32 => ProductCategory.Fighters,
