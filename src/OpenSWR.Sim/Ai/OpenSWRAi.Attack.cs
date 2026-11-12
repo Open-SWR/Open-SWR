@@ -154,6 +154,7 @@ public sealed partial class OpenSWRController
         int landing = TroopRoomLog is null ? 0 : TroopsAboard(there); // measurement only
         // LandGate rule 3: no landing below the target's attack troops; the fleets wait in orbit, then return
         bool clear = there.Count > 0 && k.Fleets(target, Enemy).Count == 0;
+        if (there.Count == 0) _orbitWait.Remove(target.Ref); // the waiting fleets left or died: a later arrival waits afresh
         bool siege = g.Fleet is not null && _siege == target; // Siege: bombard until the defence and troops are gone, then land
         if (siege && SiegeBombard(game, k, target, used)) { }
         else if (clear && !LandAllowed(k, there, target)) HoldLanding(game, target, staging, there, used);
