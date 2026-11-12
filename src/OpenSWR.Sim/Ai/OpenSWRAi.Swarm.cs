@@ -126,6 +126,7 @@ public sealed partial class OpenSWRController
             _groups.Add(new(target) { Staging = (StarSystem)f.Container!, Fleet = f.Ref });
         }
         HoldUprisings(game, fleets, used); // Hold: uprising own systems get the floor from a passing group
+        if (Generals) AssignGenerals(game, used, [.. _groups.Select(g => fleets.First(f => f.Ref == g.Fleet))]); // Generals
         // rule 4: a group without troops aboard and none spare at its base returns to the nearest own base
         foreach (var g in _groups)
         {
@@ -152,7 +153,7 @@ public sealed partial class OpenSWRController
     /// <summary>Rule 4: the own troops at a swarm base beyond <see cref="SwarmGarrison"/> (and the system's own keep).</summary>
     List<GameObject> SwarmSpare(GameState game, StarSystem s, HashSet<GameObject> used)
     {
-        var ready = s.Contents.Where(x => OwnTroop(x, Side) && x.Usable && !x.Enroute && !used.Contains(x)).OrderBy(x => x.Key).ToList();
+        var ready = Leaving(game, s.Contents.Where(x => OwnTroop(x, Side) && x.Usable && !x.Enroute && !used.Contains(x)));
         int extra = s.Contents.Count(x => OwnTroop(x, Side) && !used.Contains(x)) - Math.Max(Keep(s), SwarmFloor(game, s)); // Hold: the requirement
         return [.. ready.Take(Math.Clamp(extra, 0, ready.Count))];
     }

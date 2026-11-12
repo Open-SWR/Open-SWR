@@ -31,10 +31,13 @@ public sealed partial class OpenSWRController
 
     // ---- troops by need ----
 
-    /// <summary>The troop need of one decision: the total, the defended systems' target garrisons (those the troops cover), the attack troops per target.</summary>
-    internal sealed record TroopNeeds(int Total, Dictionary<StarSystem, int> Defend, Dictionary<StarSystem, int> Attack)
+    /// <summary>
+    /// The troop need of one decision: the total, the defended systems' target garrisons (those the troops cover), the attack troops
+    /// per target, and the attack troops of the targets with known enemy troops (only there do landing troops duel).
+    /// </summary>
+    internal sealed record TroopNeeds(int Total, Dictionary<StarSystem, int> Defend, Dictionary<StarSystem, int> Attack, int Contested)
     {
-        public static readonly TroopNeeds None = new(0, [], []);
+        public static readonly TroopNeeds None = new(0, [], [], 0);
     }
 
     /// <summary>Known enemy troops at a system: the enemy's troops the side's view shows there.</summary>
@@ -54,7 +57,8 @@ public sealed partial class OpenSWRController
         var own = Own(game).Where(s => s.Populated).ToList();
         var (targets, covered) = Defence(game, k);
         var attack = Targets().ToDictionary(t => t, t => AttackTroopsFor(k, t));
-        return new(own.Sum(Garrison) + targets.Sum(e => Math.Max(0, e.Value - Garrison(e.Key))) + attack.Values.Sum(), covered, attack);
+        return new(own.Sum(Garrison) + targets.Sum(e => Math.Max(0, e.Value - Garrison(e.Key))) + attack.Values.Sum(), covered, attack,
+            attack.Where(e => EnemyTroops(k, e.Key) > 0).Sum(e => e.Value));
     }
 
     /// <summary>Own troops: Existing, anywhere (in systems, aboard ships, under construction).</summary>
@@ -62,10 +66,13 @@ public sealed partial class OpenSWRController
 
     bool AtRisk(StarSystem s) => s.Populated && (s.SupportFor(Side) < SafeShare || s.Uprising);
 
-    /// <summary>Own troops in the system beyond <see cref="Keep"/> that can leave now.</summary>
-    List<GameObject> Spare(StarSystem s, HashSet<GameObject> used)
+    /// <summary>
+    /// Own troops in the system beyond <see cref="Keep"/> that can leave now; for an assault's loading (<paramref name="assault"/>
+    /// given) with AssaultTroops the highest attack strength leaves first.
+    /// </summary>
+    List<GameObject> Spare(StarSystem s, HashSet<GameObject> used, GameState? assault = null)
     {
-        var ready = s.Contents.Where(x => OwnTroop(x, Side) && x.Usable && !x.Enroute && !used.Contains(x)).OrderBy(x => x.Key).ToList();
+        var ready = Leaving(assault, s.Contents.Where(x => OwnTroop(x, Side) && x.Usable && !x.Enroute && !used.Contains(x)));
         int extra = s.Contents.Count(x => OwnTroop(x, Side) && !used.Contains(x)) - Keep(s);
         return [.. ready.Take(Math.Clamp(extra, 0, ready.Count))];
     }

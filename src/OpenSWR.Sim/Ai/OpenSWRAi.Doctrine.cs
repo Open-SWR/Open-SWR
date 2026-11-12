@@ -122,12 +122,20 @@ public sealed partial class OpenSWRController
     /// The troop to train (doctrine): garrison troops for the systems' garrisons; assault troops only while the side holds fewer
     /// assault-role troops than the attack groups' troops need.
     /// </summary>
-    internal SdRecord? DoctrineTroop(GameState game, int deficit, int free)
+    internal SdRecord? DoctrineTroop(GameState game, int deficit, int free) =>
+        AssaultShortfall(game, deficit) > 0 ? BestFor(game, UnitKind.Troop, UnitRole.Assault, free) : BestFor(game, UnitKind.Troop, UnitRole.Garrison, free);
+
+    /// <summary>
+    /// The assault-role troops the attack groups need beyond those the side holds (under construction included): the attack troops
+    /// of every current target (with Contested only of the targets with known enemy troops: the duels need attack strength, an
+    /// undefended landing does not); 0 while a garrison at risk is short.
+    /// </summary>
+    int AssaultShortfall(GameState game, int deficit)
     {
+        if (deficit > 0) return 0;
         var roles = BuildableRoles(game);
         int assaultTroops = game.Created.Count(o => OwnTroop(o, Side) && (roles.TryGetValue(o.Type, out var r) ? r : RolesOf(game, o.Type))?.Main == UnitRole.Assault);
-        bool assault = deficit == 0 && Need.Attack.Values.Sum() > assaultTroops;
-        return assault ? BestFor(game, UnitKind.Troop, UnitRole.Assault, free) : BestFor(game, UnitKind.Troop, UnitRole.Garrison, free);
+        return Math.Max(0, (On(V7.Contested) ? Need.Contested : Need.Attack.Values.Sum()) - assaultTroops);
     }
 
     /// <summary>

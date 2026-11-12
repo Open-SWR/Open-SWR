@@ -174,13 +174,15 @@ public sealed partial class OpenSWRController
         var ships = gathered.SelectMany(f => f.Contents.Where(x => Family.IsCapitalShip(x.Type) && x.Usable).OrderBy(x => x.Key)).ToList();
         var room = ships.ToDictionary(x => x, x => TroopRoom(game, x));
         if (g.Fleet is not null) _step = "swarm re-embark"; // measurement only
-        foreach (var troop in g.Fleet is null ? Spare(staging, used) : SwarmSpare(game, staging, used)) // rule 4: 2 troops stay
+        foreach (var troop in g.Fleet is null ? Spare(staging, used, game) : SwarmSpare(game, staging, used)) // rule 4: 2 troops stay
             if (ships.FirstOrDefault(x => room[x] > 0) is { } ship && Issue(game, Move(Side, troop, ship.Container!), used)) room[ship]--;
         _step = "attack loading";
         int wanted = room.Values.Sum() - staging.Contents.Count(x => OwnTroop(x, Side) && x.Enroute);
-        foreach (var from in Own(game).Where(x => x != staging && !AtRisk(x)).OrderBy(x => Orders.Distance(x, staging)).ThenBy(x => x.Key))
-            foreach (var troop in Spare(from, used))
-                if (wanted > 0 && Issue(game, Move(Side, troop, staging), used)) wanted--;
+        var sources = Own(game).Where(x => x != staging && !AtRisk(x)).OrderBy(x => Orders.Distance(x, staging)).ThenBy(x => x.Key)
+            .SelectMany(x => Spare(x, used, game)).ToList();
+        // AssaultTroops rule 2: the strongest spare troops of all own systems first, the nearest among equals
+        foreach (var troop in AssaultTroops ? [.. sources.OrderByDescending(x => TroopAttack(game, x))] : sources)
+            if (wanted > 0 && Issue(game, Move(Side, troop, staging), used)) wanted--;
 
         // launch; a target the gathered fleets stay too weak for during TargetPatienceDays is passed over for PassDays
         // Intel: no launch against a system without a fresh view (its espionage goes first; the patience clock runs on)

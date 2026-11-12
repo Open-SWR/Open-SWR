@@ -128,4 +128,62 @@ public class OpenSWRAiSwarmTests(ITestOutputHelper output)
         Assert.Equal(Orders(false, off), Orders(true, off));
         Assert.Equal(Orders(false, OpenSWRController.DefaultFeatures), Orders(true, OpenSWRController.DefaultFeatures));
     }
+    /// <summary>
+    /// AssaultTroops: rule 2, a swarm base's spare troops leave highest attack strength first (key order without the flag); rule 1,
+    /// the assault pick is a buildable troop with at least the cheapest troop's attack strength.
+    /// </summary>
+    [GameFact]
+    public void AssaultTroopsLeaveStrongestFirst()
+    {
+        var (game, ai) = Game(control: false);
+        var s = game.Systems.Where(x => x.Owner == Owner.Empire).OrderBy(x => x.Key).First();
+        foreach (var t in s.Contents.Where(x => Family.IsTroop(x.Type)).ToList()) Objects.Destroy(game, t, DestroyedReason.Scrapped);
+        var types = Definitions.Troops.Where(t => t.Empire != 0).OrderBy(t => t.AttackStrength).ThenBy(t => t.Common.Ref).ToList();
+        for (int i = 0; i < 6; i++) Objects.Create(game, types[0].Common.Ref, Owner.Empire, s, completed: true);
+        for (int i = 0; i < 2; i++) Objects.Create(game, types[^1].Common.Ref, Owner.Empire, s, completed: true);
+        game.Clock.Flush(game);
+        uint Attack(GameObject t) => Definitions.Troops.First(r => r.Common.Ref == t.Type).AttackStrength;
+        var off = ai.SwarmSpareForTest(game, s);
+        Assert.NotEmpty(off);
+        Assert.Equal(types[0].AttackStrength, Attack(off[0]));
+        ai.Features = Swarm.Add(OpenSWRController.V7.AssaultTroops);
+        var on = ai.SwarmSpareForTest(game, s);
+        Assert.Equal(off.Count, on.Count);
+        Assert.Equal(types[^1].AttackStrength, Attack(on[0]));
+        Assert.Equal(on.Select(Attack).OrderByDescending(a => a), on.Select(Attack));
+        uint cheapest = Research.Buildable(game, Owner.Empire, Families.TrainingFacility).Where(r => Family.IsTroop(r.Common.Ref))
+            .OrderBy(r => game.MaintenanceCost(r.Common.Ref)).First().Common.Ref;
+        var pick = ai.BestFor(game, UnitKind.Troop, UnitRole.Assault, int.MaxValue);
+        Assert.NotNull(pick);
+        output.WriteLine($"assault pick {pick!.Common.Ref}, cheapest {cheapest}");
+        Assert.True(pick.GetOrZero(SdField.TroopAttackStrength) >= Definitions.Troops.First(r => r.Common.Ref == cheapest).AttackStrength);
+    }
+
+    /// <summary>
+    /// Generals: an attack group fleet at a system with a free character that can be a general and leads better than it negotiates
+    /// or spies takes that minor character aboard as its general; a diplomat (diplomacy above leadership) or a major character is never taken.
+    /// </summary>
+    [GameFact]
+    public void GroupFleetTakesAGeneral()
+    {
+        var (game, ai) = Game(control: false);
+        ai.Features = Swarm.Add(OpenSWRController.V7.Generals);
+        int Skill(Character c, int s) => Missions.Enhanced(game, c, s);
+        var c = game.Characters.Where(c => c.Owner == Owner.Empire && c.Definition.CanBeGeneral != 0 && Missions.Location(c) is StarSystem && Family.Of(c.Type) >= Families.MinorCharacter
+                && Skill(c, SkillIndex.Leadership) >= Skill(c, SkillIndex.Diplomacy) && Skill(c, SkillIndex.Leadership) >= Skill(c, SkillIndex.Espionage))
+            .OrderBy(c => c.Key).First();
+        var at = (StarSystem)Missions.Location(c)!;
+        var others = at.Contents.OfType<Character>().Where(x => x.Owner == Owner.Empire && (Skill(x, SkillIndex.Diplomacy) > Skill(x, SkillIndex.Leadership) || Family.Of(x.Type) < Families.MinorCharacter)).ToList();
+        uint plain = Definitions.CapitalShips.Where(r => r.Empire != 0).OrderBy(r => r.MaintenanceCost).First().Common.Ref;
+        var fleet = (Fleet)Objects.Create(game, Refs.Fleet, Owner.Empire, at, completed: true);
+        Objects.Create(game, plain, Owner.Empire, fleet, completed: true);
+        game.Clock.Flush(game);
+        Assert.False(OpenSWRController.HasGeneral(fleet));
+        ai.AssignGenerals(game, [], [fleet]);
+        foreach (var command in ai.IssueTrace!.Select(x => x.Command)) game.Clock.Submit(command);
+        for (int i = 0; i < 24 && !OpenSWRController.HasGeneral(fleet); i++) game.Clock.Step(game);
+        output.WriteLine($"general {c.Key} leadership {Skill(c, SkillIndex.Leadership)}, kind {c.CommandKind}");
+        Assert.True(OpenSWRController.HasGeneral(fleet));
+        Assert.All(others, x => Assert.Equal(0, x.CommandKind));
+    }
 }

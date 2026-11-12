@@ -136,6 +136,14 @@ public sealed partial class OpenSWRController
                     }
                     // Agents: the broad pool, espionage types first, when the special forces' shortfall is the larger
                     if (On(V7.Agents) && deficit == 0 && plan.SpecialForces >= plan.Troops && TrainAgents(game, m, ref free, used, agentsOrdered)) break;
+                    // AssaultTroops rule 1: the best assault troop up to the attack groups' need, also while the total need is met
+                    if (AssaultTroops && AssaultShortfall(game, deficit) is > 0 and var shortfall && BestFor(game, UnitKind.Troop, UnitRole.Assault, free) is { } assault)
+                    {
+                        int built = Build(game, CommandType.ProduceTroop, m, assault, shortfall, ref free, used);
+                        Why(m, built > 0 ? "ordered" : _buildFail);
+                        troops += built;
+                        if (built > 0) break;
+                    }
                     int want = deficit > 0 ? deficit : Math.Max(0, Need.Total - troops);
                     Why(m, want > 0 ? "none buildable" : "need met");
                     if (want > 0 && (On(V7.DoctrineTroops) ? DoctrineTroop(game, deficit, free) : Pick(game, Families.TrainingFacility, Families.Troop, cheapest: true)) is { } troop)
