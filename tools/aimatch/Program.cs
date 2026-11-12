@@ -10,13 +10,14 @@ const string Usage = """
     Empire, against the original AI. Seeds: S, S+1, … with --seed, else a fixed default list (reproducible runs).
     --hunt-gate G: Hunt's objective-abduction gate (step 22; default OpenSWRController.MinHuntSuccess, 0.25).
     --yard-ratio R: EconomyFirst's construction-yard ratio r (yards wanted = max(2, ⌈r × owned systems⌉); default 0.75).
+    --salt N: shifts the original AI's decision generator seed by N (default 0): same galaxies, another draw of its decisions.
     --parallel P: up to P games at once (default 1). Every output (text, CSV, slices CSV) is written in game order, as a serial run.
     --slices F: the version 9 time slices (every 100 days, per side) as CSV to F, and the openswr-minus-original table.
     --features: the OpenSWR AI's version 7 steps, comma-separated (Experience, LateEconomy, Fighters, Watch, Predict), or all / none.
     Defaults: --games 3 --days 400 --galaxy 1 --difficulty 1 --features Fighters,Watch,LateEconomy,DoctrineDefence,Recruit,CovertExperience,Agents,Decoys,Swarm,DoctrineProduction,Wings (the controller's default).
     """;
 
-int games = 3, days = 400, galaxy = 1, difficulty = 1, parallel = 1;
+int games = 3, days = 400, galaxy = 1, difficulty = 1, parallel = 1, salt = 0;
 int? seed = null;
 string? csv = null, slicesCsv = null;
 var features = OpenSWR.Sim.Ai.OpenSWRController.DefaultFeatures;
@@ -37,6 +38,7 @@ try
             case "--csv": csv = args[++i]; break;
             case "--slices": slicesCsv = args[++i]; break;
             case "--parallel": parallel = Next(); break;
+            case "--salt": salt = Next(); break;
             case "--hunt-gate": huntGate = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
             case "--yard-ratio": yardRatio = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
             case "--features":
@@ -88,7 +90,7 @@ for (int g = 0; g < games; g++)
     var lines = new List<string>();
     text.AppendLine($"game {job.Game}: seed {job.Seed}, galaxy {galaxy}, difficulty {difficulty}, openswr plays {job.Side}, player settings column: {Match.PlayerSide}");
     var recorder = slicesCsv is null ? null : new SliceRecorder();
-    var r = Match.Play(definitions, job.Game, job.Seed, job.Side, galaxy, difficulty, days, features: features, yardRatio: yardRatio, huntGate: huntGate, slices: recorder, row: c =>
+    var r = Match.Play(definitions, job.Game, job.Seed, job.Side, galaxy, difficulty, days, features: features, yardRatio: yardRatio, huntGate: huntGate, salt: salt, slices: recorder, row: c =>
     {
         text.AppendLine(Match.Row(c));
         if (output is not null) lines.AddRange(Match.Csv(c));

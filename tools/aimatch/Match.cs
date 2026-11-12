@@ -99,17 +99,18 @@ public static class Match
     /// <summary>
     /// Plays one game until the clock reaches day <paramref name="days"/> or the game is over: openswr on <paramref name="openswr"/>'s
     /// side, the original AI on the other (its own UI generator, seeded from the seed and side as in the soak test). A row every
-    /// <paramref name="every"/> days and at the end.
+    /// <paramref name="every"/> days and at the end. <paramref name="salt"/> shifts the original AI's UI generator seed only (0 = as
+    /// before): same galaxy and setup, another draw of the original's decisions, for measuring a baseline's noise.
     /// </summary>
     public static GameResult Play(GameDefinitions definitions, int game, int seed, Owner openswr, int galaxy, int difficulty, int days, int every = 50,
         Action<Checkpoint>? row = null, System.Collections.Immutable.ImmutableHashSet<OpenSWRController.V7>? features = null, SliceRecorder? slices = null,
-        double yardRatio = OpenSWRController.DefaultYardRatio, double huntGate = OpenSWRController.MinHuntSuccess)
+        double yardRatio = OpenSWRController.DefaultYardRatio, double huntGate = OpenSWRController.MinHuntSuccess, int salt = 0)
     {
         var watch = Stopwatch.StartNew();
         var state = NewGame.Create(new GameSettings(PlayerSide, galaxy, difficulty, 0, seed, Opponent: ComputerOpponent.OpenSWR), definitions);
         foreach (var side in new[] { Owner.Alliance, Owner.Empire })
         {
-            int ui = seed ^ (int)side;
+            int ui = (seed ^ (int)side) + salt; // only the original AI reads it
             var rand = new UiRandom(() => ui);
             state.Controllers[side] = side == openswr ? new OpenSWRController(side) { Features = features ?? OpenSWRController.DefaultFeatures, YardRatio = yardRatio, HuntGate = huntGate, IdleReasons = slices is null ? null : [], RefusedEstimates = slices is null ? null : [], MissionEstimates = slices is null ? null : [], IntelAges = slices is null ? null : [], NoLaunchLog = slices is null ? null : [], TroopRoomLog = slices is null ? null : [], TroopMoveLog = slices is null ? null : [], AssaultLossesSeen = slices is null ? null : [], PivotEvents = slices is null ? null : [], RetryRecords = slices is null ? null : [] }
                 : new ComputerController(side) { Rand = n => rand.Rand(n) };
