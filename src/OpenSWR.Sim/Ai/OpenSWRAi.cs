@@ -130,6 +130,7 @@ public sealed partial class OpenSWRController(Owner side) : Controller(side)
         readonly Owner _side;
         readonly ILookup<GameObject, GameObject> _frozen;
         readonly Dictionary<uint, int> _values = [];
+        readonly Dictionary<GameObject, List<ViewObject>> _contents = []; // per container, read once (the views do not change while a Known is in use)
 
         public Known(GameState game, Owner side)
         {
@@ -138,9 +139,13 @@ public sealed partial class OpenSWRController(Owner side) : Controller(side)
                 .ToLookup(e => e.Value.Parent!, e => e.Key.Item1);
         }
 
-        public List<ViewObject> Contents(GameObject container) =>
-            [.. container.Contents.Where(o => ScreenViews.Sees(o, _side)).Concat(_frozen[container]).Distinct()
-                .Select(o => ScreenViews.View(_game, o, _side)).Where(v => v.Existing && !v.Destroyed).OrderBy(v => v.Object.Key)];
+        public List<ViewObject> Contents(GameObject container)
+        {
+            if (!_contents.TryGetValue(container, out var seen))
+                _contents[container] = seen = [.. container.Contents.Where(o => ScreenViews.Sees(o, _side)).Concat(_frozen[container]).Distinct()
+                    .Select(o => ScreenViews.View(_game, o, _side)).Where(v => v.Existing && !v.Destroyed).OrderBy(v => v.Object.Key)];
+            return [.. seen];
+        }
 
         /// <summary>Fleets of <paramref name="owner"/> in the side's view of a system (Enroute ones included).</summary>
         public List<GameObject> Fleets(StarSystem s, Owner owner) => [.. Contents(s).Where(v => v.Object is Fleet && v.Owner == owner).Select(v => v.Object)];

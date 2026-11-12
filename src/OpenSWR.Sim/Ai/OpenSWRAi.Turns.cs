@@ -15,6 +15,8 @@ public sealed partial class OpenSWRController
     {
         if (game.Day == Decided || game.GameOver) return;
         Decided = game.Day;
+        Part("setup");
+        Deciding(true);
         foreach (var key in _refused.Where(e => e.Value <= game.Day).Select(e => e.Key).ToList()) _refused.Remove(key);
         foreach (var key in _foiled.Where(e => game.Day - e.Value >= CovertRetryDays).Select(e => e.Key).ToList()) _foiled.Remove(key);
         foreach (var key in _foilMarks.Where(e => game.Day - e.Value.Day >= FoilMarkDays).Select(e => e.Key).ToList()) _foilMarks.Remove(key);
@@ -25,15 +27,19 @@ public sealed partial class OpenSWRController
         foreach (var key in _watched.Where(e => game.Day - e.Value >= WatchDays).Select(e => e.Key).ToList()) _watched.Remove(key);
         if (On(V7.Watch)) RefreshIncoming(game, k);
         Need = TroopNeed(game, k);
+        Part("garrison");
         _step = "garrison"; // measurement only (TroopMoveLog)
         int deficit = Garrisons(game, used);
+        Part("defence");
         _step = "defence";
         if (On(V7.Watch)) HoldOrEvacuate(game, k, used);
         var threatened = Defence(game, k, used);
         WatchThreats(game, k); // measurement (aimatch only; no effect on play)
         _step = "other";
+        Part("production");
         var map = Sectors(game);
         Production(game, k, used, deficit, map);
+        Part("attack");
         if (On(V7.Bombard)) Bombard(game, k, used); // Bombard: before the landings
         if (RimFirsting) RimDrops(game, k, used); // RimFirst: before the attack, so Swarm leaves the drop fleet alone
         _step = "attack loading";
@@ -45,10 +51,14 @@ public sealed partial class OpenSWRController
             UpdateHqSearch(game, k);
             TrackHunt(game, k);
         }
+        Part("missions");
         Assign(game, k, map, used);
         if (Probe is not null) ClassifyIdle(game, used); // measurement only
+        Part("after");
         OwnerChanges(game, k);
         Arrivals(game);
+        Deciding(false);
+        Part(null);
     }
 
     /// <summary>Fight when the predicted win chance is at least 0.5 or the enemy's expected loss is at least 1.5 x the own (0.0 = never withdraw), else withdraw at once.</summary>

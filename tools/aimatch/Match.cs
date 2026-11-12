@@ -73,7 +73,8 @@ public enum ProductCategory { CapitalShips, Fighters, Troops, SpecialForces, Pro
 public sealed record GameResult(int Game, int Seed, Owner OpenSWR, int Day, string Result, int Score, double OpenSWRShare, TimeSpan Wall, List<Checkpoint> Checkpoints,
     Owner PlayerSide, SortedDictionary<uint, MissionCount> Missions, List<OwnerChange> Changes, List<AssaultLoss> AssaultLosses,
     Dictionary<(Owner Side, int Period, ProductCategory Category), (int Units, int Maintenance)> Production, List<Slice>? Slices = null,
-    List<(int Day, double Ms)>? Ticks = null, MaintenanceProbe? Maintenance = null, List<ShipTypeCount>? ShipTypes = null)
+    List<(int Day, double Ms)>? Ticks = null, MaintenanceProbe? Maintenance = null, List<ShipTypeCount>? ShipTypes = null,
+    Dictionary<string, List<double>>? Parts = null)
 {
     /// <summary>+1 openswr won (victory or ahead), -1 lost, 0 draw.</summary>
     public bool Won => Score > 0;
@@ -112,7 +113,7 @@ public static class Match
         {
             int ui = (seed ^ (int)side) + salt; // only the original AI reads it
             var rand = new UiRandom(() => ui);
-            state.Controllers[side] = side == openswr ? new OpenSWRController(side) { Features = features ?? OpenSWRController.DefaultFeatures, YardRatio = yardRatio, HuntGate = huntGate, IdleReasons = slices is null ? null : [], RefusedEstimates = slices is null ? null : [], MissionEstimates = slices is null ? null : [], IntelAges = slices is null ? null : [], NoLaunchLog = slices is null ? null : [], TroopRoomLog = slices is null ? null : [], TroopMoveLog = slices is null ? null : [], AssaultLossesSeen = slices is null ? null : [], PivotEvents = slices is null ? null : [], RetryRecords = slices is null ? null : [] }
+            state.Controllers[side] = side == openswr ? new OpenSWRController(side) { Features = features ?? OpenSWRController.DefaultFeatures, YardRatio = yardRatio, HuntGate = huntGate, PartMs = [], IdleReasons = slices is null ? null : [], RefusedEstimates = slices is null ? null : [], MissionEstimates = slices is null ? null : [], IntelAges = slices is null ? null : [], NoLaunchLog = slices is null ? null : [], TroopRoomLog = slices is null ? null : [], TroopMoveLog = slices is null ? null : [], AssaultLossesSeen = slices is null ? null : [], PivotEvents = slices is null ? null : [], RetryRecords = slices is null ? null : [] }
                 : new ComputerController(side) { Rand = n => rand.Rand(n) };
             state.Sides[side].Speed = TicksPerDay;
         }
@@ -270,7 +271,8 @@ public static class Match
             Console.WriteLine($"  game {game}: rim drops {rim.RimDropped.Count} at {dropped.Count} systems, held at end {dropped.Count(s => s.Owner == openswr)}, enemy-held at end {dropped.Count(s => s.Owner == (openswr == Owner.Alliance ? Owner.Empire : Owner.Alliance))}, rim systems owned {state.Systems.Count(s => s.Owner == openswr && !s.Sector.IsCore)}");
         }
         return new(game, seed, openswr, state.Day, result, score, mine + theirs == 0 ? 0 : (double)mine / (mine + theirs), watch.Elapsed, checkpoints,
-            state.Settings.PlayerSide, missions, changes, assaults, production, slices?.Slices, ticks, maintenance, ShipTypes.Count(state, startObjects));
+            state.Settings.PlayerSide, missions, changes, assaults, production, slices?.Slices, ticks, maintenance, ShipTypes.Count(state, startObjects),
+            (state.Controllers[openswr] as OpenSWRController)?.PartMs);
     }
 
     /// <summary>One game's clock step times: 99th percentile and slowest step with its day.</summary>
@@ -289,7 +291,24 @@ public static class Match
         if (all.Count == 0) return "clock step ms: none\n";
         int Over(double ms) => all.Count(x => x > ms);
         return string.Create(CultureInfo.InvariantCulture,
-            $"clock step ms over {all.Count} steps: mean {all.Average():F2}, p50 {Percentile(all, 0.5):F2}, p99 {Percentile(all, 0.99):F1}, p99.9 {Percentile(all, 0.999):F1}, max {all[^1]:F1}; over 50 ms {Over(50)}, over 100 ms {Over(100)}, over 250 ms {Over(250)}\n");
+            $"clock step ms over {all.Count} steps: mean {all.Average():F2}, p50 {Percentile(all, 0.5):F2}, p99 {Percentile(all, 0.99):F1}, p99.9 {Percentile(all, 0.999):F1}, max {all[^1]:F1}; over 50 ms {Over(50)}, over 100 ms {Over(100)}, over 250 ms {Over(250)}\n") + PartTable(results);
+    }
+
+    /// <summary>The OpenSWR AI's decision times over all games: the whole decision and each part (mean, p99, max).</summary>
+    static string PartTable(IReadOnlyList<GameResult> results)
+    {
+        var games = results.Where(r => r.Parts is { Count: > 0 }).Select(r => r.Parts!).ToList();
+        if (games.Count == 0) return "";
+        var text = new System.Text.StringBuilder();
+        void Line(string name, IEnumerable<double> times)
+        {
+            var sorted = times.Order().ToList();
+            text.Append(string.Create(CultureInfo.InvariantCulture, $"  {name,-12} mean {sorted.Average():F2}, p99 {Percentile(sorted, 0.99):F1}, max {sorted[^1]:F1}\n"));
+        }
+        text.Append($"openswr decision ms over {games.Sum(g => g.Values.Min(t => t.Count))} decisions\n");
+        Line("whole", games.SelectMany(g => Enumerable.Range(0, g.Values.Min(t => t.Count)).Select(i => g.Values.Sum(t => t[i]))));
+        foreach (var name in games.SelectMany(g => g.Keys).Distinct()) Line(name, games.SelectMany(g => g.GetValueOrDefault(name) ?? []));
+        return text.ToString();
     }
 
     static double Percentile(List<double> sorted, double p) => sorted[Math.Min(sorted.Count - 1, (int)(p * sorted.Count))];

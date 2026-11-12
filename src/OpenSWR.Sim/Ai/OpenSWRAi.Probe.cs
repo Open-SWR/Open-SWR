@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace OpenSWR.Sim.Ai;
 
 /// <summary>
@@ -27,6 +29,24 @@ public sealed partial class OpenSWRController
         internal HashSet<Agent> SuccessSkipped { get; } = [];
         /// <summary>Why the covert step did not run at this decision (null: it ran).</summary>
         internal string? CovertSkipped { get; set; }
+    }
+
+    /// <summary>Measurement (aimatch; null = off): the wall time in ms of each part of every decision, by part name, one entry per decision.</summary>
+    public Dictionary<string, List<double>>? PartMs { get; set; }
+    string? _part;
+    long _partStart;
+
+    /// <summary>Measurement only: ends the running part's timer and starts the timer of <paramref name="name"/> (null: none).</summary>
+    void Part(string? name)
+    {
+        if (PartMs is null) return;
+        long now = Stopwatch.GetTimestamp();
+        if (_part is not null)
+        {
+            if (!PartMs.TryGetValue(_part, out var times)) PartMs[_part] = times = [];
+            times.Add(Stopwatch.GetElapsedTime(_partStart, now).TotalMilliseconds);
+        }
+        (_part, _partStart) = (name, now);
     }
 
     /// <summary>The probe of the next decision (null = off).</summary>

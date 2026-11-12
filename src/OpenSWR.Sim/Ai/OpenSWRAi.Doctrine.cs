@@ -14,14 +14,24 @@ public sealed partial class OpenSWRController
 
     Dictionary<uint, UnitRoles>? _roles;
     string _rolesKey = "";
+    // while the side decides the state does not change (its orders run after the decision), so the buildable roles and the
+    // role shortfall are worked out once per decision
+    bool _deciding;
+    IReadOnlyDictionary<uint, UnitRoles>? _decisionRoles;
+    (Dictionary<UnitRole, double> Shortfall, double BombardGap)? _decisionShortfall;
+
+    /// <summary>Starts or ends a decision: the per-decision results are dropped either way.</summary>
+    void Deciding(bool on) => (_deciding, _decisionRoles, _decisionShortfall) = (on, null, null);
 
     /// <summary>The roles of the side's buildable units, recomputed when the buildable set changes (research, captured yards).</summary>
     internal IReadOnlyDictionary<uint, UnitRoles> BuildableRoles(GameState game)
     {
+        if (_deciding && _decisionRoles is not null) return _decisionRoles;
         var types = new[] { Families.Shipyard, Families.TrainingFacility, Families.ConstructionYard }.SelectMany(m => Research.Buildable(game, Side, m)).Select(r => r.Common.Ref)
             .Where(t => Roles.KindOf(t) is not null).Distinct().Order().ToList();
         string key = string.Join(",", types);
         if (_roles is null || key != _rolesKey) (_roles, _rolesKey) = (Roles.Compute(game, types), key);
+        if (_deciding) _decisionRoles = _roles;
         return _roles;
     }
 
@@ -47,6 +57,11 @@ public sealed partial class OpenSWRController
     /// </summary>
     internal Dictionary<UnitRole, double> RoleShortfall(GameState game, Known k)
     {
+        if (_deciding && _decisionShortfall is { } cached)
+        {
+            _bombardGap = cached.BombardGap;
+            return new(cached.Shortfall);
+        }
         var result = new Dictionary<UnitRole, double>();
         _bombardGap = 0;
         void Max(UnitRole r, double v) => result[r] = Math.Max(result.GetValueOrDefault(r), Math.Clamp(v, 0, 1));
@@ -79,6 +94,7 @@ public sealed partial class OpenSWRController
                 _bombardGap = Math.Max(_bombardGap, bombardNeed - bombard);
             }
         }
+        if (_deciding) _decisionShortfall = (new(result), _bombardGap);
         return result;
     }
 
