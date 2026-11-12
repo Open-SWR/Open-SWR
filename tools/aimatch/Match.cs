@@ -123,7 +123,7 @@ public static class Match
         };
         state.BattleResults = _ => null; // the engine runs every battle
         state.BattleTrace = []; // battle reports (won side per battle)
-        if (slices is not null) state.StrikeTrace = []; // strike records (UI only, no draw): the bombardment measurement
+        if (slices is not null) (state.StrikeTrace, state.AssaultTrace) = ([], []); // strike records and assault duels (no draw): bombardment and assault measurement
         state.FactTrace = []; // mission TaskStatus changes; read and cleared every tick
         var owners = new Dictionary<uint, (Owner Owner, uint Kind)>();
         var missions = new SortedDictionary<uint, MissionCount>();

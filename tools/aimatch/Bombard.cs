@@ -36,6 +36,8 @@ public sealed class BombardRecorder
     public sealed record AssaultStrike(int Day, uint System, Owner Attacker, Owner Defender, int Troops, int AttackerTroops = 0, int DefenderTroops = 0, bool Won = false);
 
     public List<Strike> Strikes { get; } = [];
+    /// <summary>The assaults' duel details (<see cref="GameState.AssaultTrace"/>).</summary>
+    public List<AssaultDetail> Details { get; } = [];
     public List<AssaultStrike> Assaults { get; } = [];
     public Dictionary<(Owner Side, int Type), int> Orders { get; } = [];
     readonly Dictionary<(Owner, uint), int> _lastOrder = [];
@@ -51,6 +53,11 @@ public sealed class BombardRecorder
     /// <summary>Called once at the end of every game day.</summary>
     public void Day(GameState game, IReadOnlyList<OwnerChange> changes)
     {
+        if (game.AssaultTrace is { } details)
+        {
+            Details.AddRange(details);
+            details.Clear();
+        }
         var trace = game.StrikeTrace;
         if (trace is null) return;
         for (; _done < trace.Count; _done++)
@@ -119,6 +126,30 @@ public sealed class BombardRecorder
                 $"  {g.Key.Who,-8} attacks (openswr {g.Key.Played,-8}): {l.Count / (double)runs.Count(r => r.Result.OpenSWR == g.Key.Played),6:F1} per game, attacker troops {l.Average(x => x.a.AttackerTroops),5:F1}, defender troops {l.Average(x => x.a.DefenderTroops),5:F1}, captured {100.0 * l.Count(x => x.a.Won) / l.Count,5:F1} %"));
             text.AppendLine("    by defender troops: " + string.Join("  ", l.GroupBy(x => Bin(x.a.DefenderTroops)).OrderBy(b => b.Min(x => x.a.DefenderTroops))
                 .Select(b => string.Create(CultureInfo.InvariantCulture, $"{b.Key}: {b.Count()} ({100.0 * b.Count(x => x.a.Won) / b.Count():F0} % captured, attacker {b.Average(x => x.a.AttackerTroops):F1})"))));
+        }
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// Assaults against defended enemy systems by attacker (openswr / original) and the side the OpenSWR AI played: troops and
+    /// defenders at the start, attackers shot down, duels; per duel the attack, defence, leadership terms and kill / death rate;
+    /// landings. Splits the landings by attacker troops against defenders.
+    /// </summary>
+    public static string DetailTable(IReadOnlyList<(GameResult Result, BombardRecorder Recorder)> runs)
+    {
+        var text = new StringBuilder();
+        text.AppendLine("assault duels against defended systems (per assault: troops, defenders, shot down, duels; per duel: attack, defence, leadership attacker / defender, kill %, death %; landed %)");
+        var rows = runs.SelectMany(x => x.Recorder.Details.Where(a => a.Defenders > 0)
+            .Select(a => (Who: a.Attacker == x.Result.OpenSWR ? "openswr" : "original", Played: x.Result.OpenSWR, a))).ToList();
+        foreach (var g in rows.GroupBy(x => (x.Who, x.Played)).OrderBy(g => g.Key.Who).ThenBy(g => g.Key.Played))
+        {
+            var l = g.Select(x => x.a).ToList();
+            int duels = Math.Max(1, l.Sum(a => a.Duels));
+            double D(Func<AssaultDetail, int> f) => (double)l.Sum(f) / duels;
+            text.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                $"  {g.Key.Who,-8} (openswr {g.Key.Played,-8}) {l.Count,4} assaults: troops {l.Average(a => a.Troops),5:F1}, defenders {l.Average(a => a.Defenders),4:F1}, shot down {l.Average(a => a.ShotDown),4:F1}, duels {l.Average(a => a.Duels),4:F1}; attack {D(a => a.AttackSum),4:F1}, defence {D(a => a.DefenceSum),4:F1}, lead {D(a => a.LeadAttackerSum),4:F2} / {D(a => a.LeadDefenderSum),4:F2}, kill {100 * D(a => a.Kills),3:F0} %, death {100 * D(a => a.Deaths),3:F0} %; landed {100.0 * l.Count(a => a.Landed) / l.Count,3:F0} %"));
+            text.AppendLine("    by troops / defenders: " + string.Join("  ", l.GroupBy(a => a.Troops < a.Defenders ? "<1" : a.Troops < 2 * a.Defenders ? "1-2x" : a.Troops < 4 * a.Defenders ? "2-4x" : ">=4x")
+                .OrderBy(b => b.Key).Select(b => string.Create(CultureInfo.InvariantCulture, $"{b.Key}: {b.Count()} ({100.0 * b.Count(a => a.Landed) / b.Count():F0} % landed)"))));
         }
         return text.ToString();
     }

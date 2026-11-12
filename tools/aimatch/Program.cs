@@ -153,6 +153,7 @@ if (slicesCsv is not null)
     Console.WriteLine();
     Console.Write(BombardRecorder.Table([.. recorders.Select(x => (x.Item1, x.Item2.Bombard))]));
     Console.Write(BombardRecorder.AssaultTable([.. recorders.Select(x => (x.Item1, x.Item2.Bombard))]));
+    Console.Write(BombardRecorder.DetailTable([.. recorders.Select(x => (x.Item1, x.Item2.Bombard))]));
     Console.WriteLine();
     Console.Write(ObjectivesRecorder.Table([.. recorders.Select(x => (x.Item1, x.Item2.Objectives))]));
     Console.WriteLine();

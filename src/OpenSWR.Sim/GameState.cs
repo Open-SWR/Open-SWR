@@ -586,6 +586,8 @@ public sealed class GameState(GameSettings settings, GameDefinitions definitions
     public List<BattleReport>? BattleTrace { get; set; }
     /// <summary>When set, every bombardment / assault appends its record (<see cref="Messages"/> type Strike; not saved).</summary>
     public List<StrikeReport>? StrikeTrace { get; set; }
+    /// <summary>When set, every assault appends its duel detail (measurement only; not saved, no draw).</summary>
+    public List<AssaultDetail>? AssaultTrace { get; set; }
     /// <summary>When set, every InformantIncident pulse appends its record (<see cref="Messages"/> type Informants; not saved).</summary>
     public List<InformantReport>? InformantTrace { get; set; }
     /// <summary>When set, every galaxy event timer Disaster / timer ResourceEvent that changes the system appends its record (<see cref="Messages"/> type ResourceEvent; not saved).</summary>

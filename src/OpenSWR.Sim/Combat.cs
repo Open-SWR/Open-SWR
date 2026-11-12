@@ -33,6 +33,14 @@ public sealed record StrikeReport(int Day, StarSystem System, bool Assault, Owne
     List<StrikeFleet> Fleets, List<GameObject> Contents, List<(GameObject Unit, SideSet Live, bool Completed)> Destroyed);
 
 /// <summary>
+/// Per-assault measurement record (not saved, no draw): troops aboard at the start, defenders at the start, attackers shot down by
+/// the defence fire, then per ground duel the sums of the attacker's attack, the defender's defence and both commanders' leadership
+/// (each already divided as the duel rule divides it), the defenders killed and the attackers killed, and whether troops landed.
+/// </summary>
+public sealed record AssaultDetail(int Day, StarSystem System, Owner Attacker, int Troops, int Defenders, int ShotDown, int Duels,
+    int AttackSum, int DefenceSum, int LeadAttackerSum, int LeadDefenderSum, int Kills, int Deaths, bool Landed);
+
+/// <summary>
 /// The engine's result of one space battle: the automatic flag, the side summary S[0..6] (S[4], S[5]
 /// unread) and the per-unit records keyed by unit; from the automatic engine, the tactical battle or a replay. The loss records
 /// L1 / L2 are derived by the sim (<see cref="Combat.RecordLoss"/>).
@@ -219,6 +227,7 @@ public static class Combat
         // Usable troops directly in the system owned by the system's owner
         List<GameObject> Defenders() => [.. s.Contents.Where(t => Family.IsTroop(t.Type) && t.Usable && t.Owner == s.Owner)];
         int a0 = Attackers().Count, d0 = Defenders().Count, a = a0, d = d0, e = 0;
+        int shotDown = 0, attackSum = 0, defenceSum = 0, leadA = 0, leadD = 0, kills = 0, deaths = 0; // measurement only
 
         // 2. defence fire: every Usable defence facility [34, 40), any owner, key order
         foreach (var f in s.Contents.Where(x => In(x, Families.IonCannon, Families.Shipyard) && x.Usable).ToList())
@@ -228,6 +237,7 @@ public static class Combat
             var walk = Attackers();
             if (i < 0 || i >= walk.Count) continue;
             Objects.Destroy(game, walk[i].Troop, DestroyedReason.Assault);
+            shotDown++;
             if (--a == 0) break;
         }
 
@@ -239,10 +249,13 @@ public static class Combat
                 if (r >= d) continue;
                 var opponent = Defenders()[r];
                 e++;
-                int v = Duel(game, game.Random.Roll(g.DuelRoll, DrawSite.Duel), Sd(game, t, SdField.TroopAttackStrength), Lead(game, Commander(f, s, 3)),
-                    Sd(game, opponent, SdField.TroopDefenseStrength), Lead(game, Commander(null, s, 3)));
-                if (v > 0) { Objects.Destroy(game, opponent, DestroyedReason.Assault); d--; }
-                else if (v < 0) { Objects.Destroy(game, t, DestroyedReason.Assault); a--; }
+                int attack = Sd(game, t, SdField.TroopAttackStrength), defense = Sd(game, opponent, SdField.TroopDefenseStrength);
+                int la = Lead(game, Commander(f, s, 3)), ld = Lead(game, Commander(null, s, 3));
+                int v = Duel(game, game.Random.Roll(g.DuelRoll, DrawSite.Duel), attack, la, defense, ld);
+                if (game.AssaultTrace is not null)
+                    (attackSum, defenceSum, leadA, leadD) = (attackSum + attack, defenceSum + defense, leadA + la / g.DuelLeadershipDivisor, leadD + ld / g.DuelLeadershipDivisor);
+                if (v > 0) { Objects.Destroy(game, opponent, DestroyedReason.Assault); d--; kills++; }
+                else if (v < 0) { Objects.Destroy(game, t, DestroyedReason.Assault); a--; deaths++; }
                 if (a == 0 || d == 0) break;
             }
 
@@ -258,6 +271,7 @@ public static class Combat
         // 6. clear: every fleet of the attacker in the system (mode 4)
         foreach (var f in s.Contents.OfType<Fleet>().Where(f => f.Owner == att)) f.Assault = false;
         if (record is not null) game.StrikeTrace!.Add(record());
+        game.AssaultTrace?.Add(new(game.Day, s, att, a0, d0, shotDown, e, attackSum, defenceSum, leadA, leadD, kills, deaths, a > 0 && d == 0));
     }
 
     /// <summary>
