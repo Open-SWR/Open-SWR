@@ -452,11 +452,11 @@ public static class Match
     {
         var text = new StringBuilder();
         text.AppendLine("role mix (averages per game; fleet maintenance by main role; fighters, troops by main role; guns, shields; high-value border systems gunned)");
-        foreach (var who in new[] { "openswr", "original" })
+        foreach (var (who, side) in new[] { "openswr", "original" }.SelectMany(w => new[] { Owner.Alliance, Owner.Empire }.Select(s => (w, s))))
         {
-            text.AppendLine($"  {who}");
+            text.AppendLine($"  {who} (openswr {side})");
             text.AppendLine($"  {"day",5} {"line",6} {"screen",6} {"carr",6} {"trans",6} {"intd",6} {"bomb",6} | {"intc",5} {"bmbr",5} {"supr",5} | {"garr",5} {"asslt",5} | {"guns",5} {"shld",5} {"hv-gunned",10}");
-            foreach (var (day, mine, theirs) in Hundreds(results))
+            foreach (var (day, mine, theirs) in Hundreds([.. results.Where(r => r.OpenSWR == side)]))
             {
                 var l = (who == "openswr" ? mine : theirs).Where(x => x.Roles is not null).Select(x => x.Roles!).ToList();
                 if (l.Count == 0) continue;
